@@ -1,0 +1,10 @@
+# Copy to fleet/home/config/launch-env-allowlist when filtering worker env.
+# One variable NAME per line; no values. Values come from the tmux/Herdr pane at spawn time.
+
+DEEPSEEK_API_KEY
+OPENROUTER_API_KEY
+HF_API_KEY
+HF_TOKEN
+
+# Git over SSH (if workers need your agent)
+# SSH_AUTH_SOCK

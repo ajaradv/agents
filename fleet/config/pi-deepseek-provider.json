@@ -1,0 +1,28 @@
+{
+  "_comment": "Merge into ~/.pi/agent/models-store.json (or your Pi models catalog). Never commit API keys.",
+  "providers": {
+    "deepseek": {
+      "apiKey": "${DEEPSEEK_API_KEY}",
+      "baseUrl": "https://api.deepseek.com",
+      "models": [
+        {
+          "id": "deepseek-chat",
+          "name": "DeepSeek Chat",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 64000,
+          "maxTokens": 8192
+        },
+        {
+          "id": "deepseek-reasoner",
+          "name": "DeepSeek Reasoner",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 64000,
+          "maxTokens": 8192
+        }
+      ]
+    }
+  },
+  "usage_in_dispatch": "Pi model ids: deepseek/deepseek-chat, deepseek/deepseek-reasoner with provider: deepseek in crew-dispatch.json"
+}

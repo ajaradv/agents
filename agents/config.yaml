@@ -1,0 +1,19 @@
+# Extension registry: npm or local names allowed per agent type.
+types:
+  orchestrator:
+    local_extensions: true
+  crew:
+    local_extensions: true
+  assistant:
+    local_extensions: true
+
+npm_extensions:
+  hermes-memory:
+    package: npm:pi-hermes-memory
+    types: [assistant]
+  obsidian:
+    package: npm:pi-obsidian
+    types: [assistant]
+  cursor-sdk:
+    package: npm:pi-cursor-sdk
+    types: [assistant, orchestrator]

@@ -1,0 +1,26 @@
+id: alice
+type: assistant
+role: alice
+harness: pi
+model: cursor/composer-2.5
+vault: /Users/avega/Workspace/brain
+vault_inbox: fleet/inbox
+extensions:
+  - cursor-sdk
+  - hermes-memory
+  - obsidian
+skills:
+  - obsidian-markdown
+  - obsidian-bases
+  - json-canvas
+  - obsidian-cli
+authority:
+  allow:
+    - status
+    - steer
+    - rerun
+  deny:
+    - merge
+    - force-push
+    - secrets
+    - retire-home

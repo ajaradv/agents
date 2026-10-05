@@ -1,0 +1,6 @@
+[submodule "vendor/firstmate"]
+	path = vendor/firstmate
+	url = https://github.com/ajaradv/firstmate.git
+[submodule "vendor/obsidian-skills"]
+	path = vendor/obsidian-skills
+	url = https://github.com/kepano/obsidian-skills.git

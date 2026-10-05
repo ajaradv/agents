@@ -1,0 +1,87 @@
+{
+  "rules": [
+    {
+      "when": "The task depends on fresh news, current events, live public facts, or recent market and product changes.",
+      "use": [
+        { "harness": "claude", "model": "haiku", "effort": "medium" },
+        { "harness": "cursor", "model": "grok-4.7", "effort": "high" }
+      ],
+      "why": "Scout/recon: Claude subscription first, then Cursor Grok only (no Claude-via-Cursor)."
+    },
+    {
+      "when": "The task is read-only exploration, recon, audit, or investigation with no authorized repo changes.",
+      "use": [
+        { "harness": "claude", "model": "haiku", "effort": "medium" },
+        { "harness": "cursor", "model": "grok-4.7", "effort": "medium" }
+      ],
+      "why": "Scout shape: subscription Claude, then Cursor Grok."
+    },
+    {
+      "when": "The brief is to draft or revise an implementation or architecture plan for a new project, greenfield work, unclear ship ownership, or a major ambiguous change that requires product or API decisions before coding.",
+      "use": [
+        { "harness": "claude", "model": "claude-sonnet-5", "effort": "xhigh" },
+        { "harness": "claude", "model": "claude-sonnet-5", "effort": "high" },
+        { "harness": "cursor", "model": "grok-4.7", "effort": "high" }
+      ],
+      "why": "Plan draft (Architect worker): high-thinking Claude first, then Cursor Grok only (no Claude-via-Cursor)."
+    },
+    {
+      "when": "The brief is to draft or revise a scoped implementation plan for a known ship: a medium feature, non-trivial bugfix, refactor, ops change, or research report where planning is required but the ship and shape are mostly clear.",
+      "use": [
+        { "harness": "claude", "model": "claude-sonnet-5", "effort": "medium" },
+        { "harness": "cursor", "model": "grok-4.7", "effort": "medium" }
+      ],
+      "why": "Plan draft (Architect worker): scoped plan profiles."
+    },
+    {
+      "when": "The task is a trivial mechanical edit such as a rote rename, formatting sweep, targeted typo fix, or simple file gathering.",
+      "use": [
+        { "harness": "claude", "model": "haiku", "effort": "low" },
+        { "harness": "cursor", "model": "composer-2.5", "effort": "low" }
+      ],
+      "why": "Cheap profiles when the task is narrow."
+    },
+    {
+      "when": "The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind.",
+      "use": [
+        { "harness": "claude", "model": "claude-sonnet-5", "effort": "high" },
+        { "harness": "cursor", "model": "composer-2.5", "effort": "high" }
+      ],
+      "why": "Ship work: Claude subscription first, then Cursor Composer only."
+    },
+    {
+      "when": "Subscription or Cursor quota is exhausted, or the task explicitly requires an API-only model family.",
+      "use": [
+        {
+          "harness": "pi",
+          "model": "deepseek/deepseek-chat",
+          "provider": "deepseek",
+          "effort": "medium"
+        },
+        {
+          "harness": "pi",
+          "model": "huggingface/meta-llama/Meta-Llama-3-8B-Instruct",
+          "provider": "huggingface",
+          "effort": "medium"
+        },
+        {
+          "harness": "pi",
+          "model": "openrouter/anthropic/claude-sonnet-4",
+          "provider": "openrouter",
+          "effort": "medium"
+        }
+      ],
+      "why": "API fallbacks: DeepSeek, then Hugging Face (replace model id), then OpenRouter."
+    }
+  ],
+  "default": [
+    { "harness": "claude", "model": "claude-sonnet-5", "effort": "medium" },
+    { "harness": "cursor", "model": "composer-2.5", "effort": "medium" },
+    {
+      "harness": "pi",
+      "model": "deepseek/deepseek-chat",
+      "provider": "deepseek",
+      "effort": "medium"
+    }
+  ]
+}

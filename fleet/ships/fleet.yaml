@@ -1,0 +1,6 @@
+id: fleet
+path: /Users/avega/Workspace/agents
+orchestrator: firstmate
+crew: []
+factory: null
+mode: local-only

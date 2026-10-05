@@ -1,0 +1,9 @@
+id: firstmate
+type: orchestrator
+role: firstmate
+harness: pi
+model: cursor/grok-4.7@256k
+extensions:
+  - cursor-sdk
+  - fleet-dashboard-heartbeat
+cwd: fleet/home

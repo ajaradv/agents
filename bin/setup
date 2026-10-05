@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+git submodule update --init --recursive vendor/firstmate vendor/obsidian-skills 2>/dev/null || true
+
+if [[ -d vendor/firstmate ]]; then
+  FM="$ROOT/vendor/firstmate"
+  if git -C "$FM" rev-parse --git-dir >/dev/null 2>&1; then
+    if git -C "$FM" remote get-url upstream >/dev/null 2>&1; then
+      git -C "$FM" remote set-url upstream https://github.com/kunchenguid/firstmate.git
+    else
+      git -C "$FM" remote add upstream https://github.com/kunchenguid/firstmate.git
+    fi
+  fi
+fi
+
+if [[ -f package.json ]]; then
+  command -v bun >/dev/null 2>&1 && (cd "$ROOT" && bun install) || echo "bun not found; skip extension deps (run: just setup after installing bun)"
+fi
+
+if [[ -x "$ROOT/bin/setup-alice-vault" ]]; then
+  "$ROOT/bin/setup-alice-vault" || true
+fi
+
+echo "setup ok"

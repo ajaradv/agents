@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VAULT="${ALICE_VAULT:-/Users/avega/Workspace/brain}"
+SKILLS_SRC="$ROOT/vendor/obsidian-skills/skills"
+INBOX="${VAULT}/fleet/inbox"
+
+mkdir -p "$INBOX" "$INBOX/done" "${VAULT}/.pi/skills"
+mkdir -p \
+  "${VAULT}/fleet/ideas" \
+  "${VAULT}/fleet/requests" \
+  "${VAULT}/fleet/plans/project" \
+  "${VAULT}/fleet/plans/feature" \
+  "${VAULT}/fleet/plans/bugfix" \
+  "${VAULT}/fleet/plans/refactor" \
+  "${VAULT}/fleet/plans/research" \
+  "${VAULT}/fleet/plans/ops"
+mkdir -p "$ROOT/fleet/inbox/alice" "$ROOT/fleet/inbox/firstmate" "$ROOT/fleet/inbox/architect"
+
+if [[ ! -d "$SKILLS_SRC/obsidian-markdown" ]]; then
+  echo "missing vendor/obsidian-skills; run: git submodule update --init vendor/obsidian-skills" >&2
+  exit 1
+fi
+
+for s in obsidian-markdown obsidian-bases json-canvas obsidian-cli; do
+  ln -sfn "$SKILLS_SRC/$s" "${VAULT}/.pi/skills/$s"
+done
+
+# Hermes and Obsidian are listed in agents/alice/agent.yaml only; bin/launch loads them
+# with -ne -e npm:… (not ~/.pi/agent/settings.json packages).
+
+echo "vault ready at $VAULT (human inbox: $INBOX; ideas/requests/plans under fleet/)"

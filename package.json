@@ -1,0 +1,10 @@
+{
+  "name": "agents-catalog-extensions",
+  "private": true,
+  "type": "module",
+  "description": "Vendored pi-vs-cc extensions for the atria-factory SDLC. Run via the justfile recipes or `pi -e extensions/<name>.ts`.",
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.0",
+    "yaml": "^2.8.0"
+  }
+}

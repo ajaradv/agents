@@ -1,0 +1,9 @@
+id: lineage_atria
+path: /Users/avega/Workspace/lineage_atria
+orchestrator: firstmate
+crew: []
+factory:
+  skill: .claude/skills/sssf
+  adws:
+    - adw_plan_build_test
+mode: no-mistakes

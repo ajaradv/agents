@@ -1,0 +1,461 @@
+#!/usr/bin/env python3
+"""Launch an agent from agents/<id>/agent.yaml (Pi harness only in v1)."""
+from __future__ import annotations
+
+import json
+import os
+import re
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+CONFIG = ROOT / "agents" / "config.yaml"
+FLEET_HOME = ROOT / "fleet" / "home"
+
+# Keys exported from fleet/home/.env when not already in the environment (env wins).
+ENV_ALLOWLIST = frozenset(
+    {
+        "TYPESAFE_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "OPENROUTER_API_KEY",
+        "HF_API_KEY",
+        "HF_TOKEN",
+        "CURSOR_API_KEY",
+        "ANTHROPIC_API_KEY",
+    }
+)
+
+
+def parse_simple_yaml(path: Path) -> dict:
+    """Parse flat agent.yaml files (scalars, lists, one-level nested maps)."""
+    data: dict = {}
+    list_key: str | None = None
+    nested: dict | None = None
+    nested_key: str | None = None
+
+    def scalar(s: str):
+        s = s.strip()
+        if s in ("null", "~", ""):
+            return None
+        if s.startswith('"') and s.endswith('"'):
+            return s[1:-1]
+        if s.startswith("[") and s.endswith("]"):
+            inner = s[1:-1].strip()
+            return [] if not inner else [x.strip().strip('"') for x in inner.split(",")]
+        return s
+
+    for raw in path.read_text().splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        line = raw.strip()
+        if line.startswith("- "):
+            item = scalar(line[2:])
+            if nested is not None and nested_key:
+                nested.setdefault(nested_key, [])
+                if isinstance(nested[nested_key], list):
+                    nested[nested_key].append(item)
+            elif list_key:
+                data.setdefault(list_key, [])
+                if isinstance(data[list_key], list):
+                    data[list_key].append(item)
+            continue
+        if ":" not in line:
+            continue
+        key, _, rest = line.partition(":")
+        key = key.strip()
+        rest = rest.strip()
+        if indent == 0:
+            nested = None
+            nested_key = None
+            list_key = None
+        if rest == "":
+            if indent == 0:
+                if key in ("authority",):
+                    data[key] = {}
+                    nested = data[key]
+                    nested_key = None
+                else:
+                    data[key] = []
+                    list_key = key
+            elif nested is not None and indent >= 2:
+                nested[key] = []
+                nested_key = key
+            continue
+        val = scalar(rest)
+        if nested is not None and indent >= 2:
+            nested[key] = val
+        else:
+            data[key] = val
+            list_key = None
+    return data
+
+
+def load_npm_registry() -> dict:
+    if not CONFIG.exists():
+        return {}
+    reg: dict[str, dict] = {}
+    current: str | None = None
+    in_npm = False
+    for raw in CONFIG.read_text().splitlines():
+        line = raw.strip()
+        if line == "npm_extensions:":
+            in_npm = True
+            continue
+        if not in_npm:
+            continue
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("types:") and current:
+            reg[current]["types"] = re.findall(
+                r"assistant|orchestrator|crew", line.split(":", 1)[1]
+            )
+            continue
+        if line.startswith("package:") and current:
+            reg[current]["package"] = line.split(":", 1)[1].strip()
+            continue
+        if line.endswith(":") and not line.startswith(" "):
+            current = line[:-1].strip()
+            reg[current] = {"types": [], "package": f"npm:pi-{current}"}
+        elif raw and not raw.startswith(" ") and not raw.startswith("\t"):
+            break
+    return reg
+
+
+def extension_allowed(name: str, agent_type: str, npm_reg: dict) -> tuple[bool, str]:
+    if name in npm_reg:
+        entry = npm_reg[name]
+        types = entry.get("types") or []
+        pkg = entry.get("package") or f"npm:pi-{name}"
+        if agent_type not in types:
+            return False, pkg
+        return True, pkg
+    ext = ROOT / "extensions" / f"{name}.ts"
+    if ext.is_file():
+        return True, str(ext)
+    return False, name
+
+
+def fleet_inbox_root() -> Path:
+    raw = os.environ.get("FLEET_INBOX")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (ROOT / "fleet" / "inbox").resolve()
+
+
+def _read_env_file_contents(path: Path, timeout_sec: float = 2.0) -> str:
+    try:
+        st = path.stat()
+    except OSError:
+        return ""
+    if stat.S_ISFIFO(st.st_mode) or stat.S_ISSOCK(st.st_mode):
+        try:
+            r = subprocess.run(
+                ["cat", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+            )
+            return r.stdout or ""
+        except (subprocess.TimeoutExpired, OSError):
+            return ""
+    if not stat.S_ISREG(st.st_mode):
+        return ""
+    try:
+        return path.read_text()
+    except OSError:
+        return ""
+
+
+def _apply_hf_key_alias() -> None:
+    api = os.environ.get("HF_API_KEY", "").strip()
+    tok = os.environ.get("HF_TOKEN", "").strip()
+    if api and not tok:
+        os.environ["HF_TOKEN"] = api
+    elif tok and not api:
+        os.environ["HF_API_KEY"] = tok
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    """Last assignment wins; # comments and blank lines ignored."""
+    out: dict[str, str] = {}
+    text = _read_env_file_contents(path)
+    if not text:
+        return out
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+            val = val[1:-1]
+        if key:
+            out[key] = val
+    return out
+
+
+def apply_fleet_home_env() -> None:
+    env_path = FLEET_HOME / ".env"
+    for key, val in parse_env_file(env_path).items():
+        if key in ENV_ALLOWLIST and key not in os.environ and val:
+            os.environ[key] = val
+    _apply_hf_key_alias()
+
+
+def build_role_prompt(role_file: Path, extra_block: str, extra_prompt_paths: list[Path] | None = None) -> Path:
+    body = role_file.read_text()
+    for p in extra_prompt_paths or []:
+        if p.is_file():
+            body = body.rstrip() + "\n\n---\n\n" + p.read_text().strip() + "\n"
+        else:
+            print(f"warning: extra_prompt missing {p}", file=sys.stderr)
+    if extra_block:
+        body = body.rstrip() + "\n\n" + extra_block.strip() + "\n"
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", prefix="role-", delete=False, encoding="utf-8"
+    )
+    tmp.write(body)
+    tmp.close()
+    return Path(tmp.name)
+
+
+DASHBOARD_CHAT_BLOCK = (
+    "## Dashboard captain chat (this turn)\n\n"
+    "You are answering a **headless dashboard message** from the captain (not the interactive TUI composer). "
+    "Reply in **plain text** suitable for the dashboard chat log. "
+    "When you finish, your reply text is captured from stdout; you do not need to append the jsonl file yourself in print mode.\n"
+)
+
+
+def prepare_pi_launch(
+    agent_id: str, extra: list[str] | None = None
+) -> tuple[Path, list[str], Path, str | None] | None:
+    """Build pi argv for agent_id. Returns (cwd, args, temp_role_prompt_path, model)."""
+    extra = extra or []
+    agent_path = ROOT / "agents" / agent_id / "agent.yaml"
+    if not agent_path.is_file():
+        print(f"missing {agent_path}", file=sys.stderr)
+        return None
+    agent = parse_simple_yaml(agent_path)
+    agent_type = str(agent.get("type") or "")
+    harness = str(agent.get("harness") or "pi")
+    role = str(agent.get("role") or agent_id)
+    model = agent.get("model")
+
+    if harness != "pi":
+        print(f"harness {harness!r} is stored but only pi is wired in this slice", file=sys.stderr)
+        return None
+
+    role_file = ROOT / "roles" / f"{role}.md"
+    if not role_file.is_file():
+        print(f"missing role {role_file}", file=sys.stderr)
+        return None
+
+    if not (FLEET_HOME / "AGENTS.md").is_file():
+        subprocess.run([str(ROOT / "bin" / "seed-fleet-home")], check=False)
+
+    apply_fleet_home_env()
+
+    inbox = fleet_inbox_root()
+    os.environ.setdefault("FLEET_INBOX", str(inbox))
+
+    npm_reg = load_npm_registry()
+
+    vault_raw = agent.get("vault")
+    vault_agents = {"alice", "architect"}
+    cwd: Path
+    path_block: str
+    if vault_raw or agent_id in vault_agents:
+        default_vault = str(vault_raw) if vault_raw else "/Users/avega/Workspace/brain"
+        vault_path = Path(os.environ.get("ALICE_VAULT", default_vault)).expanduser().resolve()
+        os.environ["ALICE_VAULT"] = str(vault_path)
+        cwd = vault_path
+        path_block = (
+            "## Resolved paths (this session)\n\n"
+            f"- **ALICE_VAULT:** `{vault_path}`\n"
+            f"- **FLEET_INBOX:** `{inbox}`\n"
+            f"- Alice bus (read): `{inbox / 'alice' / 'events.jsonl'}`\n"
+            f"- Architect bus (read): `{inbox / 'architect' / 'events.jsonl'}`\n"
+            f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
+            f"- Vault human inbox: `{vault_path / 'fleet' / 'inbox'}/`\n"
+            f"- Plans: `{vault_path / 'fleet' / 'plans'}/`\n"
+            f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
+            f"- Hermes project memory: `{vault_path / '.pi' / 'agent' / 'pi-hermes-memory'}/`\n"
+            + DASHBOARD_CHAT_BLOCK
+        )
+        hermes_dir = vault_path / ".pi" / "agent" / "pi-hermes-memory"
+        hermes_dir.mkdir(parents=True, exist_ok=True)
+        for skill in agent.get("skills") or []:
+            skill_dir = cwd / ".pi" / "skills" / str(skill)
+            if skill_dir.is_dir():
+                pass  # added below in args
+            else:
+                print(f"warning: skill missing {skill_dir} (run bin/setup-alice-vault)", file=sys.stderr)
+    else:
+        home = FLEET_HOME
+        cwd = home
+        os.environ["FM_HOME"] = str(home)
+        path_block = (
+            "## Resolved paths (this session)\n\n"
+            f"- **FM_HOME:** `{home}`\n"
+            f"- **FLEET_INBOX:** `{inbox}`\n"
+            f"- Alice bus (write): `{inbox / 'alice' / 'events.jsonl'}`\n"
+            f"- Architect bus (write): `{inbox / 'architect' / 'events.jsonl'}`\n"
+            f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
+            + DASHBOARD_CHAT_BLOCK
+        )
+
+    cwd_override = agent.get("cwd")
+    if cwd_override:
+        cwd = (ROOT / str(cwd_override)).resolve()
+
+    extra_prompt_files: list[Path] = []
+    for rel in agent.get("extra_prompts") or []:
+        extra_prompt_files.append((ROOT / str(rel)).resolve())
+
+    prompt_file = build_role_prompt(role_file, path_block, extra_prompt_files)
+    args = ["pi", "--approve", "--append-system-prompt", str(prompt_file)]
+
+    if model:
+        args.extend(["--model", str(model)])
+
+    ext_refs: list[str] = []
+    for name in agent.get("extensions") or []:
+        ok, ref = extension_allowed(str(name), agent_type, npm_reg)
+        if not ok:
+            print(f"extension {name!r} not allowed for type {agent_type}", file=sys.stderr)
+            return None
+        ext_refs.append(ref if ref.startswith("npm:") else ref)
+
+    for ref in ext_refs:
+        args.extend(["-e", ref])
+
+    if vault_raw or agent_id in vault_agents:
+        for skill in agent.get("skills") or []:
+            skill_dir = cwd / ".pi" / "skills" / str(skill)
+            if skill_dir.is_dir():
+                args.extend(["--skill", str(skill_dir)])
+
+    args.extend(extra)
+    model_str = str(model) if model else None
+    return cwd, args, prompt_file, model_str
+
+
+def headless_main() -> int:
+    if len(sys.argv) < 3:
+        print("usage: bin/launch headless <agent-id>  (prompt on stdin)", file=sys.stderr)
+        return 2
+    agent_id = sys.argv[2]
+    user_prompt = sys.stdin.read().strip()
+    if not user_prompt:
+        print("empty prompt on stdin", file=sys.stderr)
+        return 2
+    prepared = prepare_pi_launch(agent_id, [])
+    if prepared is None:
+        return 1
+    cwd, base_args, prompt_file, _model = prepared
+    args = base_args + ["-p", "--no-session", user_prompt]
+    print(f"cd {cwd} && {' '.join(base_args)} -p --no-session …", file=sys.stderr)
+    try:
+        r = subprocess.run(
+            args,
+            cwd=str(cwd),
+            env=os.environ.copy(),
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode != 0:
+            err = (r.stderr or r.stdout or "pi headless failed").strip()
+            print(err, file=sys.stderr)
+            return r.returncode if r.returncode else 1
+        out = (r.stdout or "").strip()
+        if out:
+            print(out)
+        return 0
+    finally:
+        try:
+            prompt_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == "headless":
+        return headless_main()
+    if len(sys.argv) < 2:
+        print("usage: bin/launch <agent-id> [-- extra pi args...]", file=sys.stderr)
+        print("       bin/launch headless <agent-id>  # prompt on stdin", file=sys.stderr)
+        return 2
+    agent_id = sys.argv[1]
+    extra: list[str] = []
+    if "--" in sys.argv:
+        extra = sys.argv[sys.argv.index("--") + 1 :]
+
+    prepared = prepare_pi_launch(agent_id, extra)
+    if prepared is None:
+        return 1
+    cwd, args, prompt_file, model = prepared
+    print(f"cd {cwd} && {' '.join(args)}", file=sys.stderr)
+
+    agent_inbox = fleet_inbox_root() / agent_id
+    agent_inbox.mkdir(parents=True, exist_ok=True)
+    session_path = agent_inbox / "session.json"
+
+    def remove_session() -> None:
+        try:
+            session_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def write_session(pid: int) -> None:
+        payload: dict = {
+            "pid": pid,
+            "agent": agent_id,
+            "model": model,
+            "started": datetime.now(timezone.utc).isoformat(),
+        }
+        if os.environ.get("FLEET_HERDR_SESSION"):
+            payload["backend"] = "herdr"
+            payload["herdr_session"] = os.environ["FLEET_HERDR_SESSION"]
+            for key, field in (
+                ("FLEET_HERDR_WORKSPACE_ID", "herdr_workspace_id"),
+                ("FLEET_HERDR_PANE_ID", "herdr_pane_id"),
+            ):
+                if os.environ.get(key):
+                    payload[field] = os.environ[key]
+        session_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    os.chdir(cwd)
+    child = subprocess.Popen(args, cwd=str(cwd), env=os.environ.copy())
+
+    def forward_signal(signum: int, _frame) -> None:
+        if child.poll() is None:
+            child.send_signal(signum)
+
+    signal.signal(signal.SIGINT, forward_signal)
+    signal.signal(signal.SIGTERM, forward_signal)
+
+    write_session(child.pid)
+    try:
+        return child.wait()
+    finally:
+        remove_session()
+        try:
+            prompt_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+if __name__ == "__main__":
+    sys.exit(main())

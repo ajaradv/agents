@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fleet</title>
+  <link rel="stylesheet" href="/pixel.css" />
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0" integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc" crossorigin="anonymous"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.3/dist/cdn.min.js"></script>
+  <style>[x-cloak] { display: none !important; }</style>
+</head>
+<body x-data="dashboardApp()" x-cloak :class="{ 'alice-open': aliceOpen }">
+  <header class="mast">
+    <div class="mast-captain">
+      <img class="portrait mast-face" src="/art/captain.png" width="56" height="56" alt="" />
+      <h1>Fleet</h1>
+    </div>
+    <p class="muted mast-hint"><kbd>⌘K</kbd> command</p>
+  </header>
+
+  <nav class="leaf-tabs" role="tablist" aria-label="Fleet sections">
+    <button type="button" class="tab" role="tab" id="tab-health" aria-controls="leaf-health"
+            :aria-selected="leaf === 'health'" :class="{ 'is-open': leaf === 'health' }"
+            @click="openLeaf('health')"><span class="punch" aria-hidden="true"></span>Health</button>
+    <button type="button" class="tab" role="tab" id="tab-fleet" aria-controls="leaf-fleet"
+            :aria-selected="leaf === 'fleet'" :class="{ 'is-open': leaf === 'fleet' }"
+            @click="openLeaf('fleet')"><span class="punch" aria-hidden="true"></span>Fleet</button>
+    <button type="button" class="tab" role="tab" id="tab-agents" aria-controls="leaf-agents"
+            :aria-selected="leaf === 'agents'" :class="{ 'is-open': leaf === 'agents', 'is-ring': waiting }"
+            @click="openLeaf('agents')"><span class="punch" aria-hidden="true"></span>Agents</button>
+    <button type="button" class="tab" id="tab-alice" aria-controls="alice-drawer" aria-haspopup="dialog"
+            :aria-expanded="aliceOpen" :class="{ 'is-open': aliceOpen }"
+            @click="toggleAlice()"><span class="punch" aria-hidden="true"></span>Alice</button>
+  </nav>
+
+  <main>
+    <section id="leaf-health" class="leaf" role="tabpanel" aria-labelledby="tab-health"
+             :class="{ 'is-open': leaf === 'health', 'is-hinge': hinge === 'health' }">
+      <h2>Health</h2>
+      <aside class="slip" x-show="waitSummary" x-cloak>
+        <p x-text="waitSummary"></p>
+      </aside>
+      <div class="stack">
+        <div id="usage" hx-get="/partials/usage" hx-trigger="load" hx-swap="innerHTML"></div>
+        <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerHTML"></div>
+      </div>
+    </section>
+
+    <section id="leaf-fleet" class="leaf" role="tabpanel" aria-labelledby="tab-fleet"
+             :class="{ 'is-open': leaf === 'fleet', 'is-hinge': hinge === 'fleet' }">
+      <h2>Fleet</h2>
+      <div id="fleet" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerHTML"></div>
+    </section>
+
+    <section id="leaf-agents" class="leaf" role="tabpanel" aria-labelledby="tab-agents"
+             :class="{ 'is-open': leaf === 'agents', 'is-hinge': hinge === 'agents' }">
+      <h2>Agents</h2>
+      <div class="grid-2">
+        <div id="agents" hx-get="/partials/agents" hx-trigger="load" hx-swap="innerHTML"></div>
+        <div id="agent-space">
+          <div x-show="selectedAgent" x-html="spaceHtml"></div>
+          <p class="muted" x-show="!selectedAgent">Open an agent to see its space and chat.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <aside id="alice-drawer" class="alice-drawer" role="dialog" aria-modal="true" aria-labelledby="alice-title"
+         :class="{ 'is-open': aliceOpen }" :aria-hidden="aliceOpen ? 'false' : 'true'" :inert="!aliceOpen">
+    <header class="alice-bar">
+      <div class="alice-who">
+        <img class="portrait" src="/art/alice.png" width="64" height="64" alt="" />
+        <div>
+          <h2 id="alice-title">Alice</h2>
+          <p class="muted">
+            <span x-text="aliceConn"></span>
+            <span x-text="aliceSession"></span>
+            <span class="warn" x-show="aliceThinking">thinking…</span>
+          </p>
+        </div>
+      </div>
+      <button type="button" class="btn" @click="closeAlice()">Close</button>
+    </header>
+    <div class="thread" x-ref="aliceLog" aria-live="polite">
+      <div class="bubble-row is-system" x-show="aliceEmpty" x-cloak>
+        <div class="bubble"><p>Alice is on the line.</p></div>
+      </div>
+    </div>
+    <form class="alice-compose" @submit.prevent="sendAlice">
+      <img class="avatar" src="/art/captain.png" width="48" height="48" alt="" />
+      <div class="composer">
+        <input class="field" x-ref="aliceField" x-model="aliceDraft" placeholder="Message Alice" autocomplete="off" aria-label="Message Alice" />
+        <button class="btn btn-ink" type="submit">Send</button>
+      </div>
+    </form>
+  </aside>
+
+  <button type="button" class="fab" :class="{ 'is-open': aliceOpen }" aria-label="Open Alice chat" @click="toggleAlice()">
+    <img class="fab-face" src="/art/alice.png" width="32" height="32" alt="" />
+    <span class="fab-label">Alice</span>
+  </button>
+
+  <div class="palette-backdrop" x-show="paletteOpen" x-cloak @click="closePalette()"></div>
+  <div class="palette" role="dialog" aria-label="Command palette" x-show="paletteOpen" x-cloak @click.stop>
+    <p class="palette-title">Command</p>
+    <input class="field palette-field" x-ref="paletteField" readonly aria-label="Command palette" />
+    <ul class="palette-list" role="listbox">
+      <template x-for="(item, idx) in paletteItems()" :key="item.id">
+        <li>
+          <button type="button" class="palette-item" :class="{ 'is-active': paletteIndex === idx }"
+                  @click="runPaletteItem(idx)" x-text="item.label"></button>
+        </li>
+      </template>
+    </ul>
+  </div>
+
+  <nav class="dock" aria-label="Fleet sections">
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'health' && !aliceOpen }" @click="openLeaf('health')">
+      <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M9 2h4v7h7v4h-7v7H9v-7H2V9h7z"/></svg>
+      Health
+    </button>
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'fleet' && !aliceOpen }" @click="openLeaf('fleet')">
+      <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M10 2h2v3h5v2h-1l2 8H4l2-8H5V5h5V2zm-5 15h12v3H5z"/></svg>
+      Fleet
+    </button>
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'agents' && !aliceOpen, 'is-ring': waiting }" @click="openLeaf('agents')">
+      <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M4 4h6v6H4zm8 0h6v6h-6zM4 12h6v6H4zm8 0h6v6h-6z"/></svg>
+      Agents
+    </button>
+    <button type="button" class="dock-btn" :class="{ 'is-open': aliceOpen }" :aria-expanded="aliceOpen" @click="toggleAlice()">
+      <img class="dock-face" src="/art/alice.png" width="22" height="22" alt="" />
+      Alice
+    </button>
+  </nav>
+
+  <script src="/app.js"></script>
+</body>
+</html>

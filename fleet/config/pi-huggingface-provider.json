@@ -1,0 +1,21 @@
+{
+  "_comment": "Merge into ~/.pi/agent/models-store.json (or your Pi models catalog). Never commit API keys.",
+  "providers": {
+    "huggingface": {
+      "apiKey": "${HF_API_KEY}",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "models": [
+        {
+          "id": "meta-llama/Meta-Llama-3-8B-Instruct",
+          "name": "HF Llama 3 8B Instruct (placeholder)",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 8192,
+          "maxTokens": 4096
+        }
+      ]
+    }
+  },
+  "usage_in_dispatch": "Replace model id after `pi --list-models huggingface`. Dispatch: huggingface/<id> with provider: huggingface",
+  "setup_note": "HF_API_KEY in 1Password Environment agents-fleet; launch also mirrors HF_TOKEN for older Pi snippets"
+}

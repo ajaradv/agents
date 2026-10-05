@@ -1,0 +1,27 @@
+id: architect
+type: assistant
+role: architect
+harness: pi
+model: cursor/grok-4.7@256k
+vault: /Users/avega/Workspace/brain
+extensions:
+  - cursor-sdk
+  - hermes-memory
+  - obsidian
+skills:
+  - obsidian-markdown
+  - obsidian-bases
+  - json-canvas
+  - obsidian-cli
+extra_prompts:
+  - prompts/system/sr_opus_5_system_prompt.md
+authority:
+  allow:
+    - plan-draft
+    - plan-review
+  deny:
+    - merge
+    - force-push
+    - secrets
+    - retire-home
+    - spawn

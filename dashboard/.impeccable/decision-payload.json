@@ -1,0 +1,164 @@
+{
+  "title": "Choose the fleet dashboard",
+  "question": "One world for the captain’s phone and laptop. Keep this, take an alternate, or re-roll.",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "Punched Pixel Leaves",
+      "kicker": "THE ROLL",
+      "lineage": "A tabbed reference board, redrawn as a pixel grid",
+      "thesis": "One leaf is open and readable. Health, fleet, and chat are leaves you hinge between, not a pile of cards.",
+      "palette": ["#f4efe4", "#1a1a1a", "#1f8a8a", "#e6b422", "#2a3fbf", "#d7263d"],
+      "materials": ["2px pixel grid", "punched-hole selection", "bitmap heads"],
+      "viewport": "A standard tab bar across the top. The open leaf is fleet health: usage and API balances as chunky meters, and one vermilion slip when something is waiting on you. Alice is a tab, not a footer.",
+      "risk": "If the hinge is slow, a live fleet feels filed in a book.",
+      "raised": [
+        { "from": "Centre-rail edition", "raise": "Agent state is a one-pixel detent, not a soft pill." },
+        { "from": "Star atlas", "raise": "The one hold waiting on you wears a single ring." },
+        { "from": "Title-card wall", "raise": "Only the open leaf is full strength; the other sections sit one ply down." }
+      ],
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "pixel tabs", "x": 0, "y": 0, "w": 12, "h": 1, "accent": true },
+          { "label": "health leaf", "x": 0, "y": 1, "w": 8, "h": 7 },
+          { "label": "waiting slip", "x": 8, "y": 1, "w": 4, "h": 3, "accent": true },
+          { "label": "agent detents", "x": 8, "y": 4, "w": 4, "h": 4 },
+          { "label": "alice composer", "x": 0, "y": 8, "w": 12, "h": 2 }
+        ]
+      }
+    },
+    {
+      "id": "model-pick",
+      "label": "Pocket Status Screen",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "A handheld status screen",
+      "thesis": "The phone is the console. Health is a title screen of pixel sprites; the laptop is the same screen, wider.",
+      "palette": ["#9bbc0f", "#0f380f", "#306230", "#8bac0f"],
+      "materials": ["4-color pixel sprites", "chunky bezel-free UI"],
+      "viewport": "Four agent sprites and their state across the top. Usage meters under them. Tap an agent and chat replaces the field. Phone is the same stack, one column.",
+      "risk": "This is the look most pixel dashboards already ship. Familiar, and easy to stop at costume.",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "agent sprites", "x": 0, "y": 0, "w": 12, "h": 3, "accent": true },
+          { "label": "usage meters", "x": 0, "y": 3, "w": 12, "h": 3 },
+          { "label": "chat field", "x": 0, "y": 6, "w": 12, "h": 4 }
+        ]
+      }
+    },
+    {
+      "id": "challenger-splitflap",
+      "label": "Departure Board",
+      "verdict": "wins",
+      "lineage": "A concourse split-flap board",
+      "thesis": "Projects and agents are rows. When state changes, the letters clack. The shell stays a normal dashboard.",
+      "palette": ["#1c1c1c", "#f4f1ea", "#e6b422", "#8f2d2d"],
+      "materials": ["flap cells", "fixed columns"],
+      "viewport": "A flap board of in-flight tasks leads. Usage sits in a side column. Tabs stay ordinary. A change from the bus flips one row, character by character.",
+      "case": "A captain already reads a fleet as departures. Rows keep every current fact scannable.",
+      "risk": "Flap motion on every SSE tick will feel noisy if it is not limited to real state changes.",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "tabs", "x": 0, "y": 0, "w": 12, "h": 1 },
+          { "label": "flap board", "x": 0, "y": 1, "w": 8, "h": 7, "accent": true },
+          { "label": "usage", "x": 8, "y": 1, "w": 4, "h": 7 },
+          { "label": "composer", "x": 0, "y": 8, "w": 12, "h": 2 }
+        ]
+      }
+    },
+    {
+      "id": "challenger-bitmap",
+      "label": "Bitmap Specimen",
+      "verdict": "wins",
+      "lineage": "A bitmap type specimen",
+      "thesis": "Pixel type does the shouting. The same face is huge for “waiting on you” and small for the numbers under it.",
+      "palette": ["#f7f3ea", "#111111", "#ff4d00"],
+      "materials": ["integer-scaled bitmap type", "newsprint ground"],
+      "viewport": "One bitmap headline states the fleet in a sentence. Under it, ordinary tables for usage, tasks, and agents. Phone keeps the headline and one table.",
+      "case": "This is pixel art as type, so the dashboard still reads as a tool. Phone scale is the same face, fewer columns.",
+      "risk": "A poster headline can shove the actual controls below the fold.",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "bitmap headline", "x": 0, "y": 0, "w": 12, "h": 3, "accent": true },
+          { "label": "usage table", "x": 0, "y": 3, "w": 6, "h": 4 },
+          { "label": "fleet table", "x": 6, "y": 3, "w": 6, "h": 4 },
+          { "label": "agent tabs", "x": 0, "y": 7, "w": 12, "h": 3 }
+        ]
+      }
+    },
+    {
+      "id": "challenger-gate",
+      "label": "Next Gate",
+      "verdict": "competitive",
+      "lineage": "Airport overhead signs",
+      "thesis": "The one thing that needs you is a yellow band with a huge label. Everything else is the corridor under it.",
+      "palette": ["#ffcc00", "#111111", "#ffffff", "#f4f4f4"],
+      "materials": ["overhead band", "pictogram squares"],
+      "viewport": "A sticky yellow band names the live hold or “clear”. Below it, standard panels for usage, fleet, and agents. On a phone the band is the whole first screen, with one next action.",
+      "case": "The captain’s job is often one decision. The band keeps that decision from hiding in a badge.",
+      "risk": "When nothing is waiting, the giant band has nothing honest to say.",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "yellow band", "x": 0, "y": 0, "w": 12, "h": 2, "accent": true },
+          { "label": "usage", "x": 0, "y": 2, "w": 12, "h": 3 },
+          { "label": "fleet", "x": 0, "y": 5, "w": 12, "h": 3 },
+          { "label": "agents", "x": 0, "y": 8, "w": 12, "h": 2 }
+        ]
+      }
+    },
+    {
+      "id": "challenger-rail",
+      "label": "Centre Rail",
+      "verdict": "declined",
+      "lineage": "A wide-margin reference edition",
+      "palette": ["#f3ead8", "#1a1a1a", "#c4342d"],
+      "materials": ["hairline rules", "bone paper"],
+      "case": "A captain does not open this to read an edition. The rail would hide chat and meters.",
+      "kept": "State marks are one device pixel, filled when pressed.",
+      "viewport": "Two text columns and a vermilion key rail."
+    },
+    {
+      "id": "challenger-stars",
+      "label": "Night Chart",
+      "verdict": "declined",
+      "lineage": "A star atlas under a red lamp",
+      "palette": ["#0b1c33", "#f4f1ea", "#ff5a36"],
+      "materials": ["magnitude dots", "chalk lines"],
+      "case": "Dots cannot carry balances, chat, or start and stop.",
+      "kept": "Whatever is waiting on you is the only thing ringed.",
+      "viewport": "A navy field of dots."
+    },
+    {
+      "id": "challenger-wall",
+      "label": "Title Wall",
+      "verdict": "declined",
+      "lineage": "A streaming poster wall",
+      "palette": ["#141414", "#f5f5f5", "#e50914"],
+      "materials": ["poster tiles"],
+      "case": "Agents are not shows. Artwork would replace the numbers.",
+      "kept": "One section is in focus; the others step back.",
+      "viewport": "Rows of posters."
+    }
+  ],
+  "reroll": { "registers": ["safer", "bolder"] },
+  "buildPath": { "value": "code", "toggle": false },
+  "canon": true,
+  "canonCard": {
+    "label": "The category standard",
+    "thesis": "A clean admin dashboard: side nav, cards, tables, one accent.",
+    "palette": ["#f8fafc", "#0f172a", "#2563eb"],
+    "materials": ["aligned grid", "standard controls"],
+    "viewport": "Left nav for agents. Main column for usage and fleet. Chat in the selected agent. Phone collapses the nav to a tab bar.",
+    "risk": "It will look like every other local admin tool."
+  },
+  "steer": true
+}

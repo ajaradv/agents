@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-05T05:20:00Z",
+  "title": "Design System: Fleet",
+  "extensions": {
+    "colorMeta": {
+      "bone": {
+        "role": "neutral",
+        "displayName": "Bone",
+        "canonical": "#f4efe4",
+        "tonalRamp": ["#2c281e", "#4a4334", "#6e6450", "#94886e", "#b8ae96", "#d8d0bc", "#f4efe4", "#fbf8f2"]
+      },
+      "sheet": {
+        "role": "neutral",
+        "displayName": "Sheet",
+        "canonical": "#fffaf2",
+        "tonalRamp": ["#3a3428", "#5c5344", "#857868", "#a89b88", "#c9bfae", "#e4dccb", "#fffaf2", "#fffdf9"]
+      },
+      "ink": {
+        "role": "primary",
+        "displayName": "Ink",
+        "canonical": "#1a1a1a",
+        "tonalRamp": ["#0a0a0a", "#1a1a1a", "#333333", "#4d4d4d", "#737373", "#a3a3a3", "#d4d4d4", "#f4f4f4"]
+      },
+      "quiet": {
+        "role": "neutral",
+        "displayName": "Quiet",
+        "canonical": "#3d4a3a",
+        "tonalRamp": ["#1a2218", "#3d4a3a", "#556352", "#73806e", "#96a392", "#b8c2b4", "#d6ddd4", "#eef2ec"]
+      },
+      "teal": {
+        "role": "secondary",
+        "displayName": "Teal",
+        "canonical": "#0f6e68",
+        "tonalRamp": ["#062e2c", "#0f6e68", "#148a82", "#1f8a8a", "#4aada6", "#7ec9c3", "#b7e4e0", "#e7f6f5"]
+      },
+      "yellow": {
+        "role": "secondary",
+        "displayName": "Yellow",
+        "canonical": "#8a6200",
+        "tonalRamp": ["#3d2b00", "#8a6200", "#b07d00", "#e6b422", "#f0c85a", "#f6dc8e", "#faebc0", "#fdf6e4"]
+      },
+      "ultra": {
+        "role": "secondary",
+        "displayName": "Ultramarine",
+        "canonical": "#2436a8",
+        "tonalRamp": ["#121a52", "#2436a8", "#2a3fbf", "#4d62d4", "#7a8ae0", "#a8b2ec", "#d0d6f6", "#eef0fb"]
+      },
+      "vermilion": {
+        "role": "tertiary",
+        "displayName": "Vermilion",
+        "canonical": "#9c1230",
+        "tonalRamp": ["#4a0814", "#9c1230", "#d7263d", "#e25a6a", "#ee8d98", "#f5b8be", "#fad8dc", "#fdf0f1"]
+      },
+      "hover-sheet": {
+        "role": "neutral",
+        "displayName": "Hover sheet",
+        "canonical": "#efe6d4",
+        "tonalRamp": ["#3a3224", "#5e5240", "#84745c", "#a89478", "#cbb89a", "#efe6d4", "#f6f1e6", "#fbf8f3"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The word Fleet." },
+      "headline": { "displayName": "Headline", "purpose": "The open leaf name." },
+      "title": { "displayName": "Title", "purpose": "Sheet titles inside a leaf." },
+      "body": { "displayName": "Body", "purpose": "Page copy in Silkscreen." },
+      "label": { "displayName": "Label", "purpose": "Meters, detents, tabs, and buttons." }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "hinge",
+        "value": "90ms steps(2, end)",
+        "purpose": "Two-frame clip from the left when a leaf opens. Disabled under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Ink button for Send and Start TUI.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\">Send</button>",
+      "css": ".ds-btn-primary { appearance: none; border: 1px solid #1a1a1a; background: #1a1a1a; color: #f4efe4; font-family: Silkscreen, ui-sans-serif, sans-serif; font-size: 0.72rem; padding: 0.35rem 0.55rem; cursor: pointer; border-radius: 0; } .ds-btn-primary:hover { background: #333333; } .ds-btn-primary:focus-visible { outline: 2px solid #2436a8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Sheet button for Stop TUI and Open space.",
+      "html": "<button class=\"ds-btn-secondary\" type=\"button\">Stop TUI</button>",
+      "css": ".ds-btn-secondary { appearance: none; border: 1px solid #1a1a1a; background: #fffaf2; color: #1a1a1a; font-family: Silkscreen, ui-sans-serif, sans-serif; font-size: 0.72rem; padding: 0.35rem 0.55rem; cursor: pointer; border-radius: 0; } .ds-btn-secondary:hover { background: #efe6d4; } .ds-btn-secondary:focus-visible { outline: 2px solid #2436a8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Leaf tab",
+      "kind": "nav",
+      "refersTo": "tab-selected",
+      "description": "Selected tab with a punched square.",
+      "html": "<button class=\"ds-tab\" type=\"button\"><span class=\"ds-punch\"></span>Health</button>",
+      "css": ".ds-tab { appearance: none; border: 1px solid #1a1a1a; background: #1a1a1a; color: #f4efe4; font-family: Silkscreen, ui-sans-serif, sans-serif; font-size: 0.8rem; padding: 0.45rem 0.7rem 0.45rem 0.45rem; display: inline-flex; align-items: center; gap: 0.45rem; cursor: pointer; border-radius: 0; } .ds-punch { width: 10px; height: 10px; border: 1px solid currentColor; background: #1a1a1a; box-shadow: inset 0 0 0 2px #f4efe4; display: inline-block; } .ds-tab:focus-visible { outline: 2px solid #2436a8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Sheet",
+      "kind": "card",
+      "refersTo": "sheet",
+      "description": "Square ink-bordered container for a meter or an agent.",
+      "html": "<article class=\"ds-sheet\"><h3 class=\"ds-sheet-title\">Claude</h3><span class=\"ds-meter\">100%</span></article>",
+      "css": ".ds-sheet { background: #fffaf2; border: 1px solid #1a1a1a; color: #1a1a1a; padding: 0.85rem 0.95rem 1rem; border-radius: 0; font-family: Silkscreen, ui-sans-serif, sans-serif; display: flex; justify-content: space-between; align-items: start; gap: 0.75rem; } .ds-sheet-title { margin: 0; font-size: 1rem; font-weight: 400; text-transform: capitalize; } .ds-meter { border: 1px solid #0f6e68; color: #0f6e68; padding: 0.1rem 0.35rem; font-size: 0.8rem; }"
+    },
+    {
+      "name": "Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "Composer field in the Alice panel.",
+      "html": "<input class=\"ds-field\" type=\"text\" placeholder=\"Message Alice\" />",
+      "css": ".ds-field { border: 1px solid #1a1a1a; background: #fffaf2; color: #1a1a1a; font-family: Silkscreen, ui-sans-serif, sans-serif; font-size: 0.85rem; padding: 0.45rem 0.55rem; border-radius: 0; caret-color: #2436a8; } .ds-field:focus-visible { outline: 2px solid #2436a8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Detent",
+      "kind": "chip",
+      "refersTo": "button-secondary",
+      "description": "One-pixel state mark beside an agent or a task.",
+      "html": "<span class=\"ds-detent\">chat ready</span>",
+      "css": ".ds-detent { display: inline-flex; align-items: center; gap: 0.35rem; font-family: Silkscreen, ui-sans-serif, sans-serif; font-size: 0.72rem; color: #0f6e68; } .ds-detent::before { content: \"\"; width: 6px; height: 6px; background: #0f6e68; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Punched Pixel Leaves",
+    "overview": "The dashboard is a tabbed board drawn on a pixel grid. One leaf is open. Health, fleet, agents, and Alice are sections you hinge between. Color marks state. The only motion is a 90ms two-frame hinge.",
+    "keyCharacteristics": [
+      "One open leaf",
+      "Bone ground on an 8px registration grid",
+      "Silkscreen at weight 400",
+      "Punched-square selection",
+      "Single column below 640px"
+    ],
+    "rules": [
+      {
+        "name": "The State Color Rule",
+        "body": "Teal, yellow, ultramarine, and vermilion mark state. They are not decoration on headings.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Leaf Rule",
+        "body": "Only the open section is displayed.",
+        "section": "colors"
+      },
+      {
+        "name": "The Bitmap Rule",
+        "body": "Self-host Silkscreen. Do not load a hosted font stylesheet.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Rule",
+        "body": "No drop shadows, glass, or blur. The hinge is the only depth cue.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep one leaf open and put Alice’s composer in the full-height panel.",
+      "Do use the recorded hex values.",
+      "Do stack sheets to one column below 640px."
+    ],
+    "donts": [
+      "Don't add a radius, a drop shadow, glass, or gray secondary text.",
+      "Don't put a kicker above a heading.",
+      "Don't load Tailwind, DaisyUI, or a hosted font stylesheet."
+    ]
+  }
+}

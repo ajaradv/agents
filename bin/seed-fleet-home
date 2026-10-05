@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Copy firstmate distro into fleet/home (operational FM_HOME), excluding submodule metadata.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SRC="$ROOT/vendor/firstmate"
+DST="$ROOT/fleet/home"
+if [[ ! -f "$SRC/AGENTS.md" ]]; then
+  echo "missing $SRC; run bin/setup" >&2
+  exit 1
+fi
+mkdir -p "$DST"
+rsync -a --delete \
+  --exclude '.git' \
+  --exclude 'state/' \
+  "$SRC/" "$DST/"
+
+CONFIG_SRC="$ROOT/fleet/config"
+CONFIG_DST="$DST/config"
+if [[ -d "$CONFIG_SRC" ]]; then
+  mkdir -p "$CONFIG_DST"
+  for f in "$CONFIG_SRC"/*; do
+    [[ -f "$f" ]] || continue
+    base="$(basename "$f")"
+    if [[ -f "$CONFIG_DST/$base" ]]; then
+      echo "skip config/$base (already exists in fleet/home)"
+    else
+      cp "$f" "$CONFIG_DST/$base"
+      echo "installed config/$base"
+    fi
+  done
+fi
+
+echo "seeded fleet/home from vendor/firstmate"
