@@ -69,7 +69,7 @@ just alice-op              # op run --env-file=fleet/home/.env.op (see fleet/con
 just firstmate-op
 just architect             # Pi + grok-4.7@256k, vault cwd, plan review primary
 just shipwright            # Pi + composer-2.5, repo cwd, new agents + SSSF stamping
-just designer              # Pi + gpt-5.5, project cwd per request, impeccable design decisions
+just designer              # Pi + gpt-5.5, whole impeccable sessions; shares its session with dashboard chat
 just architect-op
 just dashboard             # http://127.0.0.1:8787 — usage, fleet, chat rail, Firstmate TUI start/stop
 bin/launch alice -- -p "…" # extra pi args after --

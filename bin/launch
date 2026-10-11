@@ -407,6 +407,31 @@ def prepare_pi_launch(
     return cwd, args, prompt_file, model_str
 
 
+def persistent_session_args(agent_id: str) -> list[str]:
+    """Shared Pi session for agents with `dashboard_session: persistent`.
+
+    Dashboard turns and the interactive TUI (`just <id>`, or Start TUI on the
+    dashboard) resume the same session, so the conversation carries across both.
+    Delete fleet/inbox/<id>/sessions/ to start the agent fresh.
+    """
+    agent = parse_simple_yaml(ROOT / "agents" / agent_id / "agent.yaml")
+    if str(agent.get("dashboard_session") or "") != "persistent":
+        return []
+    session_dir = fleet_inbox_root() / agent_id / "sessions"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return ["--session-dir", str(session_dir), "--session-id", f"dashboard-{agent_id}"]
+
+
+def tui_pid_alive(agent_id: str) -> int | None:
+    """PID of a live interactive session for agent_id (fleet/inbox/<id>/session.json), else None."""
+    try:
+        pid = int(json.loads((fleet_inbox_root() / agent_id / "session.json").read_text())["pid"])
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def headless_main() -> int:
     if len(sys.argv) < 3:
         print("usage: bin/launch headless <agent-id>  (prompt on stdin)", file=sys.stderr)
@@ -420,14 +445,21 @@ def headless_main() -> int:
     if prepared is None:
         return 1
     cwd, base_args, prompt_file, _model = prepared
-    agent = parse_simple_yaml(ROOT / "agents" / agent_id / "agent.yaml")
-    if str(agent.get("dashboard_session") or "") == "persistent":
-        # One ongoing Pi session per agent for dashboard turns, so each message
-        # does not start cold. Delete the folder to start the agent fresh.
-        session_dir = fleet_inbox_root() / agent_id / "sessions"
-        session_dir.mkdir(parents=True, exist_ok=True)
-        session_args = ["--session-dir", str(session_dir), "--session-id", f"dashboard-{agent_id}"]
-    else:
+    session_args = persistent_session_args(agent_id)
+    if session_args and tui_pid_alive(agent_id):
+        # Both would write the same session file. The TUI is the live one.
+        print(
+            f"{agent_id} is open in its TUI right now, so this message was not run. "
+            f"Answer it there (herdr pane fleet-{agent_id}, or the terminal running `just {agent_id}`), "
+            "or close the TUI to chat here again.",
+            file=sys.stderr,
+        )
+        try:
+            prompt_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return 3
+    if not session_args:
         session_args = ["--no-session"]
     args = base_args + ["-p", *session_args, user_prompt]
     print(f"cd {cwd} && {' '.join(base_args)} -p {' '.join(session_args)} …", file=sys.stderr)
@@ -489,6 +521,9 @@ def main() -> int:
     if prepared is None:
         return 1
     cwd, args, prompt_file, model = prepared
+    session_flags = ("--session", "--session-id", "--session-dir", "--no-session", "--continue", "-c", "--resume", "-r", "--fork")
+    if not any(a in session_flags for a in extra):
+        args += persistent_session_args(agent_id)
     print(f"cd {cwd} && {' '.join(args)}", file=sys.stderr)
 
     agent_inbox = fleet_inbox_root() / agent_id

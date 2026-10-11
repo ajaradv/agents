@@ -4,8 +4,9 @@ role: designer
 harness: pi
 model: cursor/gpt-5.5@272k
 workspace: ships
-# Design turns run impeccable end to end; give them room and keep one session.
-turn_timeout: 900
+# Design turns run impeccable end to end; give them room and keep one session
+# shared with the TUI (Start TUI on the dashboard, or just designer).
+turn_timeout: 1800
 dashboard_session: persistent
 extensions:
   - cursor-sdk
@@ -16,10 +17,13 @@ authority:
     - status
     - design-records
     - design-review
+    - ui-code
+    - design-branch
   deny:
     - merge
     - force-push
     - secrets
     - retire-home
     - spawn
-    - ship-code
+    - push
+    - backend-code

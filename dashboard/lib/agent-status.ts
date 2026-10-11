@@ -101,7 +101,7 @@ export async function resolveAgentStatus(agentId: string): Promise<AgentStatusVi
     } else if (pidOnly) {
       tuiState = "open";
       tuiMessage =
-        "Firstmate already running (session pid). Attach your terminal — do not Start TUI again.";
+        `${agentId === "firstmate" ? "Firstmate" : agentId} already running (session pid). Attach your terminal — do not Start TUI again.`;
     } else if (lc?.state === "starting" || lc?.state === "stopping") {
       tuiState = lc.state;
       tuiMessage = lc.message;

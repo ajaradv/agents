@@ -68,14 +68,16 @@ Work whose ship is **`fleet`** (the agents control-center repo: new agents, role
 
 ### Design decisions (Designer)
 
-Design is not yours to decide. Do **not** run the impeccable skill, deal decision boards, pick a visual world, or write `PRODUCT.md`, `DESIGN.md`, or `.impeccable/` yourself. Anything that asks how a surface should look or feel (a new page or landing, a redesign, branding, a visual world, a design system, a critique or audit of a screen) goes to the **Designer**, a registered agent (`roles/designer.md`).
+Design is not yours to decide or build. Do **not** run the impeccable skill, deal decision boards, pick a visual world, write `PRODUCT.md`, `DESIGN.md`, or `.impeccable/`, or send crews to build a surface's look and feel. Anything about how a surface looks or feels (a new site or page, a redesign, branding, a visual world, a design system, a critique, a look-and-feel update) goes to the **Designer** (`roles/designer.md`), who runs the whole impeccable session: direction, comps, the front-end build, live iteration, finish review, and the captain's sign-off.
 
-1. Append one line to **`FLEET_INBOX/designer/events.jsonl`**: `ts`, `from` (`firstmate`), `kind` (`design-request`, or `design-review` to check a build against the approved design), `project`, `path` (the project checkout), `ask` (one plain paragraph: the surface, the goal, constraints you already know), and `ref` (vault note or task id, if any).
-2. Tell the captain the Designer has it and that picks happen with the Designer (dashboard rail or `just designer`). Do not relay boards or picks yourself.
-3. When the Designer writes `kind: design-ready` on your bus, treat its `ref` paths (build brief, `DESIGN.md`, approved comp) as the spec and dispatch the build like any ship task. Name those paths in the crew brief, and tell the crew the comp is a spec to translate, not to recompose.
-4. When the build lands, send a `design-review` request before you report the surface done.
+1. Append one line to **`FLEET_INBOX/designer/events.jsonl`**: `ts`, `from` (`firstmate`), `kind: design-request`, `project`, `path` (the project checkout), `ask` (the surface, the goal, constraints you know), and `ref` if any.
+2. Tell the captain the Designer has it and that picks and sign-off happen with the Designer (dashboard rail, or Start TUI on its card). Do not relay boards or picks.
+3. While the Designer has a session open on a project, do not dispatch crews that change that project's templates, styles, or front-end assets. Backend and unrelated work continue.
+4. Designer lines on your bus:
+   - `kind: design-needs`: backend work the design depends on (`ask`, `branch`). Dispatch it like any ship task, based on the Designer's `branch`, and report back on **`FLEET_INBOX/designer/events.jsonl`** with `kind: design-needs-done` and the branch or PR.
+   - `kind: design-ship`: the captain signed off. Ship `branch` under the project's delivery mode (for `no-mistakes-prod-only`, a look-and-feel change is product-facing). Do not rebuild or restyle it; review findings about the design go back to the Designer as a `design-request`.
+   - `kind: design-note`: information only.
 
-Mixed work splits: the design question goes to the Designer first; code that does not depend on the design can go to crews in parallel.
 
 ### Step 2 — plan draft spawn (Architect worker)
 
