@@ -49,6 +49,14 @@ Stack: htmx 4 and Alpine.js. Health, Fleet, and Agents are leaves. Alice is a fu
 
 **Fleet overview** polls read-only `fm-fleet-snapshot --json` plus `state/home-summary.json` and `data/projects.md`: a Firstmate status card (home state, summary validity, heartbeat, TUI attach) and one card per registered project (active, queued, waiting). Extra work without a registered ship still gets a card. It does not start workers.
 
+The leaf has three layers, drawn separately because they can overlap:
+
+| Layer | Source | Notes |
+|---|---|---|
+| Projects | `fleet/home/data/projects.md` | Firstmate's registry. The dashboard reads it, never writes it. |
+| Ships | `fleet/ships/*.yaml` | Path, mode, factory, and the ADW chains found in `<ship>/adws/adw_*.py`. Flags ships not registered with Firstmate. |
+| Initiatives | `{ALICE_VAULT}/fleet/initiatives/*.md` | Vault-only. Frontmatter `title`, `status` (`active`/`paused`/`done`), `ships`, `projects`, `plans`. Hidden when the folder is missing; `bin/setup-alice-vault` creates it. |
+
 SSE **`/events`** sends comment heartbeats every 15s to keep the chunked stream alive.
 
 ## Hermes

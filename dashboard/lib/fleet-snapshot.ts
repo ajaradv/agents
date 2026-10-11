@@ -2,6 +2,12 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { syncCaptainWait, type WaitHold } from "./captain-wait.ts";
 import { firstmateTuiReachable, FM_HOME } from "./firstmate-chat.ts";
+import {
+  initiativesSectionHtml,
+  readInitiatives,
+  readShips,
+  shipsSectionHtml,
+} from "./fleet-layers.ts";
 import { fleetInboxRoot } from "./paths.ts";
 import { escapeHtml } from "./quota.ts";
 
@@ -348,13 +354,16 @@ function taskProject(t: SnapshotTask): string {
 }
 
 export async function fleetStripHtml(): Promise<string> {
-  const [snap, heartbeat, home, projects, tui] = await Promise.all([
+  const [snap, heartbeat, home, projects, tui, ships, initiatives] = await Promise.all([
     runFleetSnapshotJson(),
     readLatestFirstmateHeartbeat(),
     readHomeSummary(),
     readRegisteredProjects(),
     firstmateTuiReachable(),
+    readShips(),
+    readInitiatives(),
   ]);
+  const projectIds = new Set(projects.map((p) => p.id));
 
   const holds = snap.ok ? collectCaptainHolds(snap) : [];
   if (snap.ok) await syncCaptainWait(holds);
@@ -363,6 +372,8 @@ export async function fleetStripHtml(): Promise<string> {
     return `<div class="stack">
       ${firstmateCard({ home, heartbeat, tui, holds })}
       <p class="warn">${escapeHtml(snap.error ?? "snapshot unavailable")}</p>
+      ${shipsSectionHtml(ships, projectIds)}
+      ${initiativesSectionHtml(initiatives, () => 0)}
     </div>`;
   }
 
@@ -466,5 +477,7 @@ export async function fleetStripHtml(): Promise<string> {
       <span class="muted">${projects.length} registered</span>
     </div>
     <div class="grid-2">${cards.join("")}</div>
+    ${shipsSectionHtml(ships, projectIds)}
+    ${initiativesSectionHtml(initiatives, (id) => activeByProject.get(id)?.length ?? 0)}
   </div>`;
 }

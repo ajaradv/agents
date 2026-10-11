@@ -113,7 +113,7 @@ just firstmate        # scout on lineage_atria should prefer claude, then cursor
 - Vault: `/Users/avega/Workspace/brain` (open in Obsidian).
 - Human inbox: `brain/fleet/inbox/` — drop notes; Alice reads them at session start.
 - Agent bus (this repo): `fleet/inbox/alice/events.jsonl`, `fleet/inbox/firstmate/events.jsonl`, `fleet/inbox/architect/events.jsonl`.
-- Ideas / requests / plans: `brain/fleet/ideas/`, `brain/fleet/requests/`, `brain/fleet/plans/` — see [docs/architect.md](docs/architect.md).
+- Ideas / requests / initiatives / plans: `brain/fleet/ideas/`, `brain/fleet/requests/`, `brain/fleet/initiatives/`, `brain/fleet/plans/` — see [docs/architect.md](docs/architect.md).
 
 **Tools** ([pi-obsidian](https://pi.dev/packages/pi-obsidian)): read, search, append, tags, backlinks, Kanban, Canvas, daily notes.
 

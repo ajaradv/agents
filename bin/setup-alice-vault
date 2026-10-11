@@ -9,6 +9,7 @@ mkdir -p "$INBOX" "$INBOX/done" "${VAULT}/.pi/skills"
 mkdir -p \
   "${VAULT}/fleet/ideas" \
   "${VAULT}/fleet/requests" \
+  "${VAULT}/fleet/initiatives" \
   "${VAULT}/fleet/plans/project" \
   "${VAULT}/fleet/plans/feature" \
   "${VAULT}/fleet/plans/bugfix" \
@@ -29,4 +30,4 @@ done
 # Hermes and Obsidian are listed in agents/alice/agent.yaml only; bin/launch loads them
 # with -ne -e npm:… (not ~/.pi/agent/settings.json packages).
 
-echo "vault ready at $VAULT (human inbox: $INBOX; ideas/requests/plans under fleet/)"
+echo "vault ready at $VAULT (human inbox: $INBOX; ideas/requests/initiatives/plans under fleet/)"
