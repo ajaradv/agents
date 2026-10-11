@@ -54,6 +54,10 @@ Read the vault **`ref`** on each request. You do not draft architecture plans in
 
 **Needs a plan** when any of: new project, multi-file or ambiguous feature, unclear ship, architecture or API choice, or the source is only an **`fleet/ideas/`** note with no implementation shape.
 
+### Fleet ship (this repo)
+
+Work whose ship is **`fleet`** (the agents control-center repo: new agents, roles, dispatch rules, dashboard, stamping SSSF onto a ship) goes to a **Shipwright**-role worker: `roles/shipwright.md` as the role, workspace this repo. Shipwright uses `bin/new-agent` and `bin/stamp-ship`; writes outside this repo need a captain yes, so expect a hold for those. Shipwright reports back with `kind: repo-change` on your bus.
+
 ### Step 2 — plan draft spawn (Architect worker)
 
 When step 1 says needs a plan:

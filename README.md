@@ -20,6 +20,8 @@ bin/launch                 start an agent from agent.yaml
 bin/setup                  submodules + bun + alice vault
 bin/setup-alice-vault      brain inbox + obsidian skill symlinks
 bin/seed-fleet-home        copy vendor/firstmate → fleet/home
+bin/new-agent              scaffold agents/<id>, roles/<id>.md, just recipe, inbox, README row
+bin/stamp-ship             fleet/ships/<id>.yaml + copy SSSF into a ship + install.py (+ optional Firstmate registration)
 docs/harness-auth.md       per-harness login and API keys
 docs/onepassword.md        vault Fleet, Environment agents-fleet
 docs/remote-ops.md         Herdr secondmates, Alice relocate, SDLC, phone SSH
@@ -64,6 +66,7 @@ just firstmate             # Pi + cursor-sdk, grok-4.7@256k, fleet/home
 just alice-op              # op run --env-file=fleet/home/.env.op (see fleet/config/env.op.example)
 just firstmate-op
 just architect             # Pi + grok-4.7@256k, vault cwd, plan review primary
+just shipwright            # Pi + composer-2.5, repo cwd, new agents + SSSF stamping
 just architect-op
 just dashboard             # http://127.0.0.1:8787 — usage, fleet, chat rail, Firstmate TUI start/stop
 bin/launch alice -- -p "…" # extra pi args after --
@@ -80,6 +83,7 @@ Default models (Cursor via `pi-cursor-sdk`, listed per agent, not in `~/.pi/agen
 | Alice | `cursor/composer-2.5` | Vault inbox and ship-shaped actions on Cursor |
 | Firstmate | `cursor/grok-4.7@256k` | Routing, supervision, and recon-shaped primary work |
 | Architect | `cursor/grok-4.7@256k` | Interactive plan review; workers spawned by Firstmate |
+| Shipwright | `cursor/composer-2.5` | Repo upkeep: new agents, ship stamping |
 
 ## Crew dispatch and billing lanes
 
@@ -121,6 +125,8 @@ just firstmate        # scout on lineage_atria should prefer claude, then cursor
 **Skills** ([kepano/obsidian-skills](https://github.com/kepano/obsidian-skills)): OFM, Bases, JSON Canvas, CLI — linked under `brain/.pi/skills/`. Query routing is in [roles/alice.md](roles/alice.md).
 
 ## Stamp / refresh a factory on a ship
+
+Preferred: `bin/stamp-ship <id> <path> [--adws ...] [--mode ...] [--register "desc"] --dry-run`, or ask **Shipwright** (`just shipwright` or the dashboard rail). The manual steps below are what the script runs.
 
 From this repo (source of truth for SSSF):
 

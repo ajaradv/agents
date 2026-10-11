@@ -302,6 +302,23 @@ def prepare_pi_launch(
                 pass  # added below in args
             else:
                 print(f"warning: skill missing {skill_dir} (run bin/setup-alice-vault)", file=sys.stderr)
+    elif str(agent.get("workspace") or "") == "repo":
+        # Repo-upkeep agents (shipwright): work in this repo, not the vault or FM_HOME.
+        cwd = ROOT
+        vault_path = Path(os.environ.get("ALICE_VAULT", "/Users/avega/Workspace/brain")).expanduser()
+        path_block = (
+            "## Resolved paths (this session)\n\n"
+            f"- **Repo (cwd):** `{ROOT}`\n"
+            f"- **FLEET_INBOX:** `{inbox}`\n"
+            f"- Agents: `{ROOT / 'agents'}/`, roles: `{ROOT / 'roles'}/`\n"
+            f"- Ships: `{ROOT / 'fleet' / 'ships'}/`\n"
+            f"- SSSF source: `{ROOT / '.claude' / 'skills' / 'sssf'}/`\n"
+            f"- Firstmate project registry (read; write only with captain yes): `{FLEET_HOME / 'data' / 'projects.md'}`\n"
+            f"- Vault initiatives (read only): `{vault_path / 'fleet' / 'initiatives'}/`\n"
+            f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
+            f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
+            + DASHBOARD_CHAT_BLOCK
+        )
     else:
         home = FLEET_HOME
         cwd = home
@@ -346,6 +363,14 @@ def prepare_pi_launch(
             skill_dir = cwd / ".pi" / "skills" / str(skill)
             if skill_dir.is_dir():
                 args.extend(["--skill", str(skill_dir)])
+
+    # Repo-relative skill folders (each holds a SKILL.md), for any agent type.
+    for rel in agent.get("skill_paths") or []:
+        skill_dir = (ROOT / str(rel)).resolve()
+        if (skill_dir / "SKILL.md").is_file():
+            args.extend(["--skill", str(skill_dir)])
+        else:
+            print(f"warning: skill_paths entry missing SKILL.md: {skill_dir}", file=sys.stderr)
 
     args.extend(extra)
     model_str = str(model) if model else None

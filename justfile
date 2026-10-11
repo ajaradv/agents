@@ -70,6 +70,9 @@ architect-op:
     fi
     cd "$root" && op run --env-file="$op_env" -- bin/launch architect
 
+shipwright:
+    cd "{{root}}" && bin/launch shipwright
+
 # ── single extensions (same names as atria-factory) ───────────────────────
 
 pure-focus:
