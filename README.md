@@ -39,6 +39,7 @@ agents/alice/improvements/ phone chat/voice action plans (later)
 | `lineage_atria` | `/Users/avega/Workspace/lineage_atria` | `.claude/skills/sssf` (stamped) |
 | `pochteca` | `/Users/avega/Workspace/pochteca` | none yet |
 | `fleet` | this repo | none (meta ship) |
+| `kinwork` | `/Users/avega/Workspace/Kinwork` | none (Django; design records from the Designer) |
 
 Record definitions: [fleet/ships/](fleet/ships/).
 

@@ -4,6 +4,9 @@ role: designer
 harness: pi
 model: cursor/gpt-5.5@272k
 workspace: ships
+# Design turns run impeccable end to end; give them room and keep one session.
+turn_timeout: 900
+dashboard_session: persistent
 extensions:
   - cursor-sdk
 extra_prompts:

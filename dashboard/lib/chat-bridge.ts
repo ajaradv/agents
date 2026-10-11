@@ -1,4 +1,4 @@
-import { open, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   appendAgentChat,
@@ -10,7 +10,7 @@ import {
 import { allChatTargetIds, chatTarget } from "./chat-targets.ts";
 import { dashLog } from "./log.ts";
 import { spawnTimed } from "./proc.ts";
-import { ROOT } from "./paths.ts";
+import { fleetInboxRoot, ROOT } from "./paths.ts";
 import {
   firstmateTuiReachable,
   formatFirstmateSendError,
@@ -193,15 +193,39 @@ async function runTaskTurn(taskId: string, captainLine: ChatLine): Promise<void>
   );
 }
 
+/** What a stopped turn already reported on Firstmate's bus, so a timeout does not read as "did nothing". */
+async function busWorkSince(agentId: string, since: string): Promise<string> {
+  let text = "";
+  try {
+    text = await readFile(join(fleetInboxRoot(), "firstmate", "events.jsonl"), "utf8");
+  } catch {
+    return "";
+  }
+  const done: string[] = [];
+  for (const raw of text.trim().split("\n").slice(-200)) {
+    try {
+      const o = JSON.parse(raw) as { ts?: string; from?: string; summary?: string; ref?: unknown };
+      if (o.from !== agentId || !o.ts || new Date(o.ts) < new Date(since)) continue;
+      const refs = Array.isArray(o.ref) ? o.ref.join(", ") : typeof o.ref === "string" ? o.ref : "";
+      done.push(`${o.summary ?? ""}${refs ? ` (${refs})` : ""}`.trim());
+    } catch {
+      /* skip */
+    }
+  }
+  return done.length ? ` Before it stopped it reported: ${done.join("; ")}` : "";
+}
+
 async function runHeadlessTurn(agentId: string, captainLine: ChatLine): Promise<void> {
   const history = await readCaptainChat(agentId, CONTEXT_LINES * 2);
   const prompt = buildTurnPrompt(history);
   const launch = join(ROOT, "bin/launch");
+  const timeoutMs = (chatTarget(agentId)?.turnTimeoutSec ?? 0) * 1000 || TURN_TIMEOUT_MS;
+  const startedAt = new Date().toISOString();
   await dashLog("chat-turn", `start ${agentId}`);
   let res;
   try {
     res = await spawnTimed(["python3", launch, "headless", agentId], {
-      timeoutMs: TURN_TIMEOUT_MS,
+      timeoutMs,
       stdin: prompt,
       cwd: ROOT,
       env: process.env,
@@ -222,7 +246,8 @@ async function runHeadlessTurn(agentId: string, captainLine: ChatLine): Promise<
       captainLine,
       "timeout",
       res.ms,
-      `${agentId} did not reply in time (${TURN_TIMEOUT_MS / 1000}s).`,
+      `${agentId} did not reply in time (${timeoutMs / 1000}s); the turn was stopped.` +
+        (await busWorkSince(agentId, startedAt)),
     );
     return;
   }

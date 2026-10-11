@@ -21,6 +21,8 @@ export type ChatTarget = {
   art: string | null;
   model?: string;
   description?: string;
+  /** Seconds one dashboard turn may run (agent.yaml `turn_timeout:`). */
+  turnTimeoutSec?: number;
   /** Task role on the rail: crew or secondmate. */
   role?: "crew" | "secondmate";
   state?: string;
@@ -69,6 +71,7 @@ async function refreshAgents(): Promise<void> {
       art: agentArtOrNull(a.id),
       model: a.model,
       description: a.description,
+      turnTimeoutSec: a.turnTimeoutSec || undefined,
     }));
 }
 

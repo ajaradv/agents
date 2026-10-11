@@ -10,6 +10,8 @@ export type AgentMeta = {
   harness: string;
   /** `description:` from the roles/<role>.md frontmatter; empty when absent. */
   description: string;
+  /** `turn_timeout:` seconds for one dashboard turn; 0 means the bridge default. */
+  turnTimeoutSec: number;
 };
 
 function parseAgentYaml(text: string): Record<string, string> {
@@ -58,6 +60,7 @@ export async function loadAgents(): Promise<AgentMeta[]> {
         model: y.model ?? "",
         harness: y.harness ?? "pi",
         description: await readRoleDescription(role),
+        turnTimeoutSec: Math.max(0, Math.min(3600, Number(y.turn_timeout) || 0)),
       });
     } catch {
       /* skip */

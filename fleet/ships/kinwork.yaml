@@ -1,0 +1,6 @@
+id: kinwork
+path: /Users/avega/Workspace/Kinwork
+orchestrator: firstmate
+crew: []
+factory: null
+mode: no-mistakes-prod-only

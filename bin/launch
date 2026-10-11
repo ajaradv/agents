@@ -409,21 +409,45 @@ def headless_main() -> int:
     if prepared is None:
         return 1
     cwd, base_args, prompt_file, _model = prepared
-    args = base_args + ["-p", "--no-session", user_prompt]
-    print(f"cd {cwd} && {' '.join(base_args)} -p --no-session …", file=sys.stderr)
+    agent = parse_simple_yaml(ROOT / "agents" / agent_id / "agent.yaml")
+    if str(agent.get("dashboard_session") or "") == "persistent":
+        # One ongoing Pi session per agent for dashboard turns, so each message
+        # does not start cold. Delete the folder to start the agent fresh.
+        session_dir = fleet_inbox_root() / agent_id / "sessions"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_args = ["--session-dir", str(session_dir), "--session-id", f"dashboard-{agent_id}"]
+    else:
+        session_args = ["--no-session"]
+    args = base_args + ["-p", *session_args, user_prompt]
+    print(f"cd {cwd} && {' '.join(base_args)} -p {' '.join(session_args)} …", file=sys.stderr)
+    proc = subprocess.Popen(
+        args,
+        cwd=str(cwd),
+        env=os.environ.copy(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    def stop_child(signum, _frame):
+        # The dashboard stops a turn by signalling this launcher; take pi down
+        # with it so a timed-out agent does not keep working unseen.
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        sys.exit(128 + signum)
+
+    signal.signal(signal.SIGTERM, stop_child)
+    signal.signal(signal.SIGINT, stop_child)
     try:
-        r = subprocess.run(
-            args,
-            cwd=str(cwd),
-            env=os.environ.copy(),
-            capture_output=True,
-            text=True,
-        )
-        if r.returncode != 0:
-            err = (r.stderr or r.stdout or "pi headless failed").strip()
+        stdout, stderr = proc.communicate()
+        if proc.returncode != 0:
+            err = (stderr or stdout or "pi headless failed").strip()
             print(err, file=sys.stderr)
-            return r.returncode if r.returncode else 1
-        out = (r.stdout or "").strip()
+            return proc.returncode if proc.returncode else 1
+        out = (stdout or "").strip()
         if out:
             print(out)
         return 0

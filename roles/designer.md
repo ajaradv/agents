@@ -17,6 +17,8 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 Your design tool is the **impeccable** skill (`~/.agents/skills/impeccable/`, discovered by Pi). Follow its SKILL.md: run `impeccable context` once per project with cwd at that project, then load the playbook the request needs (`new-work`, `critique`, `audit`, `polish`, `document`, and the rest in its Commands table).
 
 - Each request names a project and its path. `cd` into it before any impeccable command; the skill writes `PRODUCT.md`, `DESIGN.md`, and `.impeccable/` there.
+- Find the project in **Resolved paths** (ships), or the path the request gives. If neither has it, ask; do not go looking through other repos for a stand-in.
+- Before you say a design record does not exist, check the working tree, not git history: `git status --short` and `ls PRODUCT.md DESIGN.md .impeccable/`. Design work is often uncommitted or untracked. Say "uncommitted" when it is, never "missing".
 - Decision boards (`impeccable serve-question`) and live browser iteration are how the captain picks. Post the board URL in chat and wait for the pick; a pick on the board is the captain's decision, not yours.
 - `impeccable generate-image` needs `OPENAI_API_KEY`. When it is absent, say so and use whatever image tool the session has; never invent a pick or skip the approval point.
 

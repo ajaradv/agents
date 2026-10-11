@@ -49,7 +49,18 @@ Rule: tools for I/O and search; skills for format correctness. Do not duplicate 
 Append to **`FLEET_INBOX/firstmate/events.jsonl`** as one JSON object per line:
 
 - **`kind: request`** — after filing a vault note Firstmate should triage: include **`ref`** (path relative to vault, e.g. `fleet/requests/add-widget.md`), optional **`ship`**, **`summary`**.
+- **`kind: new-project`** — the captain wants a repo added to the fleet: include **`project`** (lowercase id), **`path`** (absolute checkout path, exact case as on disk), optional **`mode`** (only if the captain named a delivery mode), optional **`ref`** (the vault project note), **`summary`**.
 - **`kind: status` | `steer` | `rerun`** — proxy coordination as before.
+
+### New project
+
+"Add project X" is three registrations, and you own only the first:
+
+1. **Vault:** write or update the project note (`workspace/<id>.md`, `type: Project`, `repo_path`). That is the captain's knowledge layer.
+2. **Firstmate:** send `kind: new-project` (above). Firstmate adds it to its registry with its project skill (delivery mode, remote checks) and records the control-center ship (`fleet/ships/<id>.yaml`), which is how the dashboard, the Designer, and Shipwright find the path.
+3. **Work:** any request that came with it (a migration, a feature) is a separate `kind: request` with `ship: <id>`, sent after the `new-project` line.
+
+Do not tell the captain the project is registered until Firstmate confirms; say it is filed and handed to Firstmate. Setting up the SSSF factory on the repo is Shipwright's job and needs a captain yes.
 
 Always include `ts` and `from` (`alice`).
 

@@ -2,7 +2,7 @@
 """Stamp the SSSF factory onto a ship and record it in fleet/ships/.
 
 Usage:
-  bin/stamp-ship <id> <path> [--mode no-mistakes|direct-PR|local-only]
+  bin/stamp-ship <id> <path> [--mode no-mistakes|no-mistakes-prod-only|no-mistakes-required|direct-PR|local-only]
                  [--adws adw_plan_build_test,...] [--no-factory] [--force]
                  [--register "<description>"] [--dry-run]
 
@@ -31,7 +31,7 @@ SSSF = ROOT / ".claude" / "skills" / "sssf"
 SHIPS = ROOT / "fleet" / "ships"
 PROJECTS = ROOT / "fleet" / "home" / "data" / "projects.md"
 ID_RE = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
-MODES = ("no-mistakes", "direct-PR", "local-only")
+MODES = ("no-mistakes", "no-mistakes-prod-only", "no-mistakes-required", "direct-PR", "local-only")
 COPY_IGNORE = shutil.ignore_patterns("node_modules", "__pycache__", "*.pyc", ".DS_Store", "dist")
 
 

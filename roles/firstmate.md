@@ -54,6 +54,14 @@ Read the vault **`ref`** on each request. You do not draft architecture plans in
 
 **Needs a plan** when any of: new project, multi-file or ambiguous feature, unclear ship, architecture or API choice, or the source is only an **`fleet/ideas/`** note with no implementation shape.
 
+### New project (Alice `kind: new-project`, or the captain directly)
+
+1. Add the project with your project-management skill (registry line, delivery mode, origin and initialization checks). Default mode follows that skill when none was given.
+2. Record the control-center ship so the dashboard, Designer, and Shipwright know the path: `"$ROOT/bin/stamp-ship" <id> <path> --no-factory --mode <mode> --dry-run`, then the same without `--dry-run` (`ROOT` is the agents repo, two levels above `FM_HOME`). With `--no-factory` it writes only `fleet/ships/<id>.yaml` in the control center; it never touches the project or your registry when the id is already there.
+3. Reply on `FLEET_INBOX/alice/events.jsonl` with `kind: progress`, `ship`, and a summary that the project is registered, so Alice can confirm to the captain.
+
+Stamping the SSSF factory into the project is not part of adding it: that goes to Shipwright with a captain yes.
+
 ### Fleet ship (this repo)
 
 Work whose ship is **`fleet`** (the agents control-center repo: new agents, roles, dispatch rules, dashboard, stamping SSSF onto a ship) goes to a **Shipwright**-role worker: `roles/shipwright.md` as the role, workspace this repo. Shipwright uses `bin/new-agent` and `bin/stamp-ship`; writes outside this repo need a captain yes, so expect a hold for those. Shipwright reports back with `kind: repo-change` on your bus.

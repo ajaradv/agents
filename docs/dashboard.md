@@ -39,6 +39,8 @@ A right-edge rail holds one portrait per chat target, with one drawer and one co
 - A new agent appears on the rail with no dashboard change. Agents without art in `lib/agent-art.ts` show initials on the rail and the captain portrait on agent cards. Workers get a portrait from `public/art/crew/` (secondmate tasks from `public/art/secondmate/`), chosen by task id and kept for the task's life; add faces with `bin/agent-portrait --pool`.
 - Usage hearts: ten per meter, with the percent remaining beside them.
 - Threads stay `fleet/inbox/<id>/captain-chat.jsonl`. One turn per thread at a time; later messages queue in order.
+- Agent turns run `bin/launch headless <id>` and stop after 120s, or `turn_timeout:` seconds from `agent.yaml` (the Designer has 900). Stopping a turn also stops its Pi process; the error line quotes anything the agent already reported on Firstmate's bus.
+- `dashboard_session: persistent` in `agent.yaml` keeps one Pi session per agent for dashboard turns (`fleet/inbox/<id>/sessions/`, id `dashboard-<id>`), so a message does not start cold. Delete that folder to start the agent fresh. Other agents stay `--no-session`.
 - A failed send appends `{"from":"dashboard","kind":"error","reason":"…","ref":"<captain line ts>"}`. The drawer draws it under the message it failed.
 - Worker threads carry a `.task` marker. When the task leaves the snapshot (landed or retired), the folder moves to `fleet/inbox/archive/<id>-<date>/`. Archiving is skipped when the snapshot fails.
 - Active task rows on the Fleet leaf have a **Chat** button that opens that worker's thread.
