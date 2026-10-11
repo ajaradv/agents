@@ -104,7 +104,7 @@ Source of truth: [fleet/config/](fleet/config/). After `bin/seed-fleet-home`, fi
 - **OpenRouter / native Anthropic API:** operator-owned keys and Pi provider wiring; dispatch names the lane in `crew-dispatch.json`.
 - **Harness setup:** [docs/harness-auth.md](docs/harness-auth.md).
 - **quota-axi:** external CLI on PATH; ranks profiles by spend priority after auth probe.
-- **Jev (optional):** `TYPESAFE_API_KEY` in `fleet/home/.env`; `bin/fm-dispatch-resolve.sh` selects a dispatch rule before quota chooses a profile.
+- **Jev (optional):** `TYPESAFE_API_KEY` in `fleet/home/.env`; `bin/fm-dispatch-resolve.sh` selects a dispatch rule before quota chooses a profile. `bin/fleet-route-resolve.sh` (dashboard **Auto**) picks who owns a message: an agent, a group (its lead), or Firstmate.
 - **Remote crews / phone SSH:** [docs/remote-ops.md](docs/remote-ops.md).
 - **Alice phone chat/voice (later):** [agents/alice/improvements/](agents/alice/improvements/).
 

@@ -40,6 +40,10 @@ function dashboardApp() {
     groups: [],
     chatGroup: null,
     groupTo: "",
+    autoRoute: false,
+    routing: false,
+    routeNote: "",
+    routeChoices: [],
 
     paletteItems() {
       const base = [
@@ -311,6 +315,7 @@ function dashboardApp() {
       if (!log) return;
       this.chatEmpty = false;
       const tid = threadId || this.chatId;
+      if (m.ts && log.querySelector(`[data-at="${CSS.escape(m.ts)}"][data-thread="${CSS.escape(tid)}"]`)) return;
       const t = this.findTarget(tid) || { id: tid, label: tid, art: null };
       const row = document.createElement("div");
       if (m.kind === "error") {
@@ -339,6 +344,7 @@ function dashboardApp() {
         row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}</span><p>${escapeHtml(m.text)}</p></div>`;
       }
       if (m.ts) row.dataset.at = m.ts;
+      row.dataset.thread = tid;
       // Stacked group threads replay one member at a time; keep the drawer in time order.
       const later = m.ts ? [...log.querySelectorAll(".bubble-row[data-at]")].find((n) => n.dataset.at > m.ts) : null;
       if (later) log.insertBefore(row, later);
@@ -347,7 +353,77 @@ function dashboardApp() {
       if (!later) log.scrollTop = log.scrollHeight;
     },
 
+    /** Auto target: ask Jev who owns the message, then send it there. */
+    async routeAndSend() {
+      const text = this.chatDraft.trim();
+      if (!text || this.routing) return;
+      this.routing = true;
+      this.routeNote = "Asking Jev who should take this…";
+      this.routeChoices = [];
+      try {
+        const r = await fetch("/api/route", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const j = await r.json();
+        if (j.status === "clear" && j.target) {
+          this.routeNote = `Jev: ${this.choiceLabel(j.choice)} (${Math.round((j.confidence || 0) * 100)}%)`;
+          this.sendRouted(j.target, j.sendTo);
+          return;
+        }
+        const why = j.status === "off" ? `Jev routing is off: ${j.reason}` : j.reason || j.status;
+        this.routeNote = `${why}. Pick where this goes:`;
+        this.routeChoices = (j.probabilities || [])
+          .filter((c) => c.key !== "ask")
+          .slice(0, 4)
+          .map((c) => ({ ...c, label: this.choiceLabel(c.key) }));
+        if (!this.routeChoices.length) {
+          this.routeChoices = this.rail.agents
+            .map((a) => ({ key: a.kind === "firstmate" ? "firstmate" : "agent_" + a.id, label: a.label }))
+            .concat(this.groups.map((g) => ({ key: "group_" + g.id, label: g.name + " (group)" })));
+        }
+      } catch {
+        this.routeNote = "Routing failed. Pick a face on the rail.";
+      } finally {
+        this.routing = false;
+      }
+    },
+
+    choiceLabel(key) {
+      if (key === "firstmate") return "Firstmate";
+      if (key && key.startsWith("group_")) {
+        const g = this.groups.find((x) => x.id === key.slice(6));
+        return g ? `${g.name} (lead ${g.lead})` : key.slice(6);
+      }
+      return key ? key.replace(/^agent_/, "") : "";
+    },
+
+    pickRoute(key) {
+      if (key === "firstmate") return this.sendRouted("firstmate", "firstmate");
+      if (key.startsWith("group_")) {
+        const g = this.groups.find((x) => x.id === key.slice(6));
+        if (g) return this.sendRouted("group:" + g.id, g.lead);
+      }
+      const id = key.replace(/^agent_/, "");
+      this.sendRouted("agent:" + id, id);
+    },
+
+    sendRouted(target, sendTo) {
+      this.routeChoices = [];
+      this.autoRoute = false;
+      if (target.startsWith("group:")) {
+        this.openGroup(target.slice(6));
+        if (sendTo) this.groupTo = sendTo;
+      } else {
+        this.openChat(sendTo);
+      }
+      // Sockets for the new thread are still opening; sendChat falls back to POST.
+      this.$nextTick(() => this.sendChat());
+    },
+
     sendChat() {
+      if (this.autoRoute) return this.routeAndSend();
       const text = this.chatDraft.trim();
       if (!text) return;
       const t = this.current();

@@ -443,6 +443,9 @@ pre, .raw {
 .rail-group .stack-face { position: absolute; display: grid; place-items: center; width: 26px; height: 26px; font-size: 0.55rem; border: 1px solid var(--ink); background: var(--bone); left: calc(3px + var(--i, 0) * 8px); top: calc(3px + var(--i, 0) * 8px); overflow: hidden; }
 .rail-group .stack-face img { width: 100%; height: 100%; object-fit: cover; object-position: center top; image-rendering: pixelated; }
 .face-strip .rail-group .stack-face { width: 22px; height: 22px; }
+.route-panel { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem 1rem; background: var(--sheet); color: var(--ink); border-top: 1px solid var(--ink); }
+.route-panel p { margin: 0; }
+.route-panel > .btn { align-self: flex-start; }
 .group-to { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.45rem 1rem; background: var(--sheet); color: var(--ink); border-bottom: 1px solid var(--ink); }
 .group-member { gap: 0.3rem; font-size: 0.8rem; }
 .avatar-sm { width: 28px; height: 28px; }

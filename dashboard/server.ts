@@ -19,6 +19,7 @@ import { fleetStripHtml } from "./lib/fleet-snapshot.ts";
 import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
+import { resolveRoute } from "./lib/route.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import {
   acceptCaptainLine,
@@ -279,6 +280,17 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return new Response(await groupsPanelHtml(), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
+    }
+
+    if (path === "/api/route" && req.method === "POST") {
+      let text = "";
+      try {
+        text = String(((await req.json()) as { text?: string }).text ?? "").trim();
+      } catch {
+        return Response.json({ status: "error", reason: "bad json", probabilities: [] }, { status: 400 });
+      }
+      if (!text) return Response.json({ status: "error", reason: "empty message", probabilities: [] }, { status: 400 });
+      return Response.json(await resolveRoute(text.slice(0, 8000)));
     }
 
     if (path === "/api/groups" && req.method === "GET") {

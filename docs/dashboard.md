@@ -57,6 +57,18 @@ A group is a rail cluster saved in `fleet/inbox/dashboard-groups.json` (`id`, `n
 | **POST** `/api/groups` | Create or replace (form or JSON: `name`, `lead`, `members`, `adwShip`/`adwChain` or form `adw=ship::chain`) |
 | **POST** `/api/groups/:id/delete` | Delete |
 
+## Auto routing (Jev)
+
+The composer's **Auto** button lets Jev pick who owns a message: one registered assistant, one group (sent to its lead), or Firstmate. `POST /api/route {text}` runs [`bin/fleet-route-resolve.sh`](../bin/fleet-route-resolve.sh).
+
+| Jev status | Drawer does |
+|---|---|
+| `clear` | Opens that thread (or the group with **To** on the lead) and sends |
+| `ambiguous` (confidence < 0.6), `escalate` (Jev chose ask), `error` | Shows the top choices with probabilities; nothing is sent until you pick |
+| `off` (no `TYPESAFE_API_KEY`, or the never-send list matched) | Says why and lists every agent and group to pick from |
+
+Options come from role frontmatter `description:` lines and `dashboard-groups.json`, so keep descriptions to one concrete sentence. Jev is an outside API: the message text leaves the machine, and only when the key is set. `fleet/home/config/dispatch-never-send` applies here too. If Jev routes to Firstmate, Firstmate still runs its own dispatch resolver for the crew profile.
+
 ## Lifecycle (TUI only)
 
 **TUI starting / open / stopping / error** reflect Herdr pane state. A failed Start can show **TUI error** while **chat ready** stays available. When the pane is live, **TUI open** overrides a stale Start timeout error.

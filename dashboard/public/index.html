@@ -140,10 +140,22 @@
         <div class="bubble"><p x-text="title() + (chatGroup ? ' is on the line. Messages go to the lead unless you pick another member.' : ' is on the line.')"></p></div>
       </div>
     </div>
+    <div class="route-panel" x-show="routeNote" x-cloak>
+      <p x-text="routeNote"></p>
+      <div class="row-wrap" x-show="routeChoices.length">
+        <template x-for="c in routeChoices" :key="c.key">
+          <button type="button" class="btn" @click="pickRoute(c.key)"
+                  x-text="c.label + (c.p != null ? ' · ' + Math.round(c.p * 100) + '%' : '')"></button>
+        </template>
+      </div>
+      <button type="button" class="btn" @click="routeNote = ''; routeChoices = []">Dismiss</button>
+    </div>
     <form class="chat-compose" @submit.prevent="sendChat">
       <img class="avatar" src="/art/captain.png" width="48" height="48" alt="" />
       <div class="composer">
-        <input class="field" x-ref="chatField" x-model="chatDraft" :placeholder="'Message ' + current().label" autocomplete="off" :aria-label="'Message ' + current().label" />
+        <button type="button" class="btn" :class="{ 'btn-ink': autoRoute }" :aria-pressed="autoRoute"
+                title="Let Jev pick an agent, a group (its lead), or Firstmate" @click="autoRoute = !autoRoute">Auto</button>
+        <input class="field" x-ref="chatField" x-model="chatDraft" :placeholder="autoRoute ? 'Message — Jev picks who' : 'Message ' + current().label" autocomplete="off" :aria-label="autoRoute ? 'Message, routed by Jev' : 'Message ' + current().label" />
         <button class="btn btn-ink" type="submit">Send</button>
       </div>
     </form>
