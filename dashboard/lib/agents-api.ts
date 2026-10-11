@@ -59,7 +59,7 @@ export async function agentsStatusJson(): Promise<{ agents: AgentStatusJson[] }>
       lastEvent: lastShort,
       lastChatTurn: status?.lastChatTurn ?? null,
       waitingOnYou: status?.firstmateWait?.waitingOnYou,
-      firstmateWaitSummary: status?.firstmateWait?.captainWait?.summary,
+      firstmateWaitSummary: status?.firstmateWait?.displaySummary,
     });
   }
   return { agents: out };

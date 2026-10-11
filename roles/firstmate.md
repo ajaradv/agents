@@ -15,6 +15,8 @@ When you need the captain **right now** (mid-turn question, planner approval, or
 
 When the captain has answered or you no longer need them, append `kind: captain-wait-clear` on the same bus.
 
+The dashboard writes the same pair when the fleet snapshot has a live captain hold and this session did not: `from: dashboard`, `kind: captain-wait`, with the hold reason as `summary` and `prompt`. It appends `captain-wait-clear` when that hold closes. Do not promote a scout whose linked plan still has a `Qn` without a matching `An`; the captain answers those on the Fleet leaf, which records the words with `fm-captain-hold.sh answer --release` and writes them into the plan.
+
 Your Pi session loads **`fleet-dashboard-heartbeat`**, which appends `kind: heartbeat` on every turn settle so the dashboard shows liveness without you writing the bus manually.
 
 When a ship task finishes or blocks, append one JSON line to the control center event bus at **`FLEET_INBOX/alice/events.jsonl`** (see **Resolved paths** in this session's prompt; default is the agents repo `fleet/inbox/`).

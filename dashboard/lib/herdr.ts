@@ -8,7 +8,7 @@ export const FLEET_HERDR_SESSION = "fleet";
 export const ALICE_WORKSPACE_LABEL = "fleet-alice";
 export const HERDR_ATTACH_HINT = "herdr session attach fleet";
 
-export const TUI_AGENT_IDS = ["alice", "firstmate", "architect"] as const;
+export const TUI_AGENT_IDS = ["firstmate"] as const;
 export type TuiAgentId = (typeof TUI_AGENT_IDS)[number];
 
 export function isTuiAgent(agentId: string): agentId is TuiAgentId {

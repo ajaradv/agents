@@ -259,6 +259,7 @@ p { margin: 0.35rem 0; }
 }
 
 .sheet-title { text-transform: capitalize; }
+.sheet h4 { margin: 0.35rem 0 0; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--quiet); }
 
 .muted { color: var(--quiet); font-size: 0.8rem; }
 .warn { color: var(--vermilion); font-size: 0.8rem; }
@@ -316,6 +317,11 @@ p { margin: 0.35rem 0; }
 
 .agent-list, .task-list { list-style: none; margin: 0.6rem 0 0; padding: 0; }
 .task-list { display: flex; flex-direction: column; gap: 0.35rem; }
+.task-list li.task-hold { display: flex; flex-direction: column; align-items: stretch; }
+.task-list li > .between { width: 100%; }
+.hold-form { display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.35rem; }
+.hold-form label { display: flex; flex-direction: column; gap: 0.35rem; }
+.hold-form textarea.field { width: 100%; min-height: 4.5rem; resize: vertical; }
 .agent-list { display: flex; flex-direction: column; gap: 0.65rem; }
 .agent {
   border: 1px solid var(--line);

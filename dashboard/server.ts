@@ -16,6 +16,7 @@ import {
 } from "./lib/chat.ts";
 import { metricsStripHtml } from "./lib/bus.ts";
 import { fleetStripHtml } from "./lib/fleet-snapshot.ts";
+import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import {
   getAllLastChatTurns,
@@ -212,6 +213,33 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
 
     if (path === "/partials/metrics" && req.method === "GET") {
       return new Response(await metricsStripHtml(), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    const holdAnswer = path.match(/^\/api\/holds\/([a-z][a-z0-9-]{0,63})\/answer$/);
+    if (holdAnswer && req.method === "POST") {
+      const taskId = holdAnswer[1]!;
+      let text = "";
+      try {
+        const type = req.headers.get("content-type") ?? "";
+        if (type.includes("application/json")) {
+          const body = (await req.json()) as { text?: string };
+          text = body.text ?? "";
+        } else {
+          const form = await req.formData();
+          text = String(form.get("text") ?? "");
+        }
+      } catch {
+        return new Response('<p class="warn">Could not read that answer.</p>', {
+          status: 400,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
+      const result = await answerCaptainHold(taskId, text);
+      if (result.ok) sseBroadcast("agents");
+      return new Response(result.html, {
+        status: result.status,
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
     }

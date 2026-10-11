@@ -46,8 +46,9 @@ function firstmateWaitHtml(wait: FirstmateWaitStatus | undefined): string {
     }
   }
   for (const h of wait.actionableHolds.slice(0, 5)) {
+    const reason = h.holdReason ? `: ${escapeHtml(h.holdReason)}` : "";
     parts.push(
-      `<p class="muted">Hold: ${escapeHtml(h.title || h.id)}${h.holdAgeDays != null ? ` (${h.holdAgeDays}d)` : ""}</p>`,
+      `<p class="muted">Hold: ${escapeHtml(h.title || h.id)}${reason}${h.holdAgeDays != null ? ` (${h.holdAgeDays}d)` : ""}</p>`,
     );
   }
   if (!wait.snapshotOk && wait.snapshotError) {

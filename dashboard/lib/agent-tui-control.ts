@@ -215,12 +215,4 @@ export function stopAgentTui(agentId: string): AgentControlResult {
   };
 }
 
-export function startAlice(): AgentControlResult {
-  return startAgentTui("alice");
-}
-
-export function stopAlice(): AgentControlResult {
-  return stopAgentTui("alice");
-}
-
 export { TUI_AGENT_IDS };

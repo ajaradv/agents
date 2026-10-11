@@ -1,11 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { syncCaptainWait, waitDisplaySummary } from "./captain-wait.ts";
 import { fleetInboxRoot } from "./paths.ts";
-import { runFleetSnapshotJson } from "./fleet-snapshot.ts";
+import { collectCaptainHolds, runFleetSnapshotJson } from "./fleet-snapshot.ts";
 
 export type CaptainHoldRow = {
   id: string;
   title: string;
+  holdReason: string;
   holdAgeDays?: number;
   holdBucket?: string;
 };
@@ -22,14 +24,7 @@ export type FirstmateWaitStatus = {
   actionableHolds: CaptainHoldRow[];
   captainWait: CaptainWaitEvent | null;
   waitingOnYou: boolean;
-};
-
-type SnapshotTask = {
-  id?: string;
-  title?: string;
-  captain_actionable?: boolean;
-  hold_bucket?: string;
-  hold_age_days?: number;
+  displaySummary: string;
 };
 
 async function readLatestCaptainWait(): Promise<CaptainWaitEvent | null> {
@@ -53,7 +48,10 @@ async function readLatestCaptainWait(): Promise<CaptainWaitEvent | null> {
           lastWait = null;
           continue;
         }
-        if (o.kind === "captain-wait" && o.from === "firstmate") {
+        if (
+          o.kind === "captain-wait" &&
+          (o.from === "firstmate" || o.from === "dashboard")
+        ) {
           lastWait = {
             ts: o.ts ?? "",
             summary: o.summary ?? "Waiting on captain",
@@ -82,22 +80,27 @@ export async function readFirstmateWaitStatus(): Promise<FirstmateWaitStatus> {
       actionableHolds: [],
       captainWait,
       waitingOnYou: Boolean(captainWait),
+      displaySummary: captainWait?.summary ?? "",
     };
   }
-  const actionableHolds: CaptainHoldRow[] = [];
-  for (const t of snap.tasks as SnapshotTask[]) {
-    if (!t.captain_actionable) continue;
-    actionableHolds.push({
-      id: String(t.id ?? ""),
-      title: String(t.title ?? t.id ?? "captain hold"),
-      holdAgeDays: t.hold_age_days,
-      holdBucket: t.hold_bucket,
-    });
-  }
+  const waitHolds = collectCaptainHolds(snap);
+  const byId = new Map(snap.backlog.map((r) => [r.id ?? "", r]));
+  const actionableHolds: CaptainHoldRow[] = waitHolds.map((h) => {
+    const rec = byId.get(h.id);
+    return {
+      id: h.id,
+      title: h.title,
+      holdReason: h.holdReason,
+      holdAgeDays: rec?.hold_age_days,
+      holdBucket: rec?.hold_bucket,
+    };
+  });
+  await syncCaptainWait(waitHolds);
   return {
     snapshotOk: true,
     actionableHolds,
     captainWait,
     waitingOnYou: actionableHolds.length > 0 || Boolean(captainWait),
+    displaySummary: waitDisplaySummary(waitHolds, captainWait?.summary),
   };
 }

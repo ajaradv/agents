@@ -23,7 +23,7 @@
             :aria-selected="leaf === 'health'" :class="{ 'is-open': leaf === 'health' }"
             @click="openLeaf('health')"><span class="punch" aria-hidden="true"></span>Health</button>
     <button type="button" class="tab" role="tab" id="tab-fleet" aria-controls="leaf-fleet"
-            :aria-selected="leaf === 'fleet'" :class="{ 'is-open': leaf === 'fleet' }"
+            :aria-selected="leaf === 'fleet'" :class="{ 'is-open': leaf === 'fleet', 'is-ring': waiting }"
             @click="openLeaf('fleet')"><span class="punch" aria-hidden="true"></span>Fleet</button>
     <button type="button" class="tab" role="tab" id="tab-agents" aria-controls="leaf-agents"
             :aria-selected="leaf === 'agents'" :class="{ 'is-open': leaf === 'agents', 'is-ring': waiting }"
@@ -49,6 +49,9 @@
     <section id="leaf-fleet" class="leaf" role="tabpanel" aria-labelledby="tab-fleet"
              :class="{ 'is-open': leaf === 'fleet', 'is-hinge': hinge === 'fleet' }">
       <h2>Fleet</h2>
+      <aside class="slip" x-show="waitSummary" x-cloak>
+        <p x-text="waitSummary"></p>
+      </aside>
       <div id="fleet" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerHTML"></div>
     </section>
 
@@ -120,7 +123,7 @@
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M9 2h4v7h7v4h-7v7H9v-7H2V9h7z"/></svg>
       Health
     </button>
-    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'fleet' && !aliceOpen }" @click="openLeaf('fleet')">
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'fleet' && !aliceOpen, 'is-ring': waiting }" @click="openLeaf('fleet')">
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M10 2h2v3h5v2h-1l2 8H4l2-8H5V5h5V2zm-5 15h12v3H5z"/></svg>
       Fleet
     </button>

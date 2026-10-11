@@ -181,16 +181,11 @@ function dashboardApp() {
           this.aliceSession = "";
           return;
         }
-        const tui = alice.tuiLabel || "TUI off";
         const chat = alice.chatLabel || "chat";
         const turn = alice.lastChatTurn
           ? ` · last turn ${alice.lastChatTurn.status} ${alice.lastChatTurn.ms}ms`
           : "";
-        const tuiMsg =
-          alice.tuiState === "error" && alice.tuiMessage
-            ? ` — ${alice.tuiMessage}`
-            : "";
-        this.aliceSession = `${chat} · ${tui}${turn}${tuiMsg}`;
+        this.aliceSession = `${chat}${turn}`;
         this.aliceThinking = alice.chatState === "thinking";
       } catch {
         this.aliceSession = "";
