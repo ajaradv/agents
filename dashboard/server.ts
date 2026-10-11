@@ -49,6 +49,7 @@ function chatPayload(line: ChatLine) {
     text: line.text,
     ts: line.ts,
     ...(line.ref ? { ref: line.ref } : {}),
+    ...(line.questions ? { questions: line.questions } : {}),
   };
 }
 

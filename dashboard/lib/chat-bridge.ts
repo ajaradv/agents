@@ -5,6 +5,7 @@ import {
   appendChatError,
   chatLogPath,
   readCaptainChat,
+  takePendingQuestions,
   type ChatLine,
 } from "./chat.ts";
 import { allChatTargetIds, chatTarget } from "./chat-targets.ts";
@@ -98,7 +99,7 @@ export function getAllLastChatTurns(): Record<string, LastChatTurn | null> {
 function parseChatLine(raw: string): ChatLine | null {
   try {
     const o = JSON.parse(raw) as ChatLine;
-    if ((o.kind !== "chat" && o.kind !== "error") || !o.text) return null;
+    if ((o.kind !== "chat" && o.kind !== "error" && o.kind !== "question") || !o.text) return null;
     return o;
   } catch {
     return null;
@@ -107,7 +108,7 @@ function parseChatLine(raw: string): ChatLine | null {
 
 function buildTurnPrompt(history: ChatLine[]): string {
   const thread = history
-    .filter((l) => l.kind === "chat")
+    .filter((l) => l.kind === "chat" || l.kind === "question")
     .slice(-CONTEXT_LINES)
     .map((l) => `${l.from}: ${l.text}`)
     .join("\n");
@@ -149,6 +150,10 @@ async function finishFmSend(
     "chat-turn",
     `${agentId} ${res.ms}ms exit=${res.exitCode} timedOut=${res.timedOut}`,
   );
+  if (res.timedOut || res.exitCode !== 0) {
+    const asked = await takePendingQuestions(agentId);
+    if (asked) emitOwn(agentId, asked);
+  }
   if (res.timedOut) {
     await failTurn(agentId, captainLine, "timeout", res.ms, "fm-send timed out.");
     return;
@@ -240,6 +245,10 @@ async function runHeadlessTurn(agentId: string, captainLine: ChatLine): Promise<
     `${agentId} ${res.ms}ms exit=${res.exitCode} timedOut=${res.timedOut}`,
   );
 
+  if (res.timedOut || res.exitCode !== 0) {
+    const asked = await takePendingQuestions(agentId);
+    if (asked) emitOwn(agentId, asked);
+  }
   if (res.timedOut) {
     await failTurn(
       agentId,
@@ -257,12 +266,14 @@ async function runHeadlessTurn(agentId: string, captainLine: ChatLine): Promise<
     return;
   }
   const text = res.stdout.trim();
-  if (!text) {
+  const asked = await takePendingQuestions(agentId);
+  if (!text && !asked) {
     await failTurn(agentId, captainLine, "error", res.ms, `${agentId} returned an empty reply.`);
     return;
   }
   recordTurn(agentId, { at: new Date().toISOString(), status: "ok", ms: res.ms });
-  emitOwn(agentId, await appendAgentChat(agentId, agentId, text));
+  if (text) emitOwn(agentId, await appendAgentChat(agentId, agentId, text));
+  if (asked) emitOwn(agentId, asked);
 }
 
 async function drainQueue(agentId: string): Promise<void> {

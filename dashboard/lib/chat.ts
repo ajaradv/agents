@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { chatAllowed, chatTarget, markTaskThread } from "./chat-targets.ts";
 import { fleetInboxRoot } from "./paths.ts";
@@ -9,14 +9,19 @@ export { chatAllowed };
  * One line of fleet/inbox/<id>/captain-chat.jsonl.
  * kind "error" is a failed send: `reason` says why and `ref` is the ts of the
  * captain line it failed; `text` repeats the reason for older readers.
+ * kind "question" is an agent's ask_captain call: `questions` carries the
+ * options the drawer draws as buttons; `text` is a plain rendering of them.
  */
+export type ChatQuestion = { id: string; question: string; options?: string[]; recommended?: string };
+
 export type ChatLine = {
   ts: string;
   from: string;
-  kind: "chat" | "error";
+  kind: "chat" | "error" | "question";
   text: string;
   reason?: string;
   ref?: string;
+  questions?: ChatQuestion[];
 };
 
 function chatPath(agentId: string): string {
@@ -115,4 +120,59 @@ export async function readCaptainChat(
   } catch {
     return [];
   }
+}
+
+/** Plain text of a question set, for the jsonl `text` field and turn history. */
+export function questionsText(context: string, questions: ChatQuestion[]): string {
+  const lines = questions.map((q) => {
+    const opts = (q.options ?? []).map((o) => (o === q.recommended ? `${o} (recommended)` : o));
+    return `- ${q.question}${opts.length ? ` Options: ${opts.join(" / ")}` : ""}`;
+  });
+  return [context ? `Question for you: ${context}` : "Question for you:", ...lines].join("\n");
+}
+
+function cleanQuestions(raw: unknown): ChatQuestion[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ChatQuestion[] = [];
+  for (const q of raw.slice(0, 8)) {
+    if (!q || typeof q !== "object") continue;
+    const o = q as Record<string, unknown>;
+    const question = String(o.question ?? "").trim().slice(0, 400);
+    if (!question) continue;
+    const options = Array.isArray(o.options)
+      ? o.options.map((x) => String(x).trim().slice(0, 200)).filter(Boolean).slice(0, 5)
+      : [];
+    const recommended = typeof o.recommended === "string" && options.includes(o.recommended) ? o.recommended : undefined;
+    out.push({ id: String(o.id ?? `q${out.length + 1}`).slice(0, 60), question, options, ...(recommended ? { recommended } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Move questions an agent posted with ask_captain during its turn
+ * (fleet/inbox/<id>/pending-questions.json) into the chat as one question line.
+ */
+export async function takePendingQuestions(agentId: string): Promise<ChatLine | null> {
+  const path = join(fleetInboxRoot(), agentId, "pending-questions.json");
+  let raw: { context?: unknown; questions?: unknown };
+  try {
+    raw = JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return null;
+  } finally {
+    await rm(path, { force: true });
+  }
+  const questions = cleanQuestions(raw.questions);
+  if (questions.length === 0) return null;
+  const context = typeof raw.context === "string" ? raw.context.trim().slice(0, 600) : "";
+  const line: ChatLine = {
+    ts: new Date().toISOString(),
+    from: agentId,
+    kind: "question",
+    text: questionsText(context, questions),
+    questions,
+  };
+  await mkdir(join(fleetInboxRoot(), agentId), { recursive: true });
+  await appendFile(chatPath(agentId), JSON.stringify(line) + "\n", "utf8");
+  return line;
 }

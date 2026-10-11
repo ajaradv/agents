@@ -327,6 +327,17 @@ function dashboardApp() {
           target.after(row);
           return;
         }
+      } else if (m.kind === "question" && Array.isArray(m.questions) && m.questions.length) {
+        row.className = "bubble-row is-agent is-question";
+        const face = t.art
+          ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
+          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
+        row.innerHTML = `${face}<div class="bubble question-block">
+          <span class="bubble-name">${escapeHtml(t.label || m.role)} asks</span>
+          ${this.questionsHtml(m)}
+          <div class="row question-actions"><button type="button" class="btn btn-ink" data-send>Send answers</button><span class="muted" data-note></span></div>
+        </div>`;
+        this.wireQuestion(row, tid);
       } else if (m.role === "system" || m.role === "dashboard") {
         row.className = "bubble-row is-system";
         row.innerHTML = `<div class="bubble"><p>${escapeHtml(m.text)}</p></div>`;
@@ -345,12 +356,73 @@ function dashboardApp() {
       }
       if (m.ts) row.dataset.at = m.ts;
       row.dataset.thread = tid;
+      if (m.role === "captain" && m.ts) this.markAnswered(log, tid, m.ts);
       // Stacked group threads replay one member at a time; keep the drawer in time order.
       const later = m.ts ? [...log.querySelectorAll(".bubble-row[data-at]")].find((n) => n.dataset.at > m.ts) : null;
       if (later) log.insertBefore(row, later);
       else log.appendChild(row);
       while (log.childElementCount > LOG_MAX) log.removeChild(log.firstChild);
       if (!later) log.scrollTop = log.scrollHeight;
+    },
+
+    questionsHtml(m) {
+      const intro = (m.text || "").split("\n")[0].replace(/^Question for you:\s*/, "");
+      const qs = m.questions
+        .map((q, qi) => {
+          const opts = (q.options || [])
+            .map(
+              (o) =>
+                `<button type="button" class="chip" data-q="${qi}" data-opt="${escapeHtml(o)}" aria-pressed="false">${escapeHtml(o)}${o === q.recommended ? ' <span class="detent">recommended</span>' : ""}</button>`,
+            )
+            .join("");
+          return `<fieldset class="question" data-qi="${qi}">
+            <legend>${escapeHtml(q.question)}</legend>
+            <div class="row-wrap">${opts}</div>
+            <input class="field" data-other="${qi}" placeholder="${opts ? "Or type another answer" : "Your answer"}" aria-label="${escapeHtml(q.question)}" />
+          </fieldset>`;
+        })
+        .join("");
+      return `${intro ? `<p>${escapeHtml(intro)}</p>` : ""}${qs}`;
+    },
+
+    wireQuestion(row, tid) {
+      const picks = {};
+      row.querySelectorAll(".chip[data-q]").forEach((b) =>
+        b.addEventListener("click", () => {
+          const qi = b.dataset.q;
+          row.querySelectorAll(`.chip[data-q="${qi}"]`).forEach((x) => x.setAttribute("aria-pressed", "false"));
+          b.setAttribute("aria-pressed", "true");
+          picks[qi] = b.dataset.opt;
+          const other = row.querySelector(`[data-other="${qi}"]`);
+          if (other) other.value = "";
+        }),
+      );
+      row.querySelector("[data-send]").addEventListener("click", () => {
+        const answers = [];
+        row.querySelectorAll("fieldset.question").forEach((fs) => {
+          const qi = fs.dataset.qi;
+          const typed = fs.querySelector(`[data-other="${qi}"]`).value.trim();
+          const a = typed || picks[qi];
+          if (a) answers.push(`- ${fs.querySelector("legend").textContent}: ${a}`);
+        });
+        const note = row.querySelector("[data-note]");
+        if (!answers.length) {
+          note.textContent = "Pick or type at least one answer.";
+          return;
+        }
+        this.sendText(tid, `Answers:\n${answers.join("\n")}`);
+      });
+    },
+
+    /** A captain line after a question means it was answered; lock the buttons. */
+    markAnswered(log, tid, ts) {
+      log.querySelectorAll(`.bubble-row.is-question[data-thread="${CSS.escape(tid)}"]:not(.is-answered)`).forEach((r) => {
+        if (!r.dataset.at || r.dataset.at >= ts) return;
+        r.classList.add("is-answered");
+        r.querySelectorAll("button, input").forEach((el) => (el.disabled = true));
+        const note = r.querySelector("[data-note]");
+        if (note) note.textContent = "Answered";
+      });
     },
 
     /** Auto target: ask Jev who owns the message, then send it there. */
@@ -426,8 +498,12 @@ function dashboardApp() {
       if (this.autoRoute) return this.routeAndSend();
       const text = this.chatDraft.trim();
       if (!text) return;
-      const t = this.current();
-      const to = t.id;
+      this.sendText(this.current().id, text);
+      this.chatDraft = "";
+    },
+
+    sendText(to, text) {
+      const t = this.findTarget(to) || { id: to, kind: "headless" };
       if (t.kind !== "firstmate" && t.kind !== "task") this.chatThinking = true;
       const ws = this.chatSockets[to];
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -447,7 +523,6 @@ function dashboardApp() {
             this.chatThinking = false;
           });
       }
-      this.chatDraft = "";
     },
   };
 }

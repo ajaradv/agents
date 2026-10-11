@@ -234,7 +234,12 @@ DASHBOARD_CHAT_BLOCK = (
     "## Dashboard captain chat (this turn)\n\n"
     "You are answering a **headless dashboard message** from the captain (not the interactive TUI composer). "
     "Reply in **plain text** suitable for the dashboard chat log. "
-    "When you finish, your reply text is captured from stdout; you do not need to append the jsonl file yourself in print mode.\n"
+    "When you finish, your reply text is captured from stdout; you do not need to append the jsonl file yourself in print mode.\n\n"
+    "**The captain can answer questions.** This chat is a conversation: when a decision is the captain's (direction, naming, "
+    "scope, a pick between options) or the request is ambiguous, call the **`ask_captain`** tool with 2-5 concrete options per "
+    "question, then end your turn. The questions appear in the dashboard as clickable choices and the answer comes back as the "
+    "captain's next message. Do not choose a default for a captain decision because you are in a headless turn; that is what "
+    "`ask_captain` is for. Settle facts you can check yourself instead of asking.\n"
 )
 
 
@@ -374,6 +379,12 @@ def prepare_pi_launch(
             return None
         ext_refs.append(ref if ref.startswith("npm:") else ref)
 
+    # Every assistant can ask the captain structured questions (extensions/ask-captain.ts).
+    ask_captain = str(ROOT / "extensions" / "ask-captain.ts")
+    if agent_type == "assistant" and ask_captain not in ext_refs:
+        ext_refs.append(ask_captain)
+    os.environ["FLEET_AGENT_ID"] = agent_id
+
     for ref in ext_refs:
         args.extend(["-e", ref])
 
@@ -420,10 +431,14 @@ def headless_main() -> int:
         session_args = ["--no-session"]
     args = base_args + ["-p", *session_args, user_prompt]
     print(f"cd {cwd} && {' '.join(base_args)} -p {' '.join(session_args)} …", file=sys.stderr)
+    env = os.environ.copy()
+    # pi-cursor-sdk's own cursor_ask_question tells the model "UI unavailable, pick a
+    # default" in print mode. Turn it off so ask_captain is the question tool here.
+    env["PI_CURSOR_ASK_QUESTION"] = "false"
     proc = subprocess.Popen(
         args,
         cwd=str(cwd),
-        env=os.environ.copy(),
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

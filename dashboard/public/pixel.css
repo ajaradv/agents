@@ -664,3 +664,16 @@ body.chat-open { overflow: hidden; }
   .leaf.is-hinge { animation: none; }
   .chat-drawer { transition: none; }
 }
+
+/* ask_captain questions in the chat drawer */
+.question-block { display: grid; gap: 0.6rem; }
+.question { border: 1px solid var(--line); padding: 0.5rem 0.6rem 0.6rem; margin: 0; display: grid; gap: 0.45rem; min-width: 0; }
+.question legend { padding: 0 0.25rem; font-size: 0.85rem; overflow-wrap: anywhere; }
+.question .field { width: 100%; min-width: 0; }
+.chip { font: inherit; font-size: 0.75rem; padding: 0.3rem 0.55rem; border: 2px solid var(--ink); background: var(--sheet); color: var(--ink); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--sheet); }
+.chip[aria-pressed="true"] .detent { color: var(--sheet); border-color: var(--sheet); }
+.chip:disabled { cursor: default; opacity: 0.55; }
+.chip:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 2px; }
+.question-actions { align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.is-question.is-answered .question-block { opacity: 0.75; }

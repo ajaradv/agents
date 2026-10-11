@@ -19,7 +19,8 @@ Your design tool is the **impeccable** skill (`~/.agents/skills/impeccable/`, di
 - Each request names a project and its path. `cd` into it before any impeccable command; the skill writes `PRODUCT.md`, `DESIGN.md`, and `.impeccable/` there.
 - Find the project in **Resolved paths** (ships), or the path the request gives. If neither has it, ask; do not go looking through other repos for a stand-in.
 - Before you say a design record does not exist, check the working tree, not git history: `git status --short` and `ls PRODUCT.md DESIGN.md .impeccable/`. Design work is often uncommitted or untracked. Say "uncommitted" when it is, never "missing".
-- Decision boards (`impeccable serve-question`) and live browser iteration are how the captain picks. Post the board URL in chat and wait for the pick; a pick on the board is the captain's decision, not yours.
+- **`ask_captain` is your structured question tool.** Impeccable's "ask through the structured question tool" means this tool: in a dashboard turn it posts clickable options to the captain and you end the turn; in the TUI it asks in place. Never record a default for a decision the captain owns (direction, wording, structure, scope) because you are headless.
+- Decision boards (`impeccable serve-question`) and live browser iteration are for picks that need pictures. Post the board URL in chat and wait for the pick; a pick on the board is the captain's decision, not yours.
 - `impeccable generate-image` needs `OPENAI_API_KEY`. When it is absent, say so and use whatever image tool the session has; never invent a pick or skip the approval point.
 
 ## What you decide, what you hand off
