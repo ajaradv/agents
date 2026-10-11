@@ -88,27 +88,44 @@ p { margin: 0.35rem 0; }
 
 .agent-head { align-items: center; }
 
-.hearts {
+.meter-hearts {
   display: inline-flex;
-  gap: 2px;
+  align-items: center;
+  gap: 0.5rem;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
+/* Outline comes from the container filter: clip-path would cut a border off. */
+.hearts {
+  display: inline-flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  padding: 2px;
+  filter: drop-shadow(2px 0 0 var(--ink)) drop-shadow(-2px 0 0 var(--ink)) drop-shadow(0 2px 0 var(--ink)) drop-shadow(0 -2px 0 var(--ink));
+}
+
+/* 7x6 pixel heart, 2px cells. */
 .heart {
-  width: 11px;
-  height: 11px;
+  width: 14px;
+  height: 12px;
   display: inline-block;
-  border: 1px solid var(--ink);
-  clip-path: polygon(50% 0%, 62% 12%, 75% 8%, 88% 18%, 92% 35%, 50% 72%, 8% 35%, 12% 18%, 25% 8%, 38% 12%);
+  clip-path: polygon(14.29% 0%, 42.86% 0%, 42.86% 16.67%, 57.14% 16.67%, 57.14% 0%, 85.71% 0%, 85.71% 16.67%, 100% 16.67%, 100% 50%, 85.71% 50%, 85.71% 66.67%, 71.43% 66.67%, 71.43% 83.33%, 57.14% 83.33%, 57.14% 100%, 42.86% 100%, 42.86% 83.33%, 28.57% 83.33%, 28.57% 66.67%, 14.29% 66.67%, 14.29% 50%, 0% 50%, 0% 16.67%, 14.29% 16.67%);
   background: var(--sheet);
 }
 
-.heart-full { background: var(--vermilion); border-color: var(--vermilion); }
+.heart-full { background: var(--vermilion); }
 .heart-empty { background: var(--sheet); }
 .heart-part {
   background: linear-gradient(to right, var(--vermilion) var(--fill, 50%), var(--sheet) var(--fill, 50%));
-  border-color: var(--vermilion);
+}
+
+.hearts-pct {
+  min-width: 3.2em;
+  text-align: right;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .rail-toggle {

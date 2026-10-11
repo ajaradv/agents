@@ -36,7 +36,8 @@ A right-edge rail holds one portrait per chat target, with one drawer and one co
 | Agents | `agents/*/agent.yaml` (`type: assistant`, plus `firstmate`) | Assistants: headless turn. Firstmate: `fm-send` into the one TUI. |
 | Crew | Non-terminal tasks in `fm-fleet-snapshot --json` | `fm-send <task-id>` into that worker's steering inbox |
 
-- A new agent appears on the rail with no dashboard change. Agents without art in `lib/agent-art.ts` use the captain portrait; workers show initials.
+- A new agent appears on the rail with no dashboard change. Agents without art in `lib/agent-art.ts` show initials on the rail and the captain portrait on agent cards. Workers get a portrait from `public/art/crew/` (secondmate tasks from `public/art/secondmate/`), chosen by task id and kept for the task's life; add faces with `bin/agent-portrait --pool`.
+- Usage hearts: ten per meter, with the percent remaining beside them.
 - Threads stay `fleet/inbox/<id>/captain-chat.jsonl`. One turn per thread at a time; later messages queue in order.
 - A failed send appends `{"from":"dashboard","kind":"error","reason":"…","ref":"<captain line ts>"}`. The drawer draws it under the message it failed.
 - Worker threads carry a `.task` marker. When the task leaves the snapshot (landed or retired), the folder moves to `fleet/inbox/archive/<id>-<date>/`. Archiving is skipped when the snapshot fails.

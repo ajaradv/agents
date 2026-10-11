@@ -1,6 +1,6 @@
 import { mkdir, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { agentArtOrNull } from "./agent-art.ts";
+import { agentArtOrNull, pickPoolArt, poolArt, poolFor } from "./agent-art.ts";
 import { loadAgents } from "./agents.ts";
 import { runFleetSnapshotJson } from "./fleet-snapshot.ts";
 import { dashLog } from "./log.ts";
@@ -21,6 +21,8 @@ export type ChatTarget = {
   art: string | null;
   model?: string;
   description?: string;
+  /** Task role on the rail: crew or secondmate. */
+  role?: "crew" | "secondmate";
   state?: string;
   project?: string;
 };
@@ -36,6 +38,8 @@ const REFRESH_MS = 20_000;
 
 let agents: ChatTarget[] = [];
 let tasks: ChatTarget[] = [];
+/** Task id -> pool portrait, kept for the task's life so faces do not reshuffle. */
+const taskArt = new Map<string, string>();
 
 export function listChatTargets(): { agents: ChatTarget[]; workers: ChatTarget[] } {
   return { agents: [...agents], workers: [...tasks] };
@@ -74,15 +78,30 @@ async function refreshTasks(): Promise<boolean> {
   if (!snap.ok) return false;
   const agentIds = new Set(agents.map((a) => a.id));
   const next: ChatTarget[] = [];
-  for (const t of snap.tasks) {
+  const live = snap.tasks.filter((t) => {
     const id = String(t.id ?? "");
+    return CHAT_ID_RE.test(id) && !agentIds.has(id) && !TERMINAL.has(t.current_state?.state ?? "unknown");
+  });
+  const liveIds = new Set(live.map((t) => String(t.id)));
+  for (const id of [...taskArt.keys()]) if (!liveIds.has(id)) taskArt.delete(id);
+  const taken = new Set(taskArt.values());
+  for (const t of live) {
+    const id = String(t.id);
     const state = t.current_state?.state ?? "unknown";
-    if (!CHAT_ID_RE.test(id) || agentIds.has(id) || TERMINAL.has(state)) continue;
+    let art = taskArt.get(id) ?? null;
+    if (!art) {
+      art = pickPoolArt(id, poolArt(poolFor(t.kind)), taken);
+      if (art) {
+        taskArt.set(id, art);
+        taken.add(art);
+      }
+    }
     next.push({
       id,
       kind: "task",
       label: t.backlog?.title ?? t.title ?? id,
-      art: null,
+      art,
+      role: t.kind === "secondmate" ? "secondmate" : "crew",
       state,
       project: t.backlog?.repo ?? t.project,
     });

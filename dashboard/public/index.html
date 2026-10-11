@@ -83,8 +83,9 @@
     <p class="rail-label" x-show="rail.workers.length" x-cloak>Crew</p>
     <template x-for="t in rail.workers" :key="t.id">
       <button type="button" class="rail-face rail-worker" :class="{ 'is-open': chatOpen && chatId === t.id }"
-              :aria-label="'Chat with worker ' + t.label" :title="t.label + ' · ' + (t.state || '')" @click="openChat(t.id)">
-        <span x-text="initials(t)"></span>
+              :aria-label="'Chat with ' + (t.role || 'worker') + ' ' + t.label" :title="t.label + ' · ' + [t.role, t.state].filter(Boolean).join(' · ')" @click="openChat(t.id)">
+        <img x-show="t.art" :src="t.art" width="34" height="34" alt="" />
+        <span x-show="!t.art" x-text="initials(t)"></span>
       </button>
     </template>
   </nav>

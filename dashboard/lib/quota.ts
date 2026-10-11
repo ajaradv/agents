@@ -175,7 +175,7 @@ export function heartsMeterHtml(percentRemaining: number): string {
       bits.push(`<span class="heart heart-part" style="--fill:${partial * 10}%"></span>`);
     } else bits.push('<span class="heart heart-empty"></span>');
   }
-  return `<span class="hearts" role="img" aria-label="${pct} percent remaining">${bits.join("")}</span>`;
+  return `<span class="meter-hearts"><span class="hearts" role="img" aria-label="${pct} percent remaining">${bits.join("")}</span><span class="hearts-pct ${percentBadgeClass(pct)}" aria-hidden="true">${pct}%</span></span>`;
 }
 
 function providerCardHtml(card: ProviderCard): string {
