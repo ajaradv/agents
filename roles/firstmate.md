@@ -75,8 +75,9 @@ The worker writes `fleet/plans/...` with **`status: draft`** and may ping **`FLE
 On **`kind: plan-ready`** (or when you read a vault plan with **`status: finalized`**):
 
 1. Open the plan **`ref`** under `fleet/plans/`.
-2. **`fm-brief`** from the plan body for the named ship.
-3. Resolve **implementation** rules (ship/scout/mechanical — not the planning array), quota, then **`fm-spawn`**.
+2. Run **`bun bin/plan-execution.ts <plan>`** (agents repo; reads `config/crew-dispatch.json`). It lists each task with its rule id and profile array. Exit 1 means a malformed block or unknown rule id: send the plan back to Architect rather than guessing.
+3. For each task: **`fm-brief`** from the plan body scoped to that task, run **quota-axi** on that task's profile array, then **`fm-spawn`** the winner. Tasks the block does not cover, or a plan with no block, fall back to Jev (`bin/fm-dispatch-resolve.sh`) or judgment on **implementation** rules — never the planning array.
+4. Record each dispatch on **`FLEET_INBOX/dispatch-outcomes.jsonl`**: at spawn `{"ts","plan","task","task_id","rule","profile","kind":"spawned"}`; when the task lands or fails, the same keys with `"kind":"landed"` or `"kind":"failed"`. These records tune the rules later.
 
 Only **`finalized`** plans are executable. **`reviewed`** means a human read the plan; it is not enough to spawn implementation without captain **`finalized`** (or an explicit captain yes in session).
 

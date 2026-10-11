@@ -22,7 +22,27 @@ Write plans to **`fleet/plans/<category>/<slug>.md`**.
 
 **Status** (`status:` in frontmatter): `draft` → `reviewed` → `finalized`. You create at `draft`. Only the captain (or you after an explicit captain yes in this session) may set `reviewed` or `finalized`.
 
-Required frontmatter keys: `title`, `category`, `status`, `ship` (if known), `created`, `source` (vault path to the idea/request).
+Required frontmatter keys: `title`, `category`, `status`, `ship` (if known), `created`, `source` (vault path to the idea/request), and `execution` (below).
+
+### Execution block (model per task)
+
+Split the work into crew-sized tasks and pick a dispatch **rule id** for each. Read the rules from **`fleet/home/config/crew-dispatch.json`** (`FM_HOME/config/crew-dispatch.json`); each rule has an `id`, a `when` text, and a profile array.
+
+```yaml
+execution:
+  - task: Rename the helpers to the new names
+    rule: mechanical
+  - task: Build the chat rail and its send lock
+    rule: big-ship
+    effort: high          # optional: low | medium | high | xhigh | max
+    why: many moving parts across server and client
+```
+
+- Choose the rule whose `when` text fits the task, not the plan as a whole. A small rename inside a big feature is `mechanical`.
+- **Never name a model.** Quota-axi and `fm-spawn` pick the concrete profile from the rule, so a finalized plan survives quota exhaustion and model renames.
+- `effort` is a hint. It replaces the effort on profiles that already carry one (Claude, Pi); Cursor profiles keep theirs.
+- Current ids: `news-scout`, `scout`, `plan-greenfield`, `plan-scoped`, `mechanical`, `big-ship`, `api-fallback`. Use what the file says if it differs.
+- Check your block with `bun bin/plan-execution.ts <plan.md>` (from the agents repo) before moving a plan to `reviewed`.
 
 Plan body (crew-ready brief):
 
@@ -32,7 +52,7 @@ Plan body (crew-ready brief):
 - **Files or areas** — best-effort from vault + ship paths
 - **Risks** — `R1`, `R2`, …
 - **Open questions** — `Q1`, … (empty if none)
-- **Suggested execution** — ship vs scout; note if mechanical (Firstmate may skip plan next time)
+- **Suggested execution** — ship vs scout, task order, and a sentence on each `execution` entry's rule choice; note if mechanical (Firstmate may skip plan next time)
 
 Optional: `lavish:` path or note if a Lavish board exists for review.
 
