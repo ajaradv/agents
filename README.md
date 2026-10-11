@@ -94,6 +94,7 @@ Source of truth: [fleet/config/](fleet/config/). After `bin/seed-fleet-home`, fi
 | Pi + Hugging Face | Hugging Face API | `harness: pi` + `huggingface/...` + `HF_API_KEY` |
 | Pi + OpenRouter | OpenRouter API | `harness: pi` + `openrouter/...` — you add key and model id |
 
+- **Rule ids:** each rule in `crew-dispatch.json` has a stable `id` (`news-scout`, `scout`, `plan-greenfield`, `plan-scoped`, `mechanical`, `big-ship`, `api-fallback`). Architect plans and Jev routing refer to rules by id; Firstmate's validator ignores the extra key. Cursor profiles carry the effort in the model name (`grok-4.7-high`), never an `effort` field.
 - **Secrets:** [docs/onepassword.md](docs/onepassword.md) — vault **Fleet**, Environment **agents-fleet**; names in [fleet/config/env.example](fleet/config/env.example).
 - **DeepSeek / Hugging Face:** `just merge-pi-providers` (from [pi-deepseek-provider.json](fleet/config/pi-deepseek-provider.json) and [pi-huggingface-provider.json](fleet/config/pi-huggingface-provider.json)). **OpenRouter:** Pi builtin + `OPENROUTER_API_KEY`.
 - **OpenRouter / native Anthropic API:** operator-owned keys and Pi provider wiring; dispatch names the lane in `crew-dispatch.json`.
