@@ -114,6 +114,8 @@
       </div>
       <div class="row">
         <button type="button" class="btn" x-show="!chatGroup && chatThinking && current().runtime === 'rpc'" @click="stopAgent()">Stop</button>
+        <button type="button" class="btn" :class="{ 'btn-ink': canvasOpen }" x-show="!chatGroup && canvasItems.length" x-cloak
+                :aria-pressed="canvasOpen" @click="toggleCanvas()" x-text="'Canvas · ' + canvasItems.length"></button>
         <button type="button" class="btn" @click="closeChat()">Close</button>
       </div>
     </header>
@@ -141,10 +143,45 @@
                 x-text="id + (chatGroup && chatGroup.lead === id ? ' (lead)' : '')"></button>
       </template>
     </div>
+    <div class="chat-body" :class="{ 'has-canvas': canvasOpen && !chatGroup && canvasItems.length }">
+    <section class="canvas-pane" aria-label="Canvas" x-show="canvasOpen && !chatGroup && canvasItems.length" x-cloak>
+      <div class="canvas-tabs" role="tablist">
+        <template x-for="it in canvasItems" :key="it.id">
+          <button type="button" role="tab" class="chip" :aria-selected="canvasSel === it.id" :aria-pressed="canvasSel === it.id"
+                  @click="canvasSel = it.id" x-text="it.title"></button>
+        </template>
+      </div>
+      <template x-if="canvasItem()">
+        <div class="canvas-view">
+          <p class="canvas-caption" x-show="canvasItem().caption" x-text="canvasItem().caption"></p>
+          <template x-if="canvasItem().kind === 'image'">
+            <div class="canvas-images" :class="{ 'is-set': (canvasItem().images || []).length > 1 }">
+              <template x-for="img in (canvasItem().images || [])" :key="img.file">
+                <figure class="canvas-figure">
+                  <a :href="canvasSrc(canvasItem(), img.file)" target="_blank" rel="noopener"><img :src="canvasSrc(canvasItem(), img.file)" :alt="img.label" loading="lazy" /></a>
+                  <figcaption class="row">
+                    <span x-text="img.label"></span>
+                    <button type="button" class="btn btn-ink" x-show="canvasItem().choose" @click="pickCanvasImage(canvasItem(), img)">Pick</button>
+                  </figcaption>
+                </figure>
+              </template>
+            </div>
+          </template>
+          <template x-if="canvasItem().kind !== 'image'">
+            <div class="canvas-frame-wrap">
+              <iframe x-ref="canvasFrame" class="canvas-frame" :src="canvasFrameSrc(canvasItem())" :sandbox="canvasSandbox(canvasItem())"
+                      :title="canvasItem().title" referrerpolicy="no-referrer"></iframe>
+              <a class="canvas-open muted" x-show="canvasItem().kind === 'url' || canvasItem().kind === 'html'" :href="canvasFrameSrc(canvasItem())" target="_blank" rel="noopener">Open in a new tab</a>
+            </div>
+          </template>
+        </div>
+      </template>
+    </section>
     <div class="thread" x-ref="chatLog" aria-live="polite">
       <div class="bubble-row is-system" x-show="chatEmpty" x-cloak>
         <div class="bubble"><p x-text="title() + (chatGroup ? ' is on the line. Messages go to the lead unless you pick another member.' : ' is on the line.')"></p></div>
       </div>
+    </div>
     </div>
     <div class="route-panel" x-show="routeNote" x-cloak>
       <p x-text="routeNote"></p>

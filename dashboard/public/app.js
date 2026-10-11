@@ -35,6 +35,9 @@ function dashboardApp() {
     chatConn: "",
     chatThinking: false,
     chatActivity: "",
+    canvasItems: [],
+    canvasSel: "",
+    canvasOpen: false,
     chatWs: null,
     chatSockets: {},
     chatGen: 0,
@@ -156,6 +159,26 @@ function dashboardApp() {
         this.refreshRail();
       });
       es.addEventListener("rail", () => this.refreshRail());
+      es.addEventListener("canvas", (ev) => {
+        if (this.chatOpen && !this.chatGroup && ev.data === this.chatId) this.loadCanvas(true);
+      });
+      // Agent html canvases may post a message back: {type: "fleet-canvas", text}.
+      window.addEventListener("message", (ev) => {
+        // x-ref inside an x-if template is not reliably registered; query the live frame.
+        const frame = document.querySelector("#chat-drawer .canvas-frame");
+        if (!frame || ev.source !== frame.contentWindow) return;
+        const d = ev.data;
+        if (!d || d.type !== "fleet-canvas" || typeof d.text !== "string" || !d.text.trim()) return;
+        const item = this.canvasItem();
+        const text = d.text.trim().slice(0, 2000);
+        // A page that posts on load would resend on every reload; accept each message once per item version.
+        const key = `fleet-canvas-posted:${this.chatId}:${item ? item.id + ":" + item.updated : "page"}:${text}`;
+        try {
+          if (localStorage.getItem(key)) return;
+          localStorage.setItem(key, "1");
+        } catch { /* private mode: no dedupe */ }
+        this.sendText(this.chatId, `From the canvas "${item ? item.title : "page"}": ${text}`);
+      });
     },
 
     pull(url, target) {
@@ -239,8 +262,77 @@ function dashboardApp() {
       this.chatId = id;
       saveChatId(id);
       this.chatOpen = true;
-      if (switching) this.connectThreads([id]);
+      if (switching) {
+        this.connectThreads([id]);
+        this.canvasItems = [];
+        this.canvasOpen = false;
+        this.loadCanvas(false);
+      }
       this.focusComposer();
+    },
+
+    canvasSeenKey(id) {
+      return "fleet-canvas-seen:" + id;
+    },
+
+    /** Fetch the current agent's canvas; focus = open on anything newer than last seen. */
+    async loadCanvas(focus) {
+      const id = this.chatId;
+      try {
+        const r = await fetch("/api/canvas/" + encodeURIComponent(id));
+        const items = (await r.json()).items || [];
+        if (id !== this.chatId || this.chatGroup) return;
+        this.canvasItems = items;
+        if (!items.find((i) => i.id === this.canvasSel)) this.canvasSel = items[0] ? items[0].id : "";
+        let seen = "";
+        try { seen = localStorage.getItem(this.canvasSeenKey(id)) || ""; } catch { /* private mode */ }
+        const newest = items[0];
+        if (focus && newest && newest.updated > seen) {
+          this.canvasSel = newest.id;
+          this.canvasOpen = true;
+        }
+        if (!items.length) this.canvasOpen = false;
+        if (this.canvasOpen && newest) this.markCanvasSeen();
+      } catch {
+        /* keep last */
+      }
+    },
+
+    markCanvasSeen() {
+      const newest = this.canvasItems[0];
+      if (!newest) return;
+      try { localStorage.setItem(this.canvasSeenKey(this.chatId), newest.updated); } catch { /* private mode */ }
+    },
+
+    toggleCanvas() {
+      this.canvasOpen = !this.canvasOpen;
+      if (this.canvasOpen) this.markCanvasSeen();
+    },
+
+    canvasItem() {
+      return this.canvasItems.find((i) => i.id === this.canvasSel) || null;
+    },
+
+    canvasSrc(item, file) {
+      return `/canvas/${encodeURIComponent(this.chatId)}/${encodeURIComponent(item.id)}/${file.split("/").map(encodeURIComponent).join("/")}?v=${encodeURIComponent(item.updated)}`;
+    },
+
+    canvasFrameSrc(item) {
+      if (!item) return "about:blank";
+      if (item.kind === "url") return item.url;
+      if (item.kind === "html") return this.canvasSrc(item, item.entry || "index.html");
+      return `/canvas/${encodeURIComponent(this.chatId)}/${encodeURIComponent(item.id)}/view?v=${encodeURIComponent(item.updated)}`;
+    },
+
+    canvasSandbox(item) {
+      if (!item) return "";
+      if (item.kind === "url") return "allow-scripts allow-forms allow-same-origin allow-popups";
+      if (item.kind === "html") return "allow-scripts allow-forms allow-popups";
+      return "";
+    },
+
+    pickCanvasImage(item, img) {
+      this.sendText(this.chatId, `Picked "${img.label}" from "${item.title}" on the canvas.`);
     },
 
     /** A group stacks its members' threads; the composer defaults to the lead. */

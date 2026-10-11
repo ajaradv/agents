@@ -239,7 +239,9 @@ DASHBOARD_CHAT_BLOCK = (
     "scope, a pick between options) or the request is ambiguous, call the **`ask_captain`** tool with 2-5 concrete options per "
     "question, then end your turn. The questions appear in the dashboard as clickable choices and the answer comes back as the "
     "captain's next message. Do not choose a default for a captain decision because you are in a headless turn; that is what "
-    "`ask_captain` is for. Settle facts you can check yourself instead of asking.\n"
+    "`ask_captain` is for. Settle facts you can check yourself instead of asking.\n\n"
+    "**Show, don't paste paths.** When the captain should look at something (images, a page, a table, a local URL), "
+    "call **`canvas_show`**; it appears on the canvas next to this chat.\n"
 )
 
 
@@ -251,7 +253,10 @@ DASHBOARD_RPC_BLOCK = (
     "**Ask instead of assuming.** When a decision is the captain's (direction, naming, scope, a pick between options) "
     "or the request is ambiguous, call **`ask_captain`** with 2-5 concrete options per question. It shows clickable "
     "choices in the dashboard and **waits for the answer**, then you continue in the same turn. Settle facts you can "
-    "check yourself instead of asking.\n"
+    "check yourself instead of asking.\n\n"
+    "**Show, don't paste paths.** When the captain should look at something (images, comps, screenshots, a page, a "
+    "table, a local URL such as a decision board or the dev server), call **`canvas_show`**. It appears on the canvas "
+    "next to this chat.\n"
 )
 
 # Set by rpc_main before prepare_pi_launch so the prompt matches the runtime.
@@ -398,10 +403,13 @@ def prepare_pi_launch(
             return None
         ext_refs.append(ref if ref.startswith("npm:") else ref)
 
-    # Every assistant can ask the captain structured questions (extensions/ask-captain.ts).
-    ask_captain = str(ROOT / "extensions" / "ask-captain.ts")
-    if agent_type == "assistant" and ask_captain not in ext_refs:
-        ext_refs.append(ask_captain)
+    # Every assistant can ask the captain structured questions (ask-captain.ts)
+    # and show work on the dashboard canvas (canvas.ts).
+    if agent_type == "assistant":
+        for name in ("ask-captain", "canvas"):
+            ref = str(ROOT / "extensions" / f"{name}.ts")
+            if ref not in ext_refs:
+                ext_refs.append(ref)
     os.environ["FLEET_AGENT_ID"] = agent_id
 
     for ref in ext_refs:

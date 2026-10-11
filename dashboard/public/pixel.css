@@ -556,13 +556,15 @@ pre, .raw {
 
 .bubble-row.is-agent { margin-right: auto; }
 .bubble-row.is-captain { margin-left: auto; flex-direction: row-reverse; }
-.bubble-row.is-system { margin-inline: auto; max-width: 28rem; }
+.bubble-row.is-system { margin-inline: auto; max-width: min(28rem, 100%); }
 
 .bubble {
   border: 1px solid var(--ink);
   background: var(--sheet);
   color: var(--ink);
   padding: 0.45rem 0.65rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .bubble p { margin: 0; }
@@ -683,3 +685,25 @@ body.chat-open { overflow: hidden; }
 .is-streaming .bubble { opacity: 0.85; }
 .is-streaming .bubble p { white-space: pre-wrap; }
 .is-answer .bubble { padding-top: 0.35rem; padding-bottom: 0.35rem; }
+
+/* canvas pane: agents show work next to the chat */
+.chat-body { flex: 1; min-height: 0; display: flex; }
+.chat-body > .thread { flex: 1; min-width: 0; }
+.chat-body.has-canvas > .thread { flex: 0 0 38%; }
+.canvas-pane { flex: 1 1 62%; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; background: var(--bone); color: var(--ink); border-right: 2px solid var(--ink); }
+.canvas-tabs { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.25rem; flex: none; }
+.canvas-tabs .chip { white-space: nowrap; }
+.canvas-view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.canvas-caption { margin: 0; font-size: 0.8rem; }
+.canvas-images { flex: 1; min-height: 0; overflow: auto; display: grid; gap: 0.75rem; align-content: start; }
+.canvas-images.is-set { grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); }
+.canvas-figure { margin: 0; display: grid; gap: 0.35rem; min-width: 0; }
+.canvas-figure img { width: 100%; height: auto; display: block; border: 2px solid var(--ink); background: var(--sheet); }
+.canvas-figure figcaption { justify-content: space-between; align-items: center; gap: 0.5rem; font-size: 0.75rem; overflow-wrap: anywhere; }
+.canvas-frame-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.canvas-frame { flex: 1; min-height: 0; width: 100%; border: 2px solid var(--ink); background: #fff; }
+.canvas-open { font-size: 0.7rem; align-self: flex-end; color: var(--ink); }
+@media (max-width: 900px) {
+  .chat-body.has-canvas > .thread { display: none; }
+  .canvas-pane { border-right: 0; }
+}

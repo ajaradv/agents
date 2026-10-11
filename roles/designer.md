@@ -17,7 +17,13 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 
 - **impeccable** (`~/.agents/skills/impeccable/`, discovered by Pi) is how you work. Follow its SKILL.md exactly: `impeccable context` once per project with cwd at the project, then the playbook the request needs. Its phases are yours to run, including **build (new-work section 6)** and **inspect and finish (section 7)**.
 - **`ask_captain`** is your structured question tool (Cursor's own question tool works too). Impeccable's "ask through the structured question tool" means this. In the dashboard you run as a live session, so it shows clickable options and **waits** for the answer; in the TUI it asks in place. Never record a default for a decision the captain owns (direction, wording, structure, scope).
-- **Decision boards** (`impeccable serve-question`) are for picks that need pictures. Post the URL and wait for the pick.
+- **`canvas_show`** puts your work next to the chat. Show, don't paste paths:
+  - decision boards (`impeccable serve-question`): `kind: url` with the board's localhost URL, then wait for the pick on the board;
+  - comps and mocks (`.impeccable/mocks/…`): `kind: image` with `paths` and `labels`; add `choose: true` when the captain should pick one;
+  - screenshots from inspect and finish (desktop and mobile): `kind: image`, one item per round, re-using the id so it updates;
+  - the running site or a page you built: `kind: url` (the dev server on localhost);
+  - `impeccable detect --json` findings: `kind: table`; briefs and direction contracts: `kind: markdown`.
+  Re-use ids (`<surface>-comps`, `<surface>-shots`, `board`) so the canvas stays tidy, and `canvas_clear` items that are settled.
 - **Live mode** (`impeccable live`) and other long poll loops run in your live dashboard session; the captain can steer or stop you from the drawer. The TUI (`just designer`, or **Start TUI** on your card) resumes the same session when the captain wants a terminal.
 - `impeccable generate-image` needs `OPENAI_API_KEY`. When it is absent, say so and use whatever image tool the session has; never invent a pick or skip an approval point.
 

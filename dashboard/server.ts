@@ -20,6 +20,7 @@ import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
 import { resolveRoute } from "./lib/route.ts";
+import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas } from "./lib/canvas.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import {
   acceptCaptainLine,
@@ -111,6 +112,19 @@ scheduleQuotaLoop(() => {
 registerChatBroadcaster(broadcastChat);
 registerChatEventBroadcaster(broadcastChatEvent);
 startHostReaper();
+
+// Canvas: tell the page when an agent's canvas items change (extensions/canvas.ts writes them).
+const canvasSigs = new Map<string, string>();
+setInterval(() => {
+  void (async () => {
+    for (const t of listChatTargets().agents) {
+      const sig = await canvasSignature(t.id);
+      const prev = canvasSigs.get(t.id);
+      canvasSigs.set(t.id, sig);
+      if (prev !== undefined && prev !== sig) sseBroadcast("canvas", t.id);
+    }
+  })().catch((e) => console.error("[dashboard] canvas poll:", e));
+}, 2000);
 setChatTurnEmitter(() => sseBroadcast("agents"));
 void startChatTargetRefresh(() => sseBroadcast("rail")).then(() => startChatBridge());
 
@@ -301,6 +315,29 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return new Response(await groupsPanelHtml(), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
+    }
+
+    const canvasList = path.match(/^\/api\/canvas\/([a-z][a-z0-9_-]{0,63})$/);
+    if (canvasList && req.method === "GET") {
+      const agentId = canvasList[1]!;
+      if (!chatAllowed(agentId)) return Response.json({ items: [] }, { status: 404 });
+      return Response.json({ items: await listCanvas(agentId) });
+    }
+
+    const canvasView = path.match(/^\/canvas\/([a-z][a-z0-9_-]{0,63})\/([a-z0-9][a-z0-9-]{0,59})\/view$/);
+    if (canvasView && req.method === "GET") {
+      return canvasViewResponse(canvasView[1]!, canvasView[2]!);
+    }
+
+    const canvasFile = path.match(/^\/canvas\/([a-z][a-z0-9_-]{0,63})\/([a-z0-9][a-z0-9-]{0,59})\/(.+)$/);
+    if (canvasFile && req.method === "GET") {
+      let rel = "";
+      try {
+        rel = decodeURIComponent(canvasFile[3]!);
+      } catch {
+        return new Response("not found", { status: 404 });
+      }
+      return canvasFileResponse(canvasFile[1]!, canvasFile[2]!, rel);
     }
 
     const hostAbort = path.match(/^\/api\/agents\/([a-z][a-z0-9_-]{0,63})\/abort$/);
