@@ -23,6 +23,8 @@ export type ChatTarget = {
   description?: string;
   /** Seconds one dashboard turn may run (agent.yaml `turn_timeout:`). */
   turnTimeoutSec?: number;
+  /** "rpc": a live Pi session in the dashboard's agent host (lib/agent-host.ts). */
+  runtime?: "headless" | "rpc";
   /** Task role on the rail: crew or secondmate. */
   role?: "crew" | "secondmate";
   state?: string;
@@ -72,6 +74,7 @@ async function refreshAgents(): Promise<void> {
       model: a.model,
       description: a.description,
       turnTimeoutSec: a.turnTimeoutSec || undefined,
+      runtime: a.runtime,
     }));
 }
 

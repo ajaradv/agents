@@ -26,10 +26,12 @@ import {
   getAllLastChatTurns,
   getHeadlessChatState,
   registerChatBroadcaster,
+  registerChatEventBroadcaster,
   setChatTurnEmitter,
   startChatBridge,
 } from "./lib/chat-bridge.ts";
-import { listChatTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
+import { abortHost, answerDialog, hostAlive, hostRunning, startHostReaper, stopHost, type HostEvent } from "./lib/agent-host.ts";
+import { chatAllowed, chatTarget, listChatTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import { HOST, PORT, ROOT } from "./lib/paths.ts";
 
 type WsData = { agentId: string };
@@ -50,7 +52,23 @@ function chatPayload(line: ChatLine) {
     ts: line.ts,
     ...(line.ref ? { ref: line.ref } : {}),
     ...(line.questions ? { questions: line.questions } : {}),
+    ...(line.dialog ? { dialog: line.dialog } : {}),
   };
+}
+
+/** Live RPC-agent events go to open sockets only; they are not saved. */
+function broadcastChatEvent(agentId: string, ev: HostEvent) {
+  const set = chatSockets.get(agentId);
+  if (ev.kind === "running") sseBroadcast("agents");
+  if (!set) return;
+  const payload = JSON.stringify({ event: ev });
+  for (const ws of set) {
+    try {
+      ws.send(payload);
+    } catch {
+      set.delete(ws);
+    }
+  }
 }
 
 function broadcastChat(agentId: string, line: ChatLine) {
@@ -91,6 +109,8 @@ scheduleQuotaLoop(() => {
 });
 
 registerChatBroadcaster(broadcastChat);
+registerChatEventBroadcaster(broadcastChatEvent);
+startHostReaper();
 setChatTurnEmitter(() => sseBroadcast("agents"));
 void startChatTargetRefresh(() => sseBroadcast("rail")).then(() => startChatBridge());
 
@@ -283,6 +303,33 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       });
     }
 
+    const hostAbort = path.match(/^\/api\/agents\/([a-z][a-z0-9_-]{0,63})\/abort$/);
+    if (hostAbort && req.method === "POST") {
+      const agentId = hostAbort[1]!;
+      if (!chatAllowed(agentId) || chatTarget(agentId)?.runtime !== "rpc") {
+        return Response.json({ ok: false, message: "not a live agent" }, { status: 404 });
+      }
+      return Response.json({ ok: await abortHost(agentId) });
+    }
+
+    const dialogAnswer = path.match(/^\/api\/dialog\/([a-z][a-z0-9_-]{0,63})\/([A-Za-z0-9_.:-]{1,128})$/);
+    if (dialogAnswer && req.method === "POST") {
+      const [, agentId, dialogId] = dialogAnswer;
+      if (!chatAllowed(agentId!)) return Response.json({ ok: false, error: "unknown agent" }, { status: 404 });
+      let body: { value?: unknown; confirmed?: unknown; cancelled?: unknown } = {};
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        return Response.json({ ok: false, error: "bad json" }, { status: 400 });
+      }
+      const r = await answerDialog(agentId!, dialogId!, {
+        value: typeof body.value === "string" ? body.value.slice(0, 4000) : undefined,
+        confirmed: typeof body.confirmed === "boolean" ? body.confirmed : undefined,
+        cancelled: body.cancelled === true,
+      });
+      return Response.json(r, { status: r.ok ? 200 : 409 });
+    }
+
     if (path === "/api/route" && req.method === "POST") {
       let text = "";
       try {
@@ -357,6 +404,14 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       if (!isTuiAgent(agentId)) {
         return Response.json({ ok: false, message: "unknown agent" }, { status: 404 });
       }
+      if (hostRunning(agentId)) {
+        return Response.json({
+          ok: false,
+          message: `${agentId} is working in the dashboard right now. Stop it or let it finish, then start the TUI.`,
+        });
+      }
+      // The TUI resumes the same Pi session; release it from the dashboard host first.
+      if (hostAlive(agentId)) await stopHost(agentId);
       const r = startAgentTui(agentId);
       sseBroadcast("agents");
       return Response.json(r);

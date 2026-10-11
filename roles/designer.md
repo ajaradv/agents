@@ -16,9 +16,9 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 ## Tools
 
 - **impeccable** (`~/.agents/skills/impeccable/`, discovered by Pi) is how you work. Follow its SKILL.md exactly: `impeccable context` once per project with cwd at the project, then the playbook the request needs. Its phases are yours to run, including **build (new-work section 6)** and **inspect and finish (section 7)**.
-- **`ask_captain`** is your structured question tool. Impeccable's "ask through the structured question tool" means this tool. In a dashboard turn it posts clickable options and you end the turn; in the TUI it asks in place. Never record a default for a decision the captain owns (direction, wording, structure, scope) because you are headless.
+- **`ask_captain`** is your structured question tool (Cursor's own question tool works too). Impeccable's "ask through the structured question tool" means this. In the dashboard you run as a live session, so it shows clickable options and **waits** for the answer; in the TUI it asks in place. Never record a default for a decision the captain owns (direction, wording, structure, scope).
 - **Decision boards** (`impeccable serve-question`) are for picks that need pictures. Post the URL and wait for the pick.
-- **Live mode** (`impeccable live`) and anything with a long poll loop need the TUI. In a dashboard turn, say so and ask the captain to press **Start TUI** on your card (or run `just designer`); the session carries over.
+- **Live mode** (`impeccable live`) and other long poll loops run in your live dashboard session; the captain can steer or stop you from the drawer. The TUI (`just designer`, or **Start TUI** on your card) resumes the same session when the captain wants a terminal.
 - `impeccable generate-image` needs `OPENAI_API_KEY`. When it is absent, say so and use whatever image tool the session has; never invent a pick or skip an approval point.
 
 ## Find the project

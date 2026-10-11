@@ -8,6 +8,7 @@ import {
   takePendingQuestions,
   type ChatLine,
 } from "./chat.ts";
+import { hostRunning, registerHostHooks, submitToHost, type HostEvent } from "./agent-host.ts";
 import { allChatTargetIds, chatTarget } from "./chat-targets.ts";
 import { dashLog } from "./log.ts";
 import { spawnTimed } from "./proc.ts";
@@ -21,6 +22,8 @@ import {
 } from "./firstmate-chat.ts";
 
 export type ChatBroadcaster = (agentId: string, line: ChatLine) => void;
+/** Ephemeral live events from RPC agents (streaming text, tool steps, notices); never saved. */
+export type ChatEventBroadcaster = (agentId: string, ev: HostEvent) => void;
 
 export type LastChatTurn = {
   at: string;
@@ -30,6 +33,7 @@ export type LastChatTurn = {
 };
 
 let broadcast: ChatBroadcaster = () => {};
+let broadcastEvent: ChatEventBroadcaster = () => {};
 let onTurnComplete: () => void = () => {};
 
 export function setChatTurnEmitter(fn: () => void): void {
@@ -77,13 +81,31 @@ export function registerChatBroadcaster(fn: ChatBroadcaster): void {
   broadcast = fn;
 }
 
+export function registerChatEventBroadcaster(fn: ChatEventBroadcaster): void {
+  broadcastEvent = fn;
+}
+
+registerHostHooks({
+  line: (agentId, line) => emitOwn(agentId, line),
+  event: (agentId, ev) => broadcastEvent(agentId, ev),
+  settled: (agentId, outcome) => {
+    recordTurn(agentId, {
+      at: new Date().toISOString(),
+      status: outcome.ok ? "ok" : "error",
+      ms: outcome.ms,
+      ...(outcome.error ? { error: outcome.error } : {}),
+    });
+    onTurnComplete();
+  },
+});
+
 export function getHeadlessChatState(agentId: string): {
   thinking: boolean;
   lastTurn: LastChatTurn | null;
 } {
   const s = state.get(agentId);
   return {
-    thinking: Boolean(s?.running),
+    thinking: Boolean(s?.running) || hostRunning(agentId),
     lastTurn: s?.lastTurn ?? null,
   };
 }
@@ -150,10 +172,6 @@ async function finishFmSend(
     "chat-turn",
     `${agentId} ${res.ms}ms exit=${res.exitCode} timedOut=${res.timedOut}`,
   );
-  if (res.timedOut || res.exitCode !== 0) {
-    const asked = await takePendingQuestions(agentId);
-    if (asked) emitOwn(agentId, asked);
-  }
   if (res.timedOut) {
     await failTurn(agentId, captainLine, "timeout", res.ms, "fm-send timed out.");
     return;
@@ -290,6 +308,7 @@ async function drainQueue(agentId: string): Promise<void> {
     if (line && target) {
       if (target.kind === "firstmate") await runFirstmateTurn(line);
       else if (target.kind === "task") await runTaskTurn(agentId, line);
+      else if (target.runtime === "rpc") await submitToHost(agentId, line);
       else await runHeadlessTurn(agentId, line);
     } else if (line) {
       await failTurn(agentId, line, "error", 0, `${agentId} is no longer on the rail.`);

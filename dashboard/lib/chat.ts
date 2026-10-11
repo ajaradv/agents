@@ -11,17 +11,21 @@ export { chatAllowed };
  * captain line it failed; `text` repeats the reason for older readers.
  * kind "question" is an agent's ask_captain call: `questions` carries the
  * options the drawer draws as buttons; `text` is a plain rendering of them.
+ * A question with `dialog` is a live Pi extension dialog (RPC agents): the
+ * answer goes straight back to the waiting tool via /api/dialog.
+ * kind "answer" records the captain's reply to a dialog; it never starts a turn.
  */
 export type ChatQuestion = { id: string; question: string; options?: string[]; recommended?: string };
 
 export type ChatLine = {
   ts: string;
   from: string;
-  kind: "chat" | "error" | "question";
+  kind: "chat" | "error" | "question" | "answer";
   text: string;
   reason?: string;
   ref?: string;
   questions?: ChatQuestion[];
+  dialog?: { id: string; method: string; timeoutMs?: number };
 };
 
 function chatPath(agentId: string): string {
@@ -172,6 +176,13 @@ export async function takePendingQuestions(agentId: string): Promise<ChatLine | 
     text: questionsText(context, questions),
     questions,
   };
+  await mkdir(join(fleetInboxRoot(), agentId), { recursive: true });
+  await appendFile(chatPath(agentId), JSON.stringify(line) + "\n", "utf8");
+  return line;
+}
+
+/** Append a line the agent host produced (dialog questions, answers). */
+export async function appendChatLine(agentId: string, line: ChatLine): Promise<ChatLine> {
   await mkdir(join(fleetInboxRoot(), agentId), { recursive: true });
   await appendFile(chatPath(agentId), JSON.stringify(line) + "\n", "utf8");
   return line;

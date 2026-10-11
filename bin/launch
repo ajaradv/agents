@@ -243,6 +243,25 @@ DASHBOARD_CHAT_BLOCK = (
 )
 
 
+DASHBOARD_RPC_BLOCK = (
+    "## Dashboard captain chat (live session)\n\n"
+    "The captain talks to you from the fleet dashboard, which runs you as one long-lived session. "
+    "Your messages stream into the chat drawer as you write them; reply in **plain text**. "
+    "The captain can send more messages while you work (they arrive between your steps) and can stop you.\n\n"
+    "**Ask instead of assuming.** When a decision is the captain's (direction, naming, scope, a pick between options) "
+    "or the request is ambiguous, call **`ask_captain`** with 2-5 concrete options per question. It shows clickable "
+    "choices in the dashboard and **waits for the answer**, then you continue in the same turn. Settle facts you can "
+    "check yourself instead of asking.\n"
+)
+
+# Set by rpc_main before prepare_pi_launch so the prompt matches the runtime.
+RUNTIME = "headless"
+
+
+def dashboard_chat_block() -> str:
+    return DASHBOARD_RPC_BLOCK if RUNTIME == "rpc" else DASHBOARD_CHAT_BLOCK
+
+
 def prepare_pi_launch(
     agent_id: str, extra: list[str] | None = None
 ) -> tuple[Path, list[str], Path, str | None] | None:
@@ -297,7 +316,7 @@ def prepare_pi_launch(
             f"- Plans: `{vault_path / 'fleet' / 'plans'}/`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
             f"- Hermes project memory: `{vault_path / '.pi' / 'agent' / 'pi-hermes-memory'}/`\n"
-            + DASHBOARD_CHAT_BLOCK
+            + dashboard_chat_block()
         )
         hermes_dir = vault_path / ".pi" / "agent" / "pi-hermes-memory"
         hermes_dir.mkdir(parents=True, exist_ok=True)
@@ -322,7 +341,7 @@ def prepare_pi_launch(
             f"- Vault initiatives (read only): `{vault_path / 'fleet' / 'initiatives'}/`\n"
             f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
-            + DASHBOARD_CHAT_BLOCK
+            + dashboard_chat_block()
         )
     elif str(agent.get("workspace") or "") == "ships":
         # Agents that work inside project repos (designer): start in this repo, cd per request.
@@ -341,7 +360,7 @@ def prepare_pi_launch(
             f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
             f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
-            + DASHBOARD_CHAT_BLOCK
+            + dashboard_chat_block()
         )
     else:
         home = FLEET_HOME
@@ -354,7 +373,7 @@ def prepare_pi_launch(
             f"- Alice bus (write): `{inbox / 'alice' / 'events.jsonl'}`\n"
             f"- Architect bus (write): `{inbox / 'architect' / 'events.jsonl'}`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
-            + DASHBOARD_CHAT_BLOCK
+            + dashboard_chat_block()
         )
 
     cwd_override = agent.get("cwd")
@@ -505,12 +524,46 @@ def headless_main() -> int:
             pass
 
 
+def rpc_main() -> int:
+    """`bin/launch rpc <id>`: exec pi in RPC mode for the dashboard's agent host.
+
+    stdin/stdout carry Pi's JSONL RPC protocol, so nothing else may print to
+    stdout. The session is the agent's persistent one when it has
+    `dashboard_session: persistent`.
+    """
+    global RUNTIME
+    if len(sys.argv) < 3:
+        print("usage: bin/launch rpc <agent-id>", file=sys.stderr)
+        return 2
+    agent_id = sys.argv[2]
+    RUNTIME = "rpc"
+    if tui_pid_alive(agent_id):
+        print(
+            f"{agent_id} is open in its TUI right now. Answer it there (herdr pane fleet-{agent_id}, "
+            f"or the terminal running `just {agent_id}`), or close the TUI to chat from the dashboard.",
+            file=sys.stderr,
+        )
+        return 3
+    prepared = prepare_pi_launch(agent_id, [])
+    if prepared is None:
+        return 1
+    cwd, base_args, _prompt_file, _model = prepared
+    session_args = persistent_session_args(agent_id) or ["--no-session"]
+    args = base_args + ["--mode", "rpc", *session_args]
+    print(f"cd {cwd} && {' '.join(base_args)} --mode rpc {' '.join(session_args)}", file=sys.stderr)
+    os.chdir(cwd)
+    os.execvpe(args[0], args, os.environ.copy())
+
+
 def main() -> int:
     if len(sys.argv) >= 2 and sys.argv[1] == "headless":
         return headless_main()
+    if len(sys.argv) >= 2 and sys.argv[1] == "rpc":
+        return rpc_main()
     if len(sys.argv) < 2:
         print("usage: bin/launch <agent-id> [-- extra pi args...]", file=sys.stderr)
         print("       bin/launch headless <agent-id>  # prompt on stdin", file=sys.stderr)
+        print("       bin/launch rpc <agent-id>       # Pi RPC on stdin/stdout (dashboard agent host)", file=sys.stderr)
         return 2
     agent_id = sys.argv[1]
     extra: list[str] = []

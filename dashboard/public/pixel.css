@@ -677,3 +677,9 @@ body.chat-open { overflow: hidden; }
 .chip:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 2px; }
 .question-actions { align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .is-question.is-answered .question-block { opacity: 0.75; }
+
+/* live (rpc) agents */
+.chat-activity { margin: 0; font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60ch; }
+.is-streaming .bubble { opacity: 0.85; }
+.is-streaming .bubble p { white-space: pre-wrap; }
+.is-answer .bubble { padding-top: 0.35rem; padding-bottom: 0.35rem; }

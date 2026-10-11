@@ -34,6 +34,7 @@ function dashboardApp() {
     chatDraft: "",
     chatConn: "",
     chatThinking: false,
+    chatActivity: "",
     chatWs: null,
     chatSockets: {},
     chatGen: 0,
@@ -302,7 +303,10 @@ function dashboardApp() {
         try {
           const m = JSON.parse(ev.data);
           if (m.error) return;
-          if (m.role !== "captain") this.chatThinking = false;
+          if (m.event) return this.onAgentEvent(m.event, id);
+          // Live (rpc) agents narrate mid-task; their running event decides "thinking".
+          const t = this.findTarget(id);
+          if (m.role !== "captain" && !(t && t.runtime === "rpc")) this.chatThinking = false;
           this.appendChatLine(m, id);
         } catch {
           /* ignore */
@@ -335,9 +339,14 @@ function dashboardApp() {
         row.innerHTML = `${face}<div class="bubble question-block">
           <span class="bubble-name">${escapeHtml(t.label || m.role)} asks</span>
           ${this.questionsHtml(m)}
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-send>Send answers</button><span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="btn btn-ink" data-send>${m.dialog ? "Send answer" : "Send answers"}</button>${m.dialog ? '<button type="button" class="btn" data-skip>Skip</button>' : ""}<span class="muted" data-note></span></div>
         </div>`;
-        this.wireQuestion(row, tid);
+        if (m.dialog) row.dataset.dialog = m.dialog.id;
+        this.wireQuestion(row, tid, m.dialog);
+      } else if (m.kind === "answer") {
+        row.className = "bubble-row is-captain is-answer";
+        row.innerHTML = `<div class="bubble"><span class="bubble-name">You answered</span><p>${escapeHtml(m.text)}</p></div>`;
+        if (m.ref) this.markDialogAnswered(log, tid, m.ref, m.text);
       } else if (m.role === "system" || m.role === "dashboard") {
         row.className = "bubble-row is-system";
         row.innerHTML = `<div class="bubble"><p>${escapeHtml(m.text)}</p></div>`;
@@ -385,7 +394,7 @@ function dashboardApp() {
       return `${intro ? `<p>${escapeHtml(intro)}</p>` : ""}${qs}`;
     },
 
-    wireQuestion(row, tid) {
+    wireQuestion(row, tid, dialog) {
       const picks = {};
       row.querySelectorAll(".chip[data-q]").forEach((b) =>
         b.addEventListener("click", () => {
@@ -410,13 +419,112 @@ function dashboardApp() {
           note.textContent = "Pick or type at least one answer.";
           return;
         }
+        if (dialog) {
+          // A live dialog: the agent's tool is waiting on exactly this answer.
+          const typed = row.querySelector('[data-other="0"]').value.trim();
+          this.answerDialog(tid, dialog.id, typed || picks["0"], row);
+          return;
+        }
         this.sendText(tid, `Answers:\n${answers.join("\n")}`);
       });
+      const skip = row.querySelector("[data-skip]");
+      if (skip && dialog) skip.addEventListener("click", () => this.answerDialog(tid, dialog.id, null, row));
+    },
+
+    async answerDialog(tid, dialogId, value, row) {
+      const note = row.querySelector("[data-note]");
+      note.textContent = "Sending…";
+      try {
+        const r = await fetch(`/api/dialog/${encodeURIComponent(tid)}/${encodeURIComponent(dialogId)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(value === null ? { cancelled: true } : { value }),
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          note.textContent = j.error || "Not sent.";
+          if (r.status === 409) this.lockQuestion(row, "No longer waiting");
+        }
+      } catch {
+        note.textContent = "Not sent; try again.";
+      }
+    },
+
+    lockQuestion(row, label) {
+      row.classList.add("is-answered");
+      row.querySelectorAll("button, input").forEach((el) => (el.disabled = true));
+      const note = row.querySelector("[data-note]");
+      if (note) note.textContent = label;
+    },
+
+    markDialogAnswered(log, tid, ref, text) {
+      const row = log.querySelector(`.bubble-row.is-question[data-thread="${CSS.escape(tid)}"][data-at="${CSS.escape(ref)}"]`);
+      if (row) this.lockQuestion(row, `Answered: ${text}`);
+    },
+
+    /** Ephemeral events from live (rpc) agents: streaming text, tool steps, running state, notices. */
+    onAgentEvent(ev, tid) {
+      const log = this.$refs.chatLog;
+      const isCurrent = !this.chatGroup ? tid === this.chatId : true;
+      if (ev.kind === "running") {
+        if (isCurrent) this.chatThinking = ev.running;
+        const t = this.findTarget(tid);
+        if (t) t.thinking = ev.running;
+        if (!ev.running && isCurrent) this.chatActivity = "";
+        return;
+      }
+      if (ev.kind === "agent-status") return; // extension footer status (e.g. cursor:local); TUI chrome, not progress
+      if (ev.kind === "activity") {
+        if (isCurrent) this.chatActivity = ev.text || "";
+        return;
+      }
+      if (!log) return;
+      if (ev.kind === "stream") {
+        let row = log.querySelector(`.bubble-row.is-streaming[data-thread="${CSS.escape(tid)}"]`);
+        if (!ev.text) {
+          if (row) row.remove();
+          return;
+        }
+        if (!row) {
+          const t = this.findTarget(tid) || { id: tid, label: tid, art: null };
+          row = document.createElement("div");
+          row.className = "bubble-row is-agent is-streaming";
+          row.dataset.thread = tid;
+          const face = t.art
+            ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
+            : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
+          row.innerHTML = `${face}<div class="bubble"><span class="bubble-name">${escapeHtml(t.label || tid)} · writing</span><p></p></div>`;
+          log.appendChild(row);
+          this.chatEmpty = false;
+        }
+        row.querySelector("p").textContent = ev.text;
+        log.appendChild(row); // stay last
+        log.scrollTop = log.scrollHeight;
+        return;
+      }
+      if (ev.kind === "notice" && ev.text) {
+        const row = document.createElement("div");
+        row.className = `bubble-row is-system${ev.level === "error" ? " is-error" : ""}`;
+        row.dataset.thread = tid;
+        row.innerHTML = `<div class="bubble"><p>${escapeHtml(ev.text)}</p></div>`;
+        log.appendChild(row);
+        log.scrollTop = log.scrollHeight;
+      }
+    },
+
+    async stopAgent() {
+      const t = this.current();
+      if (!t || t.runtime !== "rpc") return;
+      try {
+        await fetch(`/api/agents/${encodeURIComponent(t.id)}/abort`, { method: "POST" });
+      } catch {
+        /* the running event will tell */
+      }
     },
 
     /** A captain line after a question means it was answered; lock the buttons. */
     markAnswered(log, tid, ts) {
-      log.querySelectorAll(`.bubble-row.is-question[data-thread="${CSS.escape(tid)}"]:not(.is-answered)`).forEach((r) => {
+      log.querySelectorAll(`.bubble-row.is-question[data-thread="${CSS.escape(tid)}"]:not(.is-answered):not([data-dialog])`).forEach((r) => {
         if (!r.dataset.at || r.dataset.at >= ts) return;
         r.classList.add("is-answered");
         r.querySelectorAll("button, input").forEach((el) => (el.disabled = true));

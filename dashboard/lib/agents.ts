@@ -12,6 +12,8 @@ export type AgentMeta = {
   description: string;
   /** `turn_timeout:` seconds for one dashboard turn; 0 means the bridge default. */
   turnTimeoutSec: number;
+  /** `runtime:` in agent.yaml: "rpc" runs the agent as one live Pi RPC session in the dashboard; default "headless". */
+  runtime: "headless" | "rpc";
 };
 
 function parseAgentYaml(text: string): Record<string, string> {
@@ -61,6 +63,7 @@ export async function loadAgents(): Promise<AgentMeta[]> {
         harness: y.harness ?? "pi",
         description: await readRoleDescription(role),
         turnTimeoutSec: Math.max(0, Math.min(3600, Number(y.turn_timeout) || 0)),
+        runtime: y.runtime === "rpc" ? "rpc" : "headless",
       });
     } catch {
       /* skip */

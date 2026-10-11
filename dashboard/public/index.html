@@ -109,9 +109,13 @@
             <span x-text="chatMeta()"></span>
             <span class="warn" x-show="chatThinking">thinking…</span>
           </p>
+          <p class="chat-activity muted" x-show="chatThinking && chatActivity" x-text="chatActivity"></p>
         </div>
       </div>
-      <button type="button" class="btn" @click="closeChat()">Close</button>
+      <div class="row">
+        <button type="button" class="btn" x-show="!chatGroup && chatThinking && current().runtime === 'rpc'" @click="stopAgent()">Stop</button>
+        <button type="button" class="btn" @click="closeChat()">Close</button>
+      </div>
     </header>
     <div class="face-strip" aria-label="Switch chat">
       <template x-for="g in groups" :key="'g-' + g.id">

@@ -4,10 +4,12 @@ role: designer
 harness: pi
 model: cursor/gpt-5.5@272k
 workspace: ships
-# Design turns run impeccable end to end; give them room and keep one session
-# shared with the TUI (Start TUI on the dashboard, or just designer).
-turn_timeout: 1800
+# Live session in the dashboard's agent host (pi --mode rpc), shared with the
+# TUI (Start TUI on the dashboard, or just designer). turn_timeout only applies
+# if runtime is switched back to headless.
+runtime: rpc
 dashboard_session: persistent
+turn_timeout: 1800
 extensions:
   - cursor-sdk
 extra_prompts:
