@@ -2,18 +2,21 @@ import { open, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   appendAgentChat,
-  chatAllowed,
+  appendChatError,
   chatLogPath,
   readCaptainChat,
   type ChatLine,
 } from "./chat.ts";
+import { allChatTargetIds, chatTarget } from "./chat-targets.ts";
 import { dashLog } from "./log.ts";
 import { spawnTimed } from "./proc.ts";
 import { ROOT } from "./paths.ts";
 import {
   firstmateTuiReachable,
   formatFirstmateSendError,
+  sendFmText,
   sendToFirstmateTui,
+  type FmSendResult,
 } from "./firstmate-chat.ts";
 
 export type ChatBroadcaster = (agentId: string, line: ChatLine) => void;
@@ -32,11 +35,14 @@ export function setChatTurnEmitter(fn: () => void): void {
   onTurnComplete = fn;
 }
 
-const TURN_AGENTS = ["alice", "firstmate", "architect"] as const;
 const TURN_TIMEOUT_MS = 120_000;
 const POLL_MS = 1000;
 const CONTEXT_LINES = 12;
 
+/**
+ * Per-thread state. `queue` + `running` is the send lock: one turn per thread
+ * at a time, later captain lines wait in order.
+ */
 type AgentState = {
   offset: number;
   seenKeys: Set<string>;
@@ -83,29 +89,16 @@ export function getHeadlessChatState(agentId: string): {
 
 export function getAllLastChatTurns(): Record<string, LastChatTurn | null> {
   const out: Record<string, LastChatTurn | null> = {};
-  for (const id of TURN_AGENTS) {
+  for (const id of allChatTargetIds()) {
     out[id] = state.get(id)?.lastTurn ?? null;
   }
   return out;
 }
 
-async function initOffsets(): Promise<void> {
-  for (const id of TURN_AGENTS) {
-    if (!chatAllowed(id)) continue;
-    const path = chatLogPath(id);
-    try {
-      const st = await stat(path);
-      agentState(id).offset = st.size;
-    } catch {
-      agentState(id).offset = 0;
-    }
-  }
-}
-
 function parseChatLine(raw: string): ChatLine | null {
   try {
     const o = JSON.parse(raw) as ChatLine;
-    if (o.kind !== "chat" || !o.text) return null;
+    if ((o.kind !== "chat" && o.kind !== "error") || !o.text) return null;
     return o;
   } catch {
     return null;
@@ -114,6 +107,7 @@ function parseChatLine(raw: string): ChatLine | null {
 
 function buildTurnPrompt(history: ChatLine[]): string {
   const thread = history
+    .filter((l) => l.kind === "chat")
     .slice(-CONTEXT_LINES)
     .map((l) => `${l.from}: ${l.text}`)
     .join("\n");
@@ -128,65 +122,79 @@ function recordTurn(agentId: string, turn: LastChatTurn): void {
   agentState(agentId).lastTurn = turn;
 }
 
-async function runFirstmateTurn(captainLine: ChatLine): Promise<void> {
-  const agentId = "firstmate";
-  await dashLog("chat-turn", `start ${agentId} (fm-send)`);
-  const reachable = await firstmateTuiReachable();
-  if (!reachable.ok) {
-    recordTurn(agentId, {
-      at: new Date().toISOString(),
-      status: "error",
-      ms: 0,
-      error: reachable.reason,
-    });
-    const err = await appendAgentChat(agentId, "system", reachable.reason ?? "TUI off");
-    broadcast(agentId, err);
-    return;
-  }
-  const res = await sendToFirstmateTui(captainLine.text);
+/** Write and broadcast a line the bridge produced itself, so the poller skips it. */
+function emitOwn(agentId: string, line: ChatLine): void {
+  agentState(agentId).seenKeys.add(lineKey(line));
+  broadcast(agentId, line);
+}
+
+async function failTurn(
+  agentId: string,
+  captainLine: ChatLine,
+  status: "error" | "timeout",
+  ms: number,
+  reason: string,
+): Promise<void> {
+  recordTurn(agentId, { at: new Date().toISOString(), status, ms, error: reason });
+  emitOwn(agentId, await appendChatError(agentId, reason, captainLine.ts));
+}
+
+async function finishFmSend(
+  agentId: string,
+  captainLine: ChatLine,
+  res: FmSendResult,
+  ack: string,
+): Promise<void> {
   await dashLog(
     "chat-turn",
     `${agentId} ${res.ms}ms exit=${res.exitCode} timedOut=${res.timedOut}`,
   );
   if (res.timedOut) {
-    recordTurn(agentId, {
-      at: new Date().toISOString(),
-      status: "timeout",
-      ms: res.ms,
-      error: "fm-send timed out",
-    });
-    const err = await appendAgentChat(agentId, "system", "fm-send timed out.");
-    broadcast(agentId, err);
+    await failTurn(agentId, captainLine, "timeout", res.ms, "fm-send timed out.");
     return;
   }
   if (!res.ok) {
-    const detail = formatFirstmateSendError(res.stderr, res.stdout);
-    recordTurn(agentId, {
-      at: new Date().toISOString(),
-      status: "error",
-      ms: res.ms,
-      error: detail,
-    });
-    const err = await appendAgentChat(agentId, "system", detail);
-    broadcast(agentId, err);
+    await failTurn(
+      agentId,
+      captainLine,
+      "error",
+      res.ms,
+      formatFirstmateSendError(res.stderr, res.stdout),
+    );
     return;
   }
-  recordTurn(agentId, {
-    at: new Date().toISOString(),
-    status: "ok",
-    ms: res.ms,
-  });
-  const ack = await appendAgentChat(
-    agentId,
-    "system",
-    "Sent to Firstmate TUI (fm-send). Reply in the attached pane; dashboard shows bus/chat when Firstmate writes back.",
-  );
-  agentState(agentId).seenKeys.add(lineKey(ack));
-  broadcast(agentId, ack);
+  recordTurn(agentId, { at: new Date().toISOString(), status: "ok", ms: res.ms });
+  emitOwn(agentId, await appendAgentChat(agentId, "system", ack));
 }
 
-async function runHeadlessTurn(agentId: string, _captainLine: ChatLine): Promise<void> {
-  const history = await readCaptainChat(agentId, CONTEXT_LINES);
+async function runFirstmateTurn(captainLine: ChatLine): Promise<void> {
+  const agentId = "firstmate";
+  await dashLog("chat-turn", `start ${agentId} (fm-send)`);
+  const reachable = await firstmateTuiReachable();
+  if (!reachable.ok) {
+    await failTurn(agentId, captainLine, "error", 0, reachable.reason ?? "TUI off");
+    return;
+  }
+  await finishFmSend(
+    agentId,
+    captainLine,
+    await sendToFirstmateTui(captainLine.text),
+    "Sent to Firstmate TUI (fm-send). Reply in the attached pane; dashboard shows bus/chat when Firstmate writes back.",
+  );
+}
+
+async function runTaskTurn(taskId: string, captainLine: ChatLine): Promise<void> {
+  await dashLog("chat-turn", `start ${taskId} (fm-send task)`);
+  await finishFmSend(
+    taskId,
+    captainLine,
+    await sendFmText(taskId, captainLine.text),
+    "Sent to this worker's steering inbox (fm-send). Its reply arrives through Firstmate.",
+  );
+}
+
+async function runHeadlessTurn(agentId: string, captainLine: ChatLine): Promise<void> {
+  const history = await readCaptainChat(agentId, CONTEXT_LINES * 2);
   const prompt = buildTurnPrompt(history);
   const launch = join(ROOT, "bin/launch");
   await dashLog("chat-turn", `start ${agentId}`);
@@ -199,15 +207,7 @@ async function runHeadlessTurn(agentId: string, _captainLine: ChatLine): Promise
       env: process.env,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "spawn failed";
-    recordTurn(agentId, {
-      at: new Date().toISOString(),
-      status: "error",
-      ms: 0,
-      error: msg,
-    });
-    const err = await appendAgentChat(agentId, "system", msg);
-    broadcast(agentId, err);
+    await failTurn(agentId, captainLine, "error", 0, e instanceof Error ? e.message : "spawn failed");
     return;
   }
 
@@ -217,53 +217,27 @@ async function runHeadlessTurn(agentId: string, _captainLine: ChatLine): Promise
   );
 
   if (res.timedOut) {
-    recordTurn(agentId, {
-      at: new Date().toISOString(),
-      status: "timeout",
-      ms: res.ms,
-      error: "timed out",
-    });
-    const err = await appendAgentChat(
+    await failTurn(
       agentId,
-      "system",
+      captainLine,
+      "timeout",
+      res.ms,
       `${agentId} did not reply in time (${TURN_TIMEOUT_MS / 1000}s).`,
     );
-    broadcast(agentId, err);
     return;
   }
   if (res.exitCode !== 0) {
     const detail = (res.stderr || res.stdout || "headless turn failed").slice(0, 800);
-    recordTurn(agentId, {
-      at: new Date().toISOString(),
-      status: "error",
-      ms: res.ms,
-      error: detail,
-    });
-    const err = await appendAgentChat(agentId, "system", detail.slice(0, 500));
-    broadcast(agentId, err);
+    await failTurn(agentId, captainLine, "error", res.ms, detail.slice(0, 500));
     return;
   }
   const text = res.stdout.trim();
   if (!text) {
-    recordTurn(agentId, {
-      at: new Date().toISOString(),
-      status: "error",
-      ms: res.ms,
-      error: "empty reply",
-    });
-    const err = await appendAgentChat(agentId, "system", `${agentId} returned an empty reply.`);
-    broadcast(agentId, err);
+    await failTurn(agentId, captainLine, "error", res.ms, `${agentId} returned an empty reply.`);
     return;
   }
-  recordTurn(agentId, {
-    at: new Date().toISOString(),
-    status: "ok",
-    ms: res.ms,
-  });
-  const reply = await appendAgentChat(agentId, agentId, text);
-  const st = agentState(agentId);
-  st.seenKeys.add(lineKey(reply));
-  broadcast(agentId, reply);
+  recordTurn(agentId, { at: new Date().toISOString(), status: "ok", ms: res.ms });
+  emitOwn(agentId, await appendAgentChat(agentId, agentId, text));
 }
 
 async function drainQueue(agentId: string): Promise<void> {
@@ -272,28 +246,24 @@ async function drainQueue(agentId: string): Promise<void> {
   const nextTs = st.queue.shift();
   if (!nextTs) return;
   st.running = true;
+  let line: ChatLine | undefined;
   try {
     const history = await readCaptainChat(agentId, 50);
-    const line = history.find((l) => l.ts === nextTs && l.from === "captain");
-    if (line) {
-      if (agentId === "firstmate") {
-        await runFirstmateTurn(line);
-      } else {
-        await runHeadlessTurn(agentId, line);
-      }
+    line = history.find((l) => l.ts === nextTs && l.from === "captain");
+    const target = chatTarget(agentId);
+    if (line && target) {
+      if (target.kind === "firstmate") await runFirstmateTurn(line);
+      else if (target.kind === "task") await runTaskTurn(agentId, line);
+      else await runHeadlessTurn(agentId, line);
+    } else if (line) {
+      await failTurn(agentId, line, "error", 0, `${agentId} is no longer on the rail.`);
     }
   } catch (e) {
     console.error(`[dashboard] chat-turn ${agentId}:`, e);
     const msg = e instanceof Error ? e.message : "turn failed";
-    recordTurn(agentId, {
-      at: new Date().toISOString(),
-      status: "error",
-      ms: 0,
-      error: msg,
-    });
     try {
-      const err = await appendAgentChat(agentId, "system", msg);
-      broadcast(agentId, err);
+      if (line) await failTurn(agentId, line, "error", 0, msg);
+      else recordTurn(agentId, { at: new Date().toISOString(), status: "error", ms: 0, error: msg });
     } catch {
       /* ignore */
     }
@@ -313,8 +283,35 @@ function enqueueCaptainTurn(agentId: string, line: ChatLine): void {
   void drainQueue(agentId);
 }
 
+/**
+ * The server calls this right after it appends a captain line, so a send never
+ * depends on the poller having seen the thread first.
+ */
+export async function acceptCaptainLine(agentId: string, line: ChatLine): Promise<void> {
+  const fresh = !state.has(agentId);
+  const st = agentState(agentId);
+  if (fresh) st.offset = await fileSize(chatLogPath(agentId));
+  const key = lineKey(line);
+  if (st.seenKeys.has(key)) return; // the poller already queued it
+  st.seenKeys.add(key);
+  enqueueCaptainTurn(agentId, line);
+}
+
+async function fileSize(path: string): Promise<number> {
+  try {
+    return (await stat(path)).size;
+  } catch {
+    return 0;
+  }
+}
+
 async function pollAgentFile(agentId: string): Promise<void> {
   const path = chatLogPath(agentId);
+  // First sight of a thread: start at its end so old captain lines are not replayed.
+  if (!state.has(agentId)) {
+    agentState(agentId).offset = await fileSize(path);
+    return;
+  }
   const st = agentState(agentId);
   let chunk = "";
   try {
@@ -337,8 +334,7 @@ async function pollAgentFile(agentId: string): Promise<void> {
   } catch {
     return;
   }
-  const parts = chunk.split("\n");
-  for (const raw of parts) {
+  for (const raw of chunk.split("\n")) {
     const trimmed = raw.trim();
     if (!trimmed) continue;
     const line = parseChatLine(trimmed);
@@ -351,25 +347,21 @@ async function pollAgentFile(agentId: string): Promise<void> {
       enqueueCaptainTurn(agentId, line);
       continue;
     }
-    if (line.from === agentId || line.from === "system") {
-      broadcast(agentId, line);
-    }
+    broadcast(agentId, line);
   }
 }
 
 async function pollOnce(): Promise<void> {
-  for (const id of TURN_AGENTS) {
-    if (!chatAllowed(id)) continue;
+  for (const id of allChatTargetIds()) {
     await pollAgentFile(id);
   }
 }
 
+/** Call after chat targets have loaded once, so first-sight offsets are taken at boot. */
 export function startChatBridge(): void {
-  void initOffsets().then(() => {
-    const tick = () => {
-      pollOnce().catch((e) => console.error("[dashboard] chat-bridge:", e));
-    };
-    tick();
-    setInterval(tick, POLL_MS);
-  });
+  const tick = () => {
+    pollOnce().catch((e) => console.error("[dashboard] chat-bridge:", e));
+  };
+  tick();
+  setInterval(tick, POLL_MS);
 }

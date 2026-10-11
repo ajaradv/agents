@@ -1,19 +1,23 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { chatAllowed, chatTarget, markTaskThread } from "./chat-targets.ts";
 import { fleetInboxRoot } from "./paths.ts";
 
+export { chatAllowed };
+
+/**
+ * One line of fleet/inbox/<id>/captain-chat.jsonl.
+ * kind "error" is a failed send: `reason` says why and `ref` is the ts of the
+ * captain line it failed; `text` repeats the reason for older readers.
+ */
 export type ChatLine = {
   ts: string;
   from: string;
-  kind: "chat";
+  kind: "chat" | "error";
   text: string;
+  reason?: string;
+  ref?: string;
 };
-
-const CHAT_AGENTS = new Set(["alice", "firstmate", "architect"]);
-
-export function chatAllowed(agentId: string): boolean {
-  return CHAT_AGENTS.has(agentId);
-}
 
 function chatPath(agentId: string): string {
   return join(fleetInboxRoot(), agentId, "captain-chat.jsonl");
@@ -37,7 +41,10 @@ export async function appendCaptainChat(
   if (!line.text) throw new Error("empty message");
   const dir = join(fleetInboxRoot(), agentId);
   await mkdir(dir, { recursive: true });
+  const target = chatTarget(agentId);
+  if (target?.kind === "task") await markTaskThread(agentId);
   await appendFile(chatPath(agentId), JSON.stringify(line) + "\n", "utf8");
+  if (target?.kind === "task") return line;
   const wake = {
     ts: line.ts,
     from: "dashboard",
@@ -63,6 +70,26 @@ export async function appendAgentChat(
   if (!line.text) throw new Error("empty message");
   const dir = join(fleetInboxRoot(), agentId);
   await mkdir(dir, { recursive: true });
+  await appendFile(chatPath(agentId), JSON.stringify(line) + "\n", "utf8");
+  return line;
+}
+
+/** Record a failed send under the captain line it belongs to. */
+export async function appendChatError(
+  agentId: string,
+  reason: string,
+  ref?: string,
+): Promise<ChatLine> {
+  const text = reason.trim() || "send failed";
+  const line: ChatLine = {
+    ts: new Date().toISOString(),
+    from: "dashboard",
+    kind: "error",
+    text,
+    reason: text,
+    ...(ref ? { ref } : {}),
+  };
+  await mkdir(join(fleetInboxRoot(), agentId), { recursive: true });
   await appendFile(chatPath(agentId), JSON.stringify(line) + "\n", "utf8");
   return line;
 }

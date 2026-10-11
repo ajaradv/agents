@@ -96,6 +96,23 @@ export async function sendToFirstmateTui(text: string): Promise<{
       timedOut: false,
     };
   }
+  return sendFmText(target, text);
+}
+
+export type FmSendResult = {
+  ok: boolean;
+  ms: number;
+  exitCode: number;
+  stderr: string;
+  stdout: string;
+  timedOut: boolean;
+};
+
+/**
+ * fm-send to a resolved target: the Firstmate pane, or an exact task id for a
+ * worker. fm-send refuses unresolved targets, so a retired worker fails loudly.
+ */
+export async function sendFmText(target: string, text: string): Promise<FmSendResult> {
   const fmSend = join(FM_HOME, "bin", "fm-send.sh");
   const env = {
     ...process.env,

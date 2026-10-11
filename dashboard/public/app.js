@@ -1,49 +1,61 @@
 const LOG_MAX = 80;
+const CHAT_KEY = "fleet.chatId";
 
-const AGENT_AVATAR = {
-  alice: "/art/alice.png",
-  firstmate: "/art/firstmate.png",
-  architect: "/art/architect.png",
-};
+function readChatId() {
+  try {
+    return localStorage.getItem(CHAT_KEY) || "alice";
+  } catch {
+    return "alice";
+  }
+}
 
-function agentAvatar(id) {
-  return AGENT_AVATAR[id] || "/art/alice.png";
+function saveChatId(id) {
+  try {
+    localStorage.setItem(CHAT_KEY, id);
+  } catch {
+    /* private mode */
+  }
 }
 
 function dashboardApp() {
   return {
     leaf: "health",
     hinge: "",
-    aliceOpen: false,
-    aliceEmpty: true,
     paletteOpen: false,
     paletteIndex: 0,
-    selectedAgent: null,
-    spaceHtml: "",
-    aliceDraft: "",
-    aliceConn: "connecting",
-    aliceSession: "",
-    aliceThinking: false,
-    aliceWs: null,
     waiting: false,
     waitSummary: "",
     bus: null,
 
+    rail: { agents: [], workers: [] },
+    chatOpen: false,
+    chatId: readChatId(),
+    chatEmpty: true,
+    chatDraft: "",
+    chatConn: "",
+    chatThinking: false,
+    chatWs: null,
+    chatGen: 0,
+
     paletteItems() {
-      return [
+      const base = [
         { id: "health", label: "Go to Health", run: () => this.openLeaf("health") },
         { id: "fleet", label: "Go to Fleet", run: () => this.openLeaf("fleet") },
         { id: "agents", label: "Go to Agents", run: () => this.openLeaf("agents") },
-        { id: "alice-open", label: "Open Alice chat", run: () => this.openAlice() },
-        { id: "alice-close", label: "Close Alice chat", run: () => this.closeAlice() },
       ];
+      const chats = this.rail.agents
+        .concat(this.rail.workers)
+        .map((t) => ({ id: "chat-" + t.id, label: "Chat with " + t.label, run: () => this.openChat(t.id) }));
+      return base.concat(chats, this.chatOpen ? [{ id: "chat-close", label: "Close chat", run: () => this.closeChat() }] : []);
     },
 
     init() {
-      this.connectAlice();
+      this.refreshRail();
       this.refreshAgentStatus();
       this.connectBus();
-      if (location.hash === "#alice") this.openAlice();
+      const m = location.hash.match(/^#chat\/([a-z][a-z0-9_-]*)$/);
+      if (m) this.openChat(m[1]);
+      else if (location.hash === "#alice") this.openChat("alice");
       document.body.addEventListener("htmx:afterSettle", (ev) => {
         const elt = ev.detail?.elt || ev.target;
         if (window.Alpine && elt) Alpine.initTree(elt);
@@ -59,9 +71,9 @@ function dashboardApp() {
         return;
       }
       if (!this.paletteOpen) {
-        if (ev.key === "Escape" && this.aliceOpen) {
+        if (ev.key === "Escape" && this.chatOpen) {
           ev.preventDefault();
-          this.closeAlice();
+          this.closeChat();
         }
         return;
       }
@@ -108,31 +120,13 @@ function dashboardApp() {
     },
 
     openLeaf(id) {
-      this.aliceOpen = false;
+      this.chatOpen = false;
       this.closePalette();
       this.leaf = id;
       this.hinge = id;
       window.setTimeout(() => {
         if (this.hinge === id) this.hinge = "";
       }, 100);
-    },
-
-    toggleAlice() {
-      if (this.aliceOpen) this.closeAlice();
-      else this.openAlice();
-    },
-
-    openAlice() {
-      this.closePalette();
-      this.aliceOpen = true;
-      this.$nextTick(() => {
-        const field = this.$refs.aliceField;
-        if (field) field.focus();
-      });
-    },
-
-    closeAlice() {
-      this.aliceOpen = false;
     },
 
     connectBus() {
@@ -146,7 +140,9 @@ function dashboardApp() {
         this.pull("/partials/fleet", "#fleet");
         this.pull("/partials/agents", "#agents");
         this.refreshAgentStatus();
+        this.refreshRail();
       });
+      es.addEventListener("rail", () => this.refreshRail());
     },
 
     pull(url, target) {
@@ -155,161 +151,169 @@ function dashboardApp() {
       }
     },
 
-    async selectAgent(id) {
-      this.selectedAgent = id;
-      this.openLeaf("agents");
-      const r = await fetch("/partials/space/" + id);
-      this.spaceHtml = await r.text();
-      this.$nextTick(() => {
-        const root = document.getElementById("agent-space");
-        if (window.Alpine && root) Alpine.initTree(root);
-      });
-    },
-
     async refreshAgentStatus() {
       try {
         const r = await fetch("/api/agents");
         const j = await r.json();
-        const agents = j.agents || [];
-        const alice = agents.find((a) => a.id === "alice");
-        const waiting = agents.find((a) => a.waitingOnYou);
+        const waiting = (j.agents || []).find((a) => a.waitingOnYou);
         this.waiting = Boolean(waiting);
         this.waitSummary = waiting
           ? `Waiting on you: ${waiting.firstmateWaitSummary || waiting.id}`
           : "";
-        if (!alice) {
-          this.aliceSession = "";
-          return;
-        }
-        const chat = alice.chatLabel || "chat";
-        const turn = alice.lastChatTurn
-          ? ` · last turn ${alice.lastChatTurn.status} ${alice.lastChatTurn.ms}ms`
-          : "";
-        this.aliceSession = `${chat}${turn}`;
-        this.aliceThinking = alice.chatState === "thinking";
       } catch {
-        this.aliceSession = "";
+        /* keep last */
       }
     },
 
-    connectAlice() {
+    async refreshRail() {
+      try {
+        const r = await fetch("/api/chat-targets");
+        const j = await r.json();
+        this.rail = { agents: j.agents || [], workers: j.workers || [] };
+        const cur = this.findTarget(this.chatId);
+        if (cur && cur.kind !== "firstmate" && cur.kind !== "task") this.chatThinking = Boolean(cur.thinking);
+      } catch {
+        /* keep last */
+      }
+    },
+
+    findTarget(id) {
+      return this.rail.agents.find((t) => t.id === id) || this.rail.workers.find((t) => t.id === id);
+    },
+
+    current() {
+      return this.findTarget(this.chatId) || { id: this.chatId, label: this.chatId, art: null };
+    },
+
+    initials(t) {
+      const words = String((t && (t.label || t.id)) || "?").replace(/[^A-Za-z0-9 ]+/g, " ").trim().split(/\s+/);
+      return ((words[0] || "?")[0] + (words[1] ? words[1][0] : (words[0] || "")[1] || "")).toUpperCase();
+    },
+
+    chatMeta() {
+      const t = this.current();
+      if (t.kind === "task") return [t.state, t.project].filter(Boolean).join(" · ");
+      if (t.kind === "firstmate") return "fm-send → TUI";
+      const turn = t.lastTurn ? ` · last turn ${t.lastTurn.status} ${t.lastTurn.ms}ms` : "";
+      return (t.model || "") + turn;
+    },
+
+    toggleChat() {
+      if (this.chatOpen) this.closeChat();
+      else this.openChat(this.chatId);
+    },
+
+    openChat(id) {
+      this.closePalette();
+      const switching = id !== this.chatId || !this.chatWs;
+      this.chatId = id;
+      saveChatId(id);
+      this.chatOpen = true;
+      if (switching) this.connectChat();
+      this.$nextTick(() => {
+        const field = this.$refs.chatField;
+        if (field) field.focus();
+      });
+    },
+
+    closeChat() {
+      this.chatOpen = false;
+    },
+
+    connectChat() {
+      const gen = ++this.chatGen;
+      if (this.chatWs) {
+        this.chatWs.onclose = null;
+        try { this.chatWs.close(); } catch { /* gone */ }
+      }
+      const log = this.$refs.chatLog;
+      if (log) log.querySelectorAll(".bubble-row:not([x-show])").forEach((n) => n.remove());
+      this.chatEmpty = true;
+      this.chatThinking = false;
+      this.chatConn = "connecting";
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${proto}//${location.host}/ws/chat/alice`);
-      this.aliceWs = ws;
+      const id = this.chatId;
+      const ws = new WebSocket(`${proto}//${location.host}/ws/chat/${encodeURIComponent(id)}`);
+      this.chatWs = ws;
       ws.onopen = () => {
-        this.aliceConn = "open";
+        if (gen === this.chatGen) this.chatConn = "open";
       };
       ws.onclose = () => {
-        this.aliceConn = "closed";
-        setTimeout(() => this.connectAlice(), 4000);
+        if (gen !== this.chatGen) return;
+        this.chatConn = this.findTarget(id) ? "closed" : "not on the rail";
+        this.chatWs = null;
+        if (this.findTarget(id)) setTimeout(() => { if (gen === this.chatGen) this.connectChat(); }, 4000);
       };
       ws.onmessage = (ev) => {
+        if (gen !== this.chatGen) return;
         try {
           const m = JSON.parse(ev.data);
           if (m.error) return;
-          if (m.role === "alice" || m.role === "system") {
-            this.aliceThinking = false;
-          }
-          this.appendAliceLine(m.role, m.text, m.ts);
+          if (m.role !== "captain") this.chatThinking = false;
+          this.appendChatLine(m);
         } catch {
           /* ignore */
         }
       };
     },
 
-    appendAliceLine(role, text) {
-      const log = this.$refs.aliceLog;
+    appendChatLine(m) {
+      const log = this.$refs.chatLog;
       if (!log) return;
-      this.aliceEmpty = false;
-      const kind = role === "captain" ? "captain" : role === "system" ? "system" : "alice";
+      this.chatEmpty = false;
+      const t = this.current();
       const row = document.createElement("div");
-      row.className = `bubble-row is-${kind}`;
-      if (kind === "system") {
-        row.innerHTML = `<div class="bubble"><p>${escapeHtml(text)}</p></div>`;
+      if (m.kind === "error") {
+        row.className = "bubble-row is-system is-error";
+        row.innerHTML = `<div class="bubble"><span class="bubble-name">Not sent</span><p>${escapeHtml(m.text)}</p></div>`;
+        const target = m.ref ? log.querySelector(`[data-ts="${CSS.escape(m.ref)}"]`) : null;
+        if (target) {
+          target.classList.add("is-failed");
+          target.after(row);
+          return;
+        }
+      } else if (m.role === "system" || m.role === "dashboard") {
+        row.className = "bubble-row is-system";
+        row.innerHTML = `<div class="bubble"><p>${escapeHtml(m.text)}</p></div>`;
       } else {
-        const face = kind === "captain" ? "/art/captain.png" : "/art/alice.png";
-        const name = kind === "captain" ? "You" : "Alice";
-        row.innerHTML = `<img class="avatar" src="${face}" alt="" width="48" height="48" /><div class="bubble"><span class="bubble-name">${name}</span><p>${escapeHtml(text)}</p></div>`;
+        const mine = m.role === "captain";
+        row.className = `bubble-row is-${mine ? "captain" : "agent"}`;
+        if (m.ts) row.dataset.ts = m.ts;
+        const face = mine ? "/art/captain.png" : t.art;
+        const name = mine ? "You" : t.label || m.role;
+        const avatar = face
+          ? `<img class="avatar" src="${face}" alt="" width="48" height="48" />`
+          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
+        row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}</span><p>${escapeHtml(m.text)}</p></div>`;
       }
       log.appendChild(row);
       while (log.childElementCount > LOG_MAX) log.removeChild(log.firstChild);
       log.scrollTop = log.scrollHeight;
     },
 
-    sendAlice() {
-      const text = this.aliceDraft.trim();
-      if (!text || this.aliceThinking) return;
-      this.aliceThinking = true;
-      if (this.aliceWs && this.aliceWs.readyState === WebSocket.OPEN) {
-        this.aliceWs.send(text);
+    sendChat() {
+      const text = this.chatDraft.trim();
+      if (!text) return;
+      const t = this.current();
+      if (t.kind !== "firstmate" && t.kind !== "task") this.chatThinking = true;
+      if (this.chatWs && this.chatWs.readyState === WebSocket.OPEN) {
+        this.chatWs.send(text);
       } else {
-        fetch("/chat/alice", {
+        fetch("/chat/" + encodeURIComponent(this.chatId), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text }),
         })
           .then((r) => r.json())
           .then((j) => {
-            if (j.line) this.appendAliceLine("captain", j.line.text);
-            if (!j.ok) this.aliceThinking = false;
+            if (j.line) this.appendChatLine({ role: "captain", kind: "chat", text: j.line.text, ts: j.line.ts });
+            if (!j.ok) this.chatThinking = false;
           })
           .catch(() => {
-            this.aliceThinking = false;
+            this.chatThinking = false;
           });
       }
-      this.aliceDraft = "";
-    },
-  };
-}
-
-function spaceChat(agentId) {
-  return {
-    agentId,
-    draft: "",
-    thinking: false,
-    ws: null,
-
-    init() {
-      const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      this.ws = new WebSocket(`${proto}//${location.host}/ws/chat/${agentId}`);
-      this.ws.onmessage = (ev) => {
-        try {
-          const m = JSON.parse(ev.data);
-          if (m.error) return;
-          if (m.role === this.agentId || m.role === "system") this.thinking = false;
-          this.append(m.role, m.text);
-        } catch {
-          /* ignore */
-        }
-      };
-    },
-
-    append(role, text) {
-      const log = this.$refs.log;
-      if (!log) return;
-      const isCaptain = role === "captain";
-      const isSystem = role === "system";
-      const kind = isCaptain ? "captain" : isSystem ? "system" : "agent";
-      const row = document.createElement("div");
-      row.className = `bubble-row is-${isCaptain ? "captain" : isSystem ? "system" : "alice"}`;
-      const name = isCaptain ? "You" : isSystem ? "System" : role;
-      if (isSystem) {
-        row.innerHTML = `<div class="bubble"><p>${escapeHtml(text)}</p></div>`;
-      } else {
-        const face = isCaptain ? "/art/captain.png" : agentAvatar(this.agentId);
-        row.innerHTML = `<img class="avatar" src="${face}" alt="" width="48" height="48" /><div class="bubble"><span class="bubble-name">${escapeHtml(name)}</span><p>${escapeHtml(text)}</p></div>`;
-      }
-      log.appendChild(row);
-      while (log.childElementCount > LOG_MAX) log.removeChild(log.firstChild);
-      log.scrollTop = log.scrollHeight;
-    },
-
-    send() {
-      const t = this.draft.trim();
-      if (!t || this.thinking || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-      this.thinking = true;
-      this.ws.send(t);
-      this.draft = "";
+      this.chatDraft = "";
     },
   };
 }
@@ -323,5 +327,4 @@ function escapeHtml(s) {
 
 document.addEventListener("alpine:init", () => {
   Alpine.data("dashboardApp", dashboardApp);
-  Alpine.data("spaceChat", spaceChat);
 });

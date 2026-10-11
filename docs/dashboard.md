@@ -11,7 +11,7 @@ just dashboard
 
 | Surface | What runs | UI badges |
 |---|---|---|
-| **Headless chat** | `bin/launch headless <agent>` (`pi -p`) per message — **alice** and **architect** only | **chat ready** / **chat thinking** / **chat error** |
+| **Headless chat** | `bin/launch headless <agent>` (`pi -p`) per message — every `type: assistant` in `agents/*/agent.yaml` | **chat ready** / **chat thinking** / **chat error** |
 | **Firstmate chat** | **`fm-send`** into the **one** running Firstmate TUI (no second Pi) | **chat → TUI** when TUI is up |
 | **Optional TUI** | Herdr session **`fleet`**, workspace **`fleet-firstmate`** | **TUI off** / **TUI open** / **TUI error** |
 
@@ -27,6 +27,21 @@ Captain messages append to **`fleet/inbox/<agent>/captain-chat.jsonl`**. Replies
 
 Firstmate crew workers (`fm-spawn` panes) are unchanged — not started from this UI.
 
+## Chat rail
+
+A right-edge rail holds one portrait per chat target, with one drawer and one composer. Tapping a face swaps the thread. On a phone the rail collapses to one **Chat** button; the drawer then shows the faces in a strip under its header.
+
+| Row | Source | Send path |
+|---|---|---|
+| Agents | `agents/*/agent.yaml` (`type: assistant`, plus `firstmate`) | Assistants: headless turn. Firstmate: `fm-send` into the one TUI. |
+| Crew | Non-terminal tasks in `fm-fleet-snapshot --json` | `fm-send <task-id>` into that worker's steering inbox |
+
+- A new agent appears on the rail with no dashboard change. Agents without art in `lib/agent-art.ts` use the captain portrait; workers show initials.
+- Threads stay `fleet/inbox/<id>/captain-chat.jsonl`. One turn per thread at a time; later messages queue in order.
+- A failed send appends `{"from":"dashboard","kind":"error","reason":"…","ref":"<captain line ts>"}`. The drawer draws it under the message it failed.
+- Worker threads carry a `.task` marker. When the task leaves the snapshot (landed or retired), the folder moves to `fleet/inbox/archive/<id>-<date>/`. Archiving is skipped when the snapshot fails.
+- Active task rows on the Fleet leaf have a **Chat** button that opens that worker's thread.
+
 ## Lifecycle (TUI only)
 
 **TUI starting / open / stopping / error** reflect Herdr pane state. A failed Start can show **TUI error** while **chat ready** stays available. When the pane is live, **TUI open** overrides a stale Start timeout error.
@@ -38,10 +53,12 @@ Firstmate crew workers (`fm-spawn` panes) are unchanged — not started from thi
 | **SSE** `/events` | Usage (every 10 min after boot) and agent sidebar |
 | **GET** `/api/agents` | Chat + TUI status JSON |
 | **GET** `/api/chat-turns` | Last headless turn per agent |
+| **GET** `/api/chat-targets` | Rail faces: `agents` and `workers`, with thinking + last turn |
+| **SSE** `rail` event | Rail membership changed (checked every 20s) |
 | **WebSocket** `/ws/chat/:id` | Text chat |
 | **POST** `/agents/:id/start` · `/stop` | Firstmate TUI only |
 
-Stack: htmx 4 and Alpine.js. Health, Fleet, and Agents are leaves. Alice is a full-height panel from the right. On a phone, those four sit in a bottom dock. Live updates use `EventSource` on `/events`, then `htmx.ajax` refreshes the partial in that leaf.
+Stack: htmx 4 and Alpine.js. Health, Fleet, and Agents are leaves; chat is the rail and its drawer. On a phone, the three leaves sit in a bottom dock. Live updates use `EventSource` on `/events`, then `htmx.ajax` refreshes the partial in that leaf.
 
 ## Usage metrics
 

@@ -103,7 +103,7 @@ export async function agentsSidebarHtml(): Promise<string> {
           ${lastTurnHtml(a.id, status?.lastChatTurn)}`
       : "";
     const chatBtn = isOrchestratorOrAssistant(a)
-      ? `<button type="button" class="btn" @click="selectAgent('${escapeHtml(a.id)}')">Open space</button>`
+      ? `<button type="button" class="btn" @click="openChat('${escapeHtml(a.id)}')">Chat</button>`
       : "";
     const face = agentArtPath(a.id);
     rows.push(`<li class="agent">
@@ -118,45 +118,4 @@ export async function agentsSidebarHtml(): Promise<string> {
     </li>`);
   }
   return `<p class="muted">Herdr session fleet. Attach: ${escapeHtml(HERDR_ATTACH_HINT)}</p><ul class="agent-list">${rows.join("")}</ul>`;
-}
-
-export async function agentSpaceHtml(agentId: string): Promise<string> {
-  const agents = await loadAgents();
-  const a = agents.find((x) => x.id === agentId);
-  if (!a || !isOrchestratorOrAssistant(a)) {
-    return `<p class="muted">Select an orchestrator agent.</p>`;
-  }
-  const status = chatAllowed(agentId) ? await resolveAgentStatus(agentId) : null;
-  const memory =
-    agentId === "alice" || agentId === "architect"
-      ? "Hermes (pi-hermes-memory)"
-      : "—";
-  const face = agentArtPath(agentId);
-  return `<article class="sheet stack">
-      <div class="row agent-head">
-        <img class="portrait" src="${face}" alt="" width="64" height="64" />
-        <h3 class="sheet-title">${escapeHtml(agentId)}</h3>
-      </div>
-      <p class="row">
-        <span class="muted">Model ${escapeHtml(a.model)}</span>
-        ${status ? `<span class="detent ${chatBadgeClass(status.chatState)}">${escapeHtml(status.chatLabel)}</span>` : ""}
-        ${status && isTuiAgent(agentId) ? `<span class="detent ${tuiBadgeClass(status.tuiState)}">${escapeHtml(status.tuiLabel)}</span>` : ""}
-      </p>
-      ${status?.tuiMessage ? `<p class="muted">${escapeHtml(status.tuiMessage)}</p>` : ""}
-      <p class="muted">Memory: ${escapeHtml(memory)}</p>
-      ${agentId === "firstmate" ? firstmateWaitHtml(status?.firstmateWait) : ""}
-      ${lastTurnHtml(agentId, status?.lastChatTurn)}
-      ${
-        agentId !== "alice"
-          ? `<div id="space-chat-${escapeHtml(agentId)}" x-data="spaceChat('${escapeHtml(agentId)}')">
-        <div class="log" x-ref="log"></div>
-        <p class="warn" x-show="thinking">thinking…</p>
-        <form class="composer" @submit.prevent="send">
-          <input class="field" x-model="draft" placeholder="Message ${escapeHtml(agentId)}" aria-label="Message ${escapeHtml(agentId)}" />
-          <button class="btn btn-ink" type="submit">Send</button>
-        </form>
-      </div>`
-          : `<p class="muted">Alice chat opens from the right. Optional TUI: ${escapeHtml(HERDR_ATTACH_HINT)}</p>`
-      }
-    </article>`;
 }

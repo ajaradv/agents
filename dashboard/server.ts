@@ -6,7 +6,7 @@ import {
   setLifecycleEmitter,
 } from "./lib/alice-control.ts";
 import { isTuiAgent } from "./lib/herdr.ts";
-import { agentsSidebarHtml, agentSpaceHtml } from "./lib/partials.ts";
+import { agentsSidebarHtml } from "./lib/partials.ts";
 import { agentsStatusJson } from "./lib/agents-api.ts";
 import {
   appendCaptainChat,
@@ -19,11 +19,14 @@ import { fleetStripHtml } from "./lib/fleet-snapshot.ts";
 import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import {
+  acceptCaptainLine,
   getAllLastChatTurns,
+  getHeadlessChatState,
   registerChatBroadcaster,
   setChatTurnEmitter,
   startChatBridge,
 } from "./lib/chat-bridge.ts";
+import { listChatTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import { HOST, PORT, ROOT } from "./lib/paths.ts";
 
 type WsData = { agentId: string };
@@ -36,14 +39,20 @@ function sseBytes(text: string): Uint8Array {
   return sseEncoder.encode(text);
 }
 
+function chatPayload(line: ChatLine) {
+  return {
+    role: line.from,
+    kind: line.kind,
+    text: line.text,
+    ts: line.ts,
+    ...(line.ref ? { ref: line.ref } : {}),
+  };
+}
+
 function broadcastChat(agentId: string, line: ChatLine) {
   const set = chatSockets.get(agentId);
   if (!set) return;
-  const payload = JSON.stringify({
-    role: line.from,
-    text: line.text,
-    ts: line.ts,
-  });
+  const payload = JSON.stringify(chatPayload(line));
   for (const ws of set) {
     try {
       ws.send(payload);
@@ -79,7 +88,7 @@ scheduleQuotaLoop(() => {
 
 registerChatBroadcaster(broadcastChat);
 setChatTurnEmitter(() => sseBroadcast("agents"));
-startChatBridge();
+void startChatTargetRefresh(() => sseBroadcast("rail")).then(() => startChatBridge());
 
 process.on("unhandledRejection", (reason) => {
   console.error("[dashboard] unhandledRejection:", reason);
@@ -116,9 +125,7 @@ const server = Bun.serve({
       chatSockets.get(data.agentId)!.add(ws);
       readCaptainChat(data.agentId, 50).then((lines) => {
         for (const line of lines) {
-          ws.send(
-            JSON.stringify({ role: line.from, text: line.text, ts: line.ts }),
-          );
+          ws.send(JSON.stringify(chatPayload(line)));
         }
       }).catch((e) => console.error("[dashboard] ws history:", e));
     },
@@ -126,7 +133,10 @@ const server = Bun.serve({
       const data = ws.data as WsData;
       const text = message.toString();
       appendCaptainChat(data.agentId, text)
-        .then((line) => broadcastChat(data.agentId, line))
+        .then((line) => {
+          broadcastChat(data.agentId, line);
+          return acceptCaptainLine(data.agentId, line);
+        })
         .catch(() => {
           ws.send(JSON.stringify({ error: "send failed" }));
         });
@@ -201,6 +211,18 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return Response.json(await agentsStatusJson());
     }
 
+    if (path === "/api/chat-targets" && req.method === "GET") {
+      const { agents, workers } = listChatTargets();
+      const withTurn = <T extends { id: string }>(t: T) => ({
+        ...t,
+        ...getHeadlessChatState(t.id),
+      });
+      return Response.json({
+        agents: agents.map(withTurn),
+        workers: workers.map(withTurn),
+      });
+    }
+
     if (path === "/api/chat-turns" && req.method === "GET") {
       return Response.json({ turns: getAllLastChatTurns() });
     }
@@ -256,13 +278,6 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       });
     }
 
-    if (path.startsWith("/partials/space/") && req.method === "GET") {
-      const agentId = path.replace("/partials/space/", "");
-      return new Response(await agentSpaceHtml(agentId), {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
-    }
-
     const agentStart = path.match(/^\/agents\/([a-z]+)\/start$/);
     if (agentStart && req.method === "POST") {
       const agentId = agentStart[1]!;
@@ -296,6 +311,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       try {
         const line = await appendCaptainChat(agentId, body.text ?? "");
         broadcastChat(agentId, line);
+        await acceptCaptainLine(agentId, line);
         return Response.json({ ok: true, line });
       } catch (e) {
         return Response.json(

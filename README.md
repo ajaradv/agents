@@ -65,7 +65,7 @@ just alice-op              # op run --env-file=fleet/home/.env.op (see fleet/con
 just firstmate-op
 just architect             # Pi + grok-4.7@256k, vault cwd, plan review primary
 just architect-op
-just dashboard             # http://127.0.0.1:8787 — usage cards, Herdr Alice start/stop
+just dashboard             # http://127.0.0.1:8787 — usage, fleet, chat rail, Firstmate TUI start/stop
 bin/launch alice -- -p "…" # extra pi args after --
 ```
 

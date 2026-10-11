@@ -9,6 +9,9 @@ import {
   shipsSectionHtml,
 } from "./fleet-layers.ts";
 import { fleetInboxRoot } from "./paths.ts";
+
+/** Same pattern as chat-targets; kept here to avoid an import cycle. */
+const CHAT_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 import { escapeHtml } from "./quota.ts";
 
 export type FirstmateHeartbeat = {
@@ -261,7 +264,7 @@ function holdForm(h: WaitHold): string {
   </form>`;
 }
 
-function workList(title: string, rows: WorkRow[], empty: string): string {
+function workList(title: string, rows: WorkRow[], empty: string, chat = false): string {
   if (rows.length === 0) return `<p class="muted">${escapeHtml(empty)}</p>`;
   const items = rows
     .slice(0, 8)
@@ -279,7 +282,10 @@ function workList(title: string, rows: WorkRow[], empty: string): string {
       return `<li class="${t.captainActionable ? "task-hold" : ""}">
         <div class="between">
           <span>${escapeHtml(t.title || t.id)} ${hold}</span>
-          <span class="detent">${escapeHtml(t.state)}</span>
+          <span class="row">
+            <span class="detent">${escapeHtml(t.state)}</span>
+            ${chat && CHAT_ID_RE.test(t.id) ? `<button type="button" class="btn" @click="openChat('${escapeHtml(t.id)}')" aria-label="Chat with ${escapeHtml(t.title || t.id)}">Chat</button>` : ""}
+          </span>
         </div>
         ${doing}${reason}
       </li>`;
@@ -335,7 +341,7 @@ function projectCard(
       <span class="detent">${idle ? "idle" : `${active.length} active`}</span>
     </div>
     ${project.note ? `<p class="muted">${escapeHtml(project.note)}</p>` : ""}
-    ${workList("Active", active, "Nothing in flight.")}
+    ${workList("Active", active, "Nothing in flight.", true)}
     ${workList("Queued", queued, "Nothing queued.")}
     ${
       waiting.length > 0

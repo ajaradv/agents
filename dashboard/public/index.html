@@ -9,7 +9,7 @@
   <script defer src="https://unpkg.com/alpinejs@3.14.3/dist/cdn.min.js"></script>
   <style>[x-cloak] { display: none !important; }</style>
 </head>
-<body x-data="dashboardApp()" x-cloak :class="{ 'alice-open': aliceOpen }">
+<body x-data="dashboardApp()" x-cloak :class="{ 'chat-open': chatOpen }">
   <header class="mast">
     <div class="mast-captain">
       <img class="portrait mast-face" src="/art/captain.png" width="56" height="56" alt="" />
@@ -28,9 +28,6 @@
     <button type="button" class="tab" role="tab" id="tab-agents" aria-controls="leaf-agents"
             :aria-selected="leaf === 'agents'" :class="{ 'is-open': leaf === 'agents', 'is-ring': waiting }"
             @click="openLeaf('agents')"><span class="punch" aria-hidden="true"></span>Agents</button>
-    <button type="button" class="tab" id="tab-alice" aria-controls="alice-drawer" aria-haspopup="dialog"
-            :aria-expanded="aliceOpen" :class="{ 'is-open': aliceOpen }"
-            @click="toggleAlice()"><span class="punch" aria-hidden="true"></span>Alice</button>
   </nav>
 
   <main>
@@ -58,51 +55,71 @@
     <section id="leaf-agents" class="leaf" role="tabpanel" aria-labelledby="tab-agents"
              :class="{ 'is-open': leaf === 'agents', 'is-hinge': hinge === 'agents' }">
       <h2>Agents</h2>
-      <div class="grid-2">
-        <div id="agents" hx-get="/partials/agents" hx-trigger="load" hx-swap="innerHTML"></div>
-        <div id="agent-space">
-          <div x-show="selectedAgent" x-html="spaceHtml"></div>
-          <p class="muted" x-show="!selectedAgent">Open an agent to see its space and chat.</p>
-        </div>
-      </div>
+      <div id="agents" hx-get="/partials/agents" hx-trigger="load" hx-swap="innerHTML"></div>
     </section>
 
   </main>
 
-  <aside id="alice-drawer" class="alice-drawer" role="dialog" aria-modal="true" aria-labelledby="alice-title"
-         :class="{ 'is-open': aliceOpen }" :aria-hidden="aliceOpen ? 'false' : 'true'" :inert="!aliceOpen">
-    <header class="alice-bar">
-      <div class="alice-who">
-        <img class="portrait" src="/art/alice.png" width="64" height="64" alt="" />
+  <nav class="rail" aria-label="Chat">
+    <template x-for="t in rail.agents" :key="t.id">
+      <button type="button" class="rail-face" :class="{ 'is-open': chatOpen && chatId === t.id, 'is-busy': t.thinking }"
+              :aria-label="'Chat with ' + t.label" :title="t.label" @click="openChat(t.id)">
+        <img :src="t.art" width="44" height="44" alt="" />
+      </button>
+    </template>
+    <p class="rail-label" x-show="rail.workers.length" x-cloak>Crew</p>
+    <template x-for="t in rail.workers" :key="t.id">
+      <button type="button" class="rail-face rail-worker" :class="{ 'is-open': chatOpen && chatId === t.id }"
+              :aria-label="'Chat with worker ' + t.label" :title="t.label + ' · ' + (t.state || '')" @click="openChat(t.id)">
+        <span x-text="initials(t)"></span>
+      </button>
+    </template>
+  </nav>
+
+  <button type="button" class="rail-toggle" :class="{ 'is-open': chatOpen }" aria-label="Open chat" @click="toggleChat()">
+    <img class="fab-face" :src="current().art || '/art/captain.png'" width="32" height="32" alt="" />
+    <span class="fab-label">Chat</span>
+  </button>
+
+  <aside id="chat-drawer" class="chat-drawer" role="dialog" aria-modal="true" aria-labelledby="chat-title"
+         :class="{ 'is-open': chatOpen }" :aria-hidden="chatOpen ? 'false' : 'true'" :inert="!chatOpen">
+    <header class="chat-bar">
+      <div class="chat-who">
+        <img class="portrait" x-show="current().art" :src="current().art" width="64" height="64" alt="" />
+        <span class="portrait portrait-initials" x-show="!current().art" x-text="initials(current())"></span>
         <div>
-          <h2 id="alice-title">Alice</h2>
+          <h2 id="chat-title" x-text="current().label || chatId"></h2>
           <p class="muted">
-            <span x-text="aliceConn"></span>
-            <span x-text="aliceSession"></span>
-            <span class="warn" x-show="aliceThinking">thinking…</span>
+            <span x-text="chatConn"></span>
+            <span x-text="chatMeta()"></span>
+            <span class="warn" x-show="chatThinking">thinking…</span>
           </p>
         </div>
       </div>
-      <button type="button" class="btn" @click="closeAlice()">Close</button>
+      <button type="button" class="btn" @click="closeChat()">Close</button>
     </header>
-    <div class="thread" x-ref="aliceLog" aria-live="polite">
-      <div class="bubble-row is-system" x-show="aliceEmpty" x-cloak>
-        <div class="bubble"><p>Alice is on the line.</p></div>
+    <div class="face-strip" aria-label="Switch chat">
+      <template x-for="t in rail.agents.concat(rail.workers)" :key="t.id">
+        <button type="button" class="rail-face" :class="{ 'is-open': chatId === t.id, 'rail-worker': !t.art }"
+                :aria-label="'Chat with ' + t.label" @click="openChat(t.id)">
+          <img x-show="t.art" :src="t.art" width="36" height="36" alt="" />
+          <span x-show="!t.art" x-text="initials(t)"></span>
+        </button>
+      </template>
+    </div>
+    <div class="thread" x-ref="chatLog" aria-live="polite">
+      <div class="bubble-row is-system" x-show="chatEmpty" x-cloak>
+        <div class="bubble"><p x-text="(current().label || chatId) + ' is on the line.'"></p></div>
       </div>
     </div>
-    <form class="alice-compose" @submit.prevent="sendAlice">
+    <form class="chat-compose" @submit.prevent="sendChat">
       <img class="avatar" src="/art/captain.png" width="48" height="48" alt="" />
       <div class="composer">
-        <input class="field" x-ref="aliceField" x-model="aliceDraft" placeholder="Message Alice" autocomplete="off" aria-label="Message Alice" />
+        <input class="field" x-ref="chatField" x-model="chatDraft" :placeholder="'Message ' + (current().label || chatId)" autocomplete="off" :aria-label="'Message ' + (current().label || chatId)" />
         <button class="btn btn-ink" type="submit">Send</button>
       </div>
     </form>
   </aside>
-
-  <button type="button" class="fab" :class="{ 'is-open': aliceOpen }" aria-label="Open Alice chat" @click="toggleAlice()">
-    <img class="fab-face" src="/art/alice.png" width="32" height="32" alt="" />
-    <span class="fab-label">Alice</span>
-  </button>
 
   <div class="palette-backdrop" x-show="paletteOpen" x-cloak @click="closePalette()"></div>
   <div class="palette" role="dialog" aria-label="Command palette" x-show="paletteOpen" x-cloak @click.stop>
@@ -119,21 +136,17 @@
   </div>
 
   <nav class="dock" aria-label="Fleet sections">
-    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'health' && !aliceOpen }" @click="openLeaf('health')">
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'health' && !chatOpen }" @click="openLeaf('health')">
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M9 2h4v7h7v4h-7v7H9v-7H2V9h7z"/></svg>
       Health
     </button>
-    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'fleet' && !aliceOpen, 'is-ring': waiting }" @click="openLeaf('fleet')">
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'fleet' && !chatOpen, 'is-ring': waiting }" @click="openLeaf('fleet')">
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M10 2h2v3h5v2h-1l2 8H4l2-8H5V5h5V2zm-5 15h12v3H5z"/></svg>
       Fleet
     </button>
-    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'agents' && !aliceOpen, 'is-ring': waiting }" @click="openLeaf('agents')">
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'agents' && !chatOpen, 'is-ring': waiting }" @click="openLeaf('agents')">
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M4 4h6v6H4zm8 0h6v6h-6zM4 12h6v6H4zm8 0h6v6h-6z"/></svg>
       Agents
-    </button>
-    <button type="button" class="dock-btn" :class="{ 'is-open': aliceOpen }" :aria-expanded="aliceOpen" @click="toggleAlice()">
-      <img class="dock-face" src="/art/alice.png" width="22" height="22" alt="" />
-      Alice
     </button>
   </nav>
 

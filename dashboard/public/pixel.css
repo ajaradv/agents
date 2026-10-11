@@ -111,7 +111,7 @@ p { margin: 0.35rem 0; }
   border-color: var(--vermilion);
 }
 
-.fab {
+.rail-toggle {
   position: fixed;
   z-index: 35;
   right: 1rem;
@@ -128,7 +128,7 @@ p { margin: 0.35rem 0; }
   cursor: pointer;
 }
 
-.fab.is-open { background: var(--ink); color: var(--bone); }
+.rail-toggle.is-open { background: var(--ink); color: var(--bone); }
 .fab-face {
   width: 32px;
   height: 32px;
@@ -398,6 +398,52 @@ pre, .raw {
   gap: 0.75rem;
 }
 
+
+/* Chat rail: one face per registered agent, then a smaller crew row. */
+.rail-toggle { display: none; }
+.rail {
+  position: fixed;
+  z-index: 35;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  padding: 0.45rem 0.35rem;
+  background: var(--sheet);
+  border: 1px solid var(--ink);
+  border-right: 0;
+}
+.rail-label { margin: 0.2rem 0 0; font-size: 0.6rem; text-transform: uppercase; color: var(--quiet); }
+.rail-face {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 1px solid var(--ink);
+  background: var(--bone);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  flex: none;
+}
+.rail-face img { width: 100%; height: 100%; object-fit: cover; object-position: center top; image-rendering: pixelated; display: block; }
+.rail-face.is-open { outline: 2px solid var(--ink); outline-offset: 2px; }
+.rail-face.is-busy { box-shadow: inset 0 0 0 2px var(--yellow); }
+.rail-worker { width: 34px; height: 34px; font-size: 0.65rem; background: var(--sheet); }
+.portrait-initials { display: grid; place-items: center; font-size: 0.8rem; color: var(--ink); }
+.face-strip { display: none; }
+.bubble-row.is-failed .bubble { border-style: dashed; }
+.bubble-row.is-error .bubble { border-color: var(--vermilion); }
+.bubble-row.is-error .bubble-name { color: var(--vermilion); }
+.chat-drawer.is-open { padding-right: 4.25rem; }
+
 .kpi {
   border: 1px solid var(--line);
   background: var(--sheet);
@@ -406,7 +452,7 @@ pre, .raw {
 
 .kpi b { display: block; font-size: 1.25rem; font-weight: 400; margin-top: 0.25rem; }
 
-.alice-drawer {
+.chat-drawer {
   position: fixed;
   inset: 0;
   z-index: 20;
@@ -420,13 +466,13 @@ pre, .raw {
   transition: transform 90ms steps(2, end), visibility 90ms steps(2, end);
 }
 
-.alice-drawer.is-open {
+.chat-drawer.is-open {
   transform: none;
   visibility: visible;
   pointer-events: auto;
 }
 
-.alice-bar, .alice-compose {
+.chat-bar, .chat-compose {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -437,14 +483,14 @@ pre, .raw {
   padding: 0.75rem 1rem;
 }
 
-.alice-compose {
+.chat-compose {
   border-bottom: 0;
   border-top: 1px solid var(--ink);
 }
 
-.alice-bar h2 { margin: 0; }
-.alice-who { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
-.alice-who p { margin: 0; }
+.chat-bar h2 { margin: 0; }
+.chat-who { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
+.chat-who p { margin: 0; }
 
 .portrait {
   width: 64px;
@@ -475,7 +521,7 @@ pre, .raw {
   max-width: min(40rem, 92%);
 }
 
-.bubble-row.is-alice { margin-right: auto; }
+.bubble-row.is-agent { margin-right: auto; }
 .bubble-row.is-captain { margin-left: auto; flex-direction: row-reverse; }
 .bubble-row.is-system { margin-inline: auto; max-width: 28rem; }
 
@@ -503,8 +549,9 @@ pre, .raw {
   flex: none;
 }
 
-.alice-compose .field { background: var(--bone); }
-.alice-compose .composer { flex: 1; margin: 0; }
+.chat-compose .field { background: var(--bone); }
+.chat-compose .composer { flex: 1; margin: 0; min-width: 0; }
+.chat-compose .field { min-width: 0; }
 
 .dock { display: none; }
 
@@ -542,7 +589,7 @@ pre, .raw {
 
 .dock-btn.is-ring { box-shadow: inset 0 0 0 2px var(--vermilion); }
 
-body.alice-open { overflow: hidden; }
+body.chat-open { overflow: hidden; }
 
 @media (max-width: 640px) {
   body { padding: 0.75rem 0.75rem 5.5rem; }
@@ -552,7 +599,7 @@ body.alice-open { overflow: hidden; }
   .between { flex-wrap: wrap; }
   .dock {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     position: fixed;
     z-index: 40;
     left: 0;
@@ -562,12 +609,24 @@ body.alice-open { overflow: hidden; }
     border-top: 1px solid var(--ink);
     padding-bottom: env(safe-area-inset-bottom);
   }
-  .alice-drawer { padding-bottom: calc(3.6rem + env(safe-area-inset-bottom)); }
-  .fab { bottom: calc(3.75rem + env(safe-area-inset-bottom)); right: 0.75rem; }
+  .chat-drawer { padding-bottom: calc(3.6rem + env(safe-area-inset-bottom)); }
+  .rail-toggle { display: flex; bottom: calc(3.75rem + env(safe-area-inset-bottom)); right: 0.75rem; }
   .mast-hint { display: none; }
+  .rail { display: none; }
+  body.chat-open .rail-toggle { display: none; }
+  .chat-drawer.is-open { padding-right: 0; }
+  .face-strip {
+    display: flex;
+    gap: 0.4rem;
+    overflow-x: auto;
+    padding: 0.45rem 1rem;
+    background: var(--sheet);
+    border-bottom: 1px solid var(--ink);
+  }
+  .face-strip .rail-face { width: 40px; height: 40px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .leaf.is-hinge { animation: none; }
-  .alice-drawer { transition: none; }
+  .chat-drawer { transition: none; }
 }
