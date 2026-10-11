@@ -1,6 +1,6 @@
 import { mkdir, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { agentArtPath } from "./agent-art.ts";
+import { agentArtOrNull } from "./agent-art.ts";
 import { loadAgents } from "./agents.ts";
 import { runFleetSnapshotJson } from "./fleet-snapshot.ts";
 import { dashLog } from "./log.ts";
@@ -61,7 +61,7 @@ async function refreshAgents(): Promise<void> {
       id: a.id,
       kind: a.id === "firstmate" ? "firstmate" : "headless",
       label: a.id,
-      art: agentArtPath(a.id),
+      art: agentArtOrNull(a.id),
       model: a.model,
     }));
 }

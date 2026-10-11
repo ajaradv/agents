@@ -7,6 +7,11 @@ const AGENT_ART: Record<string, string> = {
 
 export const CAPTAIN_ART = "/art/captain.png";
 
+/** Portrait for a registered agent, or null so the UI draws initials. */
+export function agentArtOrNull(agentId: string): string | null {
+  return AGENT_ART[agentId] ?? null;
+}
+
 export function agentArtPath(agentId: string): string {
   return AGENT_ART[agentId] ?? CAPTAIN_ART;
 }

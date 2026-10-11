@@ -439,6 +439,18 @@ pre, .raw {
 .rail-worker { width: 34px; height: 34px; font-size: 0.65rem; background: var(--sheet); }
 .portrait-initials { display: grid; place-items: center; font-size: 0.8rem; color: var(--ink); }
 .face-strip { display: none; }
+.rail-group { position: relative; background: var(--sheet); }
+.rail-group .stack-face { position: absolute; display: grid; place-items: center; width: 26px; height: 26px; font-size: 0.55rem; border: 1px solid var(--ink); background: var(--bone); left: calc(3px + var(--i, 0) * 8px); top: calc(3px + var(--i, 0) * 8px); overflow: hidden; }
+.rail-group .stack-face img { width: 100%; height: 100%; object-fit: cover; object-position: center top; image-rendering: pixelated; }
+.face-strip .rail-group .stack-face { width: 22px; height: 22px; }
+.group-to { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.45rem 1rem; background: var(--sheet); color: var(--ink); border-bottom: 1px solid var(--ink); }
+.group-member { gap: 0.3rem; font-size: 0.8rem; }
+.avatar-sm { width: 28px; height: 28px; }
+.group-form fieldset { border: 1px solid var(--line); padding: 0.5rem; margin: 0; }
+.phase-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.3rem; counter-reset: phase; }
+.phase-chips li { counter-increment: phase; }
+.phase-chips li::before { content: counter(phase) ". "; color: var(--quiet); }
+
 .bubble-row.is-failed .bubble { border-style: dashed; }
 .bubble-row.is-error .bubble { border-color: var(--vermilion); }
 .bubble-row.is-error .bubble-name { color: var(--vermilion); }

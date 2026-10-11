@@ -55,16 +55,29 @@
     <section id="leaf-agents" class="leaf" role="tabpanel" aria-labelledby="tab-agents"
              :class="{ 'is-open': leaf === 'agents', 'is-hinge': hinge === 'agents' }">
       <h2>Agents</h2>
-      <div id="agents" hx-get="/partials/agents" hx-trigger="load" hx-swap="innerHTML"></div>
+      <div class="grid-2">
+        <div id="agents" hx-get="/partials/agents" hx-trigger="load" hx-swap="innerHTML"></div>
+        <div id="groups" hx-get="/partials/groups" hx-trigger="load" hx-swap="innerHTML"></div>
+      </div>
     </section>
 
   </main>
 
   <nav class="rail" aria-label="Chat">
     <template x-for="t in rail.agents" :key="t.id">
-      <button type="button" class="rail-face" :class="{ 'is-open': chatOpen && chatId === t.id, 'is-busy': t.thinking }"
+      <button type="button" class="rail-face" :class="{ 'is-open': chatOpen && !chatGroup && chatId === t.id, 'is-busy': t.thinking }"
               :aria-label="'Chat with ' + t.label" :title="t.label" @click="openChat(t.id)">
-        <img :src="t.art" width="44" height="44" alt="" />
+        <img x-show="t.art" :src="t.art" width="44" height="44" alt="" />
+        <span x-show="!t.art" x-text="initials(t)"></span>
+      </button>
+    </template>
+    <p class="rail-label" x-show="groups.length" x-cloak>Groups</p>
+    <template x-for="g in groups" :key="g.id">
+      <button type="button" class="rail-face rail-group" :class="{ 'is-open': chatOpen && chatGroup && chatGroup.id === g.id }"
+              :aria-label="'Open group ' + g.name" :title="g.name + ' · lead ' + g.lead" @click="openGroup(g.id)">
+        <template x-for="(f, i) in groupFaces(g)" :key="f.id">
+          <span class="stack-face" :style="'--i:' + i"><img x-show="f.art" :src="f.art" alt="" /><span x-show="!f.art" x-text="initials(f)"></span></span>
+        </template>
       </button>
     </template>
     <p class="rail-label" x-show="rail.workers.length" x-cloak>Crew</p>
@@ -88,7 +101,7 @@
         <img class="portrait" x-show="current().art" :src="current().art" width="64" height="64" alt="" />
         <span class="portrait portrait-initials" x-show="!current().art" x-text="initials(current())"></span>
         <div>
-          <h2 id="chat-title" x-text="current().label || chatId"></h2>
+          <h2 id="chat-title" x-text="title()"></h2>
           <p class="muted">
             <span x-text="chatConn"></span>
             <span x-text="chatMeta()"></span>
@@ -99,23 +112,38 @@
       <button type="button" class="btn" @click="closeChat()">Close</button>
     </header>
     <div class="face-strip" aria-label="Switch chat">
+      <template x-for="g in groups" :key="'g-' + g.id">
+        <button type="button" class="rail-face rail-group" :class="{ 'is-open': chatGroup && chatGroup.id === g.id }"
+                :aria-label="'Open group ' + g.name" @click="openGroup(g.id)">
+          <template x-for="(f, i) in groupFaces(g)" :key="f.id">
+          <span class="stack-face" :style="'--i:' + i"><img x-show="f.art" :src="f.art" alt="" /><span x-show="!f.art" x-text="initials(f)"></span></span>
+          </template>
+        </button>
+      </template>
       <template x-for="t in rail.agents.concat(rail.workers)" :key="t.id">
-        <button type="button" class="rail-face" :class="{ 'is-open': chatId === t.id, 'rail-worker': !t.art }"
+        <button type="button" class="rail-face" :class="{ 'is-open': !chatGroup && chatId === t.id, 'rail-worker': !t.art }"
                 :aria-label="'Chat with ' + t.label" @click="openChat(t.id)">
           <img x-show="t.art" :src="t.art" width="36" height="36" alt="" />
           <span x-show="!t.art" x-text="initials(t)"></span>
         </button>
       </template>
     </div>
+    <div class="group-to" x-show="chatGroup" x-cloak>
+      <span class="muted">To</span>
+      <template x-for="id in (chatGroup ? chatGroup.members : [])" :key="id">
+        <button type="button" class="btn" :class="{ 'btn-ink': groupTo === id }" @click="groupTo = id; focusComposer()"
+                x-text="id + (chatGroup && chatGroup.lead === id ? ' (lead)' : '')"></button>
+      </template>
+    </div>
     <div class="thread" x-ref="chatLog" aria-live="polite">
       <div class="bubble-row is-system" x-show="chatEmpty" x-cloak>
-        <div class="bubble"><p x-text="(current().label || chatId) + ' is on the line.'"></p></div>
+        <div class="bubble"><p x-text="title() + (chatGroup ? ' is on the line. Messages go to the lead unless you pick another member.' : ' is on the line.')"></p></div>
       </div>
     </div>
     <form class="chat-compose" @submit.prevent="sendChat">
       <img class="avatar" src="/art/captain.png" width="48" height="48" alt="" />
       <div class="composer">
-        <input class="field" x-ref="chatField" x-model="chatDraft" :placeholder="'Message ' + (current().label || chatId)" autocomplete="off" :aria-label="'Message ' + (current().label || chatId)" />
+        <input class="field" x-ref="chatField" x-model="chatDraft" :placeholder="'Message ' + current().label" autocomplete="off" :aria-label="'Message ' + current().label" />
         <button class="btn btn-ink" type="submit">Send</button>
       </div>
     </form>

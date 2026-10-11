@@ -42,6 +42,21 @@ A right-edge rail holds one portrait per chat target, with one drawer and one co
 - Worker threads carry a `.task` marker. When the task leaves the snapshot (landed or retired), the folder moves to `fleet/inbox/archive/<id>-<date>/`. Archiving is skipped when the snapshot fails.
 - Active task rows on the Fleet leaf have a **Chat** button that opens that worker's thread.
 
+## Groups and ADW labels
+
+A group is a rail cluster saved in `fleet/inbox/dashboard-groups.json` (`id`, `name`, `lead`, `members`, optional `adw: {ship, chain}`). Create and delete groups on the Agents leaf.
+
+- Members and the lead are registered assistants only. **Firstmate and its workers cannot join a group**; Firstmate runs its own flow.
+- `lead` is required and must be a member. Work assigned to the group goes to the lead, who coordinates the members.
+- Opening a group stacks the members' threads in one drawer, in time order. The **To** row picks the recipient and defaults to the lead. The dashboard never sends one message to every member.
+- An ADW label is a ship plus one of its `adws/adw_*.py` chains. The Fleet leaf draws the chain's phases (parsed from `PhaseParams(name=...)`) as ordered chips. It does not launch the workflow and is not live status; a reader for `adws/adw_data/sssf.db` can come later.
+
+| Channel | Use |
+|---|---|
+| **GET** `/api/groups` | Groups JSON |
+| **POST** `/api/groups` | Create or replace (form or JSON: `name`, `lead`, `members`, `adwShip`/`adwChain` or form `adw=ship::chain`) |
+| **POST** `/api/groups/:id/delete` | Delete |
+
 ## Lifecycle (TUI only)
 
 **TUI starting / open / stopping / error** reflect Herdr pane state. A failed Start can show **TUI error** while **chat ready** stays available. When the pane is live, **TUI open** overrides a stale Start timeout error.

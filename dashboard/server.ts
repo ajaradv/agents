@@ -17,6 +17,8 @@ import {
 import { metricsStripHtml } from "./lib/bus.ts";
 import { fleetStripHtml } from "./lib/fleet-snapshot.ts";
 import { answerCaptainHold } from "./lib/hold-answer.ts";
+import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
+import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import {
   acceptCaptainLine,
@@ -267,7 +269,65 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     }
 
     if (path === "/partials/fleet" && req.method === "GET") {
-      return new Response(await fleetStripHtml(), {
+      const [strip, adw] = await Promise.all([fleetStripHtml(), groupAdwSectionHtml()]);
+      return new Response(adw ? `${strip}<div class="stack group-adw">${adw}</div>` : strip, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (path === "/partials/groups" && req.method === "GET") {
+      return new Response(await groupsPanelHtml(), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (path === "/api/groups" && req.method === "GET") {
+      return Response.json({ groups: await readGroups() });
+    }
+
+    if (path === "/api/groups" && req.method === "POST") {
+      let input: GroupInput = {};
+      const type = req.headers.get("content-type") ?? "";
+      try {
+        if (type.includes("application/json")) {
+          input = (await req.json()) as GroupInput;
+        } else {
+          const form = await req.formData();
+          const [adwShip, adwChain] = String(form.get("adw") ?? "").split("::");
+          input = {
+            id: form.get("id") ? String(form.get("id")) : undefined,
+            name: String(form.get("name") ?? ""),
+            lead: String(form.get("lead") ?? ""),
+            members: form.getAll("members").map(String),
+            adwShip,
+            adwChain,
+          };
+        }
+      } catch {
+        return new Response('<p class="warn">Could not read that group.</p>', {
+          status: 400,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
+      const r = await saveGroup(input);
+      if (r.group) {
+        sseBroadcast("rail");
+        sseBroadcast("agents");
+      }
+      if (type.includes("application/json")) {
+        return Response.json(r.group ? { ok: true, group: r.group } : { ok: false, error: r.error }, { status: r.group ? 200 : 400 });
+      }
+      return new Response(await groupsPanelHtml(r.error ?? ""), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    const groupDelete = path.match(/^\/api\/groups\/([a-z][a-z0-9-]{0,40})\/delete$/);
+    if (groupDelete && req.method === "POST") {
+      await deleteGroup(groupDelete[1]!);
+      sseBroadcast("rail");
+      sseBroadcast("agents");
+      return new Response(await groupsPanelHtml(), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
     }

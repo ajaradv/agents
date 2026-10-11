@@ -35,7 +35,11 @@ function dashboardApp() {
     chatConn: "",
     chatThinking: false,
     chatWs: null,
+    chatSockets: {},
     chatGen: 0,
+    groups: [],
+    chatGroup: null,
+    groupTo: "",
 
     paletteItems() {
       const base = [
@@ -46,7 +50,8 @@ function dashboardApp() {
       const chats = this.rail.agents
         .concat(this.rail.workers)
         .map((t) => ({ id: "chat-" + t.id, label: "Chat with " + t.label, run: () => this.openChat(t.id) }));
-      return base.concat(chats, this.chatOpen ? [{ id: "chat-close", label: "Close chat", run: () => this.closeChat() }] : []);
+      const groupItems = this.groups.map((g) => ({ id: "group-" + g.id, label: "Open group " + g.name, run: () => this.openGroup(g.id) }));
+      return base.concat(chats, groupItems, this.chatOpen ? [{ id: "chat-close", label: "Close chat", run: () => this.closeChat() }] : []);
     },
 
     init() {
@@ -56,6 +61,8 @@ function dashboardApp() {
       const m = location.hash.match(/^#chat\/([a-z][a-z0-9_-]*)$/);
       if (m) this.openChat(m[1]);
       else if (location.hash === "#alice") this.openChat("alice");
+      const g = location.hash.match(/^#group\/([a-z][a-z0-9-]*)$/);
+      if (g) this.refreshRail().then(() => this.openGroup(g[1]));
       document.body.addEventListener("htmx:afterSettle", (ev) => {
         const elt = ev.detail?.elt || ev.target;
         if (window.Alpine && elt) Alpine.initTree(elt);
@@ -139,6 +146,7 @@ function dashboardApp() {
       es.addEventListener("agents", () => {
         this.pull("/partials/fleet", "#fleet");
         this.pull("/partials/agents", "#agents");
+        this.pull("/partials/groups", "#groups");
         this.refreshAgentStatus();
         this.refreshRail();
       });
@@ -167,9 +175,11 @@ function dashboardApp() {
 
     async refreshRail() {
       try {
-        const r = await fetch("/api/chat-targets");
+        const [r, rg] = await Promise.all([fetch("/api/chat-targets"), fetch("/api/groups")]);
         const j = await r.json();
         this.rail = { agents: j.agents || [], workers: j.workers || [] };
+        this.groups = (await rg.json()).groups || [];
+        if (this.chatGroup) this.chatGroup = this.groups.find((g) => g.id === this.chatGroup.id) || null;
         const cur = this.findTarget(this.chatId);
         if (cur && cur.kind !== "firstmate" && cur.kind !== "task") this.chatThinking = Boolean(cur.thinking);
       } catch {
@@ -182,7 +192,16 @@ function dashboardApp() {
     },
 
     current() {
-      return this.findTarget(this.chatId) || { id: this.chatId, label: this.chatId, art: null };
+      const id = this.chatGroup ? this.groupTo : this.chatId;
+      return this.findTarget(id) || { id, label: id, art: null };
+    },
+
+    title() {
+      return this.chatGroup ? this.chatGroup.name : this.current().label || this.chatId;
+    },
+
+    groupFaces(g) {
+      return [g.lead].concat(g.members.filter((m) => m !== g.lead)).slice(0, 3).map((id) => this.findTarget(id)).filter(Boolean);
     },
 
     initials(t) {
@@ -191,6 +210,10 @@ function dashboardApp() {
     },
 
     chatMeta() {
+      if (this.chatGroup) {
+        const g = this.chatGroup;
+        return `lead ${g.lead} · ${g.members.length} member${g.members.length === 1 ? "" : "s"}${g.adw ? ` · ${g.adw.ship} ${g.adw.chain}` : ""}`;
+      }
       const t = this.current();
       if (t.kind === "task") return [t.state, t.project].filter(Boolean).join(" · ");
       if (t.kind === "firstmate") return "fm-send → TUI";
@@ -200,16 +223,34 @@ function dashboardApp() {
 
     toggleChat() {
       if (this.chatOpen) this.closeChat();
+      else if (this.chatGroup) this.chatOpen = true;
       else this.openChat(this.chatId);
     },
 
     openChat(id) {
       this.closePalette();
-      const switching = id !== this.chatId || !this.chatWs;
+      const switching = id !== this.chatId || this.chatGroup || !this.chatWs;
+      this.chatGroup = null;
       this.chatId = id;
       saveChatId(id);
       this.chatOpen = true;
-      if (switching) this.connectChat();
+      if (switching) this.connectThreads([id]);
+      this.focusComposer();
+    },
+
+    /** A group stacks its members' threads; the composer defaults to the lead. */
+    openGroup(id) {
+      const g = this.groups.find((x) => x.id === id);
+      if (!g) return;
+      this.closePalette();
+      this.chatGroup = g;
+      this.groupTo = g.lead;
+      this.chatOpen = true;
+      this.connectThreads(g.members);
+      this.focusComposer();
+    },
+
+    focusComposer() {
       this.$nextTick(() => {
         const field = this.$refs.chatField;
         if (field) field.focus();
@@ -220,29 +261,37 @@ function dashboardApp() {
       this.chatOpen = false;
     },
 
-    connectChat() {
+    connectThreads(ids) {
       const gen = ++this.chatGen;
-      if (this.chatWs) {
-        this.chatWs.onclose = null;
-        try { this.chatWs.close(); } catch { /* gone */ }
+      for (const ws of Object.values(this.chatSockets)) {
+        ws.onclose = null;
+        try { ws.close(); } catch { /* gone */ }
       }
+      this.chatSockets = {};
+      this.chatWs = null;
       const log = this.$refs.chatLog;
       if (log) log.querySelectorAll(".bubble-row:not([x-show])").forEach((n) => n.remove());
       this.chatEmpty = true;
       this.chatThinking = false;
       this.chatConn = "connecting";
+      for (const id of ids) this.connectOne(id, gen);
+    },
+
+    connectOne(id, gen) {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      const id = this.chatId;
       const ws = new WebSocket(`${proto}//${location.host}/ws/chat/${encodeURIComponent(id)}`);
-      this.chatWs = ws;
+      this.chatSockets[id] = ws;
+      if (!this.chatGroup) this.chatWs = ws;
       ws.onopen = () => {
         if (gen === this.chatGen) this.chatConn = "open";
       };
       ws.onclose = () => {
         if (gen !== this.chatGen) return;
-        this.chatConn = this.findTarget(id) ? "closed" : "not on the rail";
-        this.chatWs = null;
-        if (this.findTarget(id)) setTimeout(() => { if (gen === this.chatGen) this.connectChat(); }, 4000);
+        delete this.chatSockets[id];
+        if (this.chatWs === ws) this.chatWs = null;
+        const live = Boolean(this.findTarget(id));
+        if (!this.chatGroup) this.chatConn = live ? "closed" : "not on the rail";
+        if (live) setTimeout(() => { if (gen === this.chatGen) this.connectOne(id, gen); }, 4000);
       };
       ws.onmessage = (ev) => {
         if (gen !== this.chatGen) return;
@@ -250,23 +299,24 @@ function dashboardApp() {
           const m = JSON.parse(ev.data);
           if (m.error) return;
           if (m.role !== "captain") this.chatThinking = false;
-          this.appendChatLine(m);
+          this.appendChatLine(m, id);
         } catch {
           /* ignore */
         }
       };
     },
 
-    appendChatLine(m) {
+    appendChatLine(m, threadId) {
       const log = this.$refs.chatLog;
       if (!log) return;
       this.chatEmpty = false;
-      const t = this.current();
+      const tid = threadId || this.chatId;
+      const t = this.findTarget(tid) || { id: tid, label: tid, art: null };
       const row = document.createElement("div");
       if (m.kind === "error") {
         row.className = "bubble-row is-system is-error";
         row.innerHTML = `<div class="bubble"><span class="bubble-name">Not sent</span><p>${escapeHtml(m.text)}</p></div>`;
-        const target = m.ref ? log.querySelector(`[data-ts="${CSS.escape(m.ref)}"]`) : null;
+        const target = m.ref ? log.querySelector(`[data-ts="${CSS.escape(m.ref)}"][data-thread="${CSS.escape(tid)}"]`) : null;
         if (target) {
           target.classList.add("is-failed");
           target.after(row);
@@ -279,34 +329,42 @@ function dashboardApp() {
         const mine = m.role === "captain";
         row.className = `bubble-row is-${mine ? "captain" : "agent"}`;
         if (m.ts) row.dataset.ts = m.ts;
+        row.dataset.thread = tid;
         const face = mine ? "/art/captain.png" : t.art;
-        const name = mine ? "You" : t.label || m.role;
+        const to = this.chatGroup ? ` → ${t.label}` : "";
+        const name = mine ? "You" + to : t.label || m.role;
         const avatar = face
           ? `<img class="avatar" src="${face}" alt="" width="48" height="48" />`
           : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
         row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}</span><p>${escapeHtml(m.text)}</p></div>`;
       }
-      log.appendChild(row);
+      if (m.ts) row.dataset.at = m.ts;
+      // Stacked group threads replay one member at a time; keep the drawer in time order.
+      const later = m.ts ? [...log.querySelectorAll(".bubble-row[data-at]")].find((n) => n.dataset.at > m.ts) : null;
+      if (later) log.insertBefore(row, later);
+      else log.appendChild(row);
       while (log.childElementCount > LOG_MAX) log.removeChild(log.firstChild);
-      log.scrollTop = log.scrollHeight;
+      if (!later) log.scrollTop = log.scrollHeight;
     },
 
     sendChat() {
       const text = this.chatDraft.trim();
       if (!text) return;
       const t = this.current();
+      const to = t.id;
       if (t.kind !== "firstmate" && t.kind !== "task") this.chatThinking = true;
-      if (this.chatWs && this.chatWs.readyState === WebSocket.OPEN) {
-        this.chatWs.send(text);
+      const ws = this.chatSockets[to];
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(text);
       } else {
-        fetch("/chat/" + encodeURIComponent(this.chatId), {
+        fetch("/chat/" + encodeURIComponent(to), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text }),
         })
           .then((r) => r.json())
           .then((j) => {
-            if (j.line) this.appendChatLine({ role: "captain", kind: "chat", text: j.line.text, ts: j.line.ts });
+            if (j.line) this.appendChatLine({ role: "captain", kind: "chat", text: j.line.text, ts: j.line.ts }, to);
             if (!j.ok) this.chatThinking = false;
           })
           .catch(() => {
