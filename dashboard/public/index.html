@@ -66,7 +66,7 @@
   <nav class="rail" aria-label="Chat">
     <template x-for="t in rail.agents" :key="t.id">
       <button type="button" class="rail-face" :class="{ 'is-open': chatOpen && !chatGroup && chatId === t.id, 'is-busy': t.thinking }"
-              :aria-label="'Chat with ' + t.label" :title="t.label" @click="openChat(t.id)">
+              :aria-label="'Chat with ' + t.label" :title="t.description ? t.label + ' · ' + t.description : t.label" @click="openChat(t.id)">
         <img x-show="t.art" :src="t.art" width="44" height="44" alt="" />
         <span x-show="!t.art" x-text="initials(t)"></span>
       </button>
@@ -102,6 +102,7 @@
         <span class="portrait portrait-initials" x-show="!current().art" x-text="initials(current())"></span>
         <div>
           <h2 id="chat-title" x-text="title()"></h2>
+          <p class="chat-desc" x-show="!chatGroup && current().description" x-text="current().description"></p>
           <p class="muted">
             <span x-text="chatConn"></span>
             <span x-text="chatMeta()"></span>

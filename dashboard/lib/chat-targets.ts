@@ -20,6 +20,7 @@ export type ChatTarget = {
   label: string;
   art: string | null;
   model?: string;
+  description?: string;
   state?: string;
   project?: string;
 };
@@ -63,6 +64,7 @@ async function refreshAgents(): Promise<void> {
       label: a.id,
       art: agentArtOrNull(a.id),
       model: a.model,
+      description: a.description,
     }));
 }
 

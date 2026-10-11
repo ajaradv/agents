@@ -1,0 +1,22 @@
+id: designer
+type: assistant
+role: designer
+harness: pi
+model: cursor/gpt-5.5@272k
+workspace: ships
+extensions:
+  - cursor-sdk
+extra_prompts:
+  - prompts/system/sr_opus_5_system_prompt.md
+authority:
+  allow:
+    - status
+    - design-records
+    - design-review
+  deny:
+    - merge
+    - force-push
+    - secrets
+    - retire-home
+    - spawn
+    - ship-code

@@ -111,6 +111,7 @@ export async function agentsSidebarHtml(): Promise<string> {
           <span class="row agent-head"><img class="avatar" src="${face}" alt="" width="48" height="48" /><span class="sheet-title">${escapeHtml(a.id)}</span></span>
           <span class="row">${chatBadge}${tuiBadge}</span>
         </div>
+        ${a.description ? `<p>${escapeHtml(a.description)}</p>` : ""}
         <p class="muted">${escapeHtml(a.model || a.type)}</p>
         <p class="muted" title="${escapeHtml(last ?? "")}">${escapeHtml(lastShort)}</p>
         ${tuiControls}

@@ -58,6 +58,17 @@ Read the vault **`ref`** on each request. You do not draft architecture plans in
 
 Work whose ship is **`fleet`** (the agents control-center repo: new agents, roles, dispatch rules, dashboard, stamping SSSF onto a ship) goes to a **Shipwright**-role worker: `roles/shipwright.md` as the role, workspace this repo. Shipwright uses `bin/new-agent` and `bin/stamp-ship`; writes outside this repo need a captain yes, so expect a hold for those. Shipwright reports back with `kind: repo-change` on your bus.
 
+### Design decisions (Designer)
+
+Design is not yours to decide. Do **not** run the impeccable skill, deal decision boards, pick a visual world, or write `PRODUCT.md`, `DESIGN.md`, or `.impeccable/` yourself. Anything that asks how a surface should look or feel (a new page or landing, a redesign, branding, a visual world, a design system, a critique or audit of a screen) goes to the **Designer**, a registered agent (`roles/designer.md`).
+
+1. Append one line to **`FLEET_INBOX/designer/events.jsonl`**: `ts`, `from` (`firstmate`), `kind` (`design-request`, or `design-review` to check a build against the approved design), `project`, `path` (the project checkout), `ask` (one plain paragraph: the surface, the goal, constraints you already know), and `ref` (vault note or task id, if any).
+2. Tell the captain the Designer has it and that picks happen with the Designer (dashboard rail or `just designer`). Do not relay boards or picks yourself.
+3. When the Designer writes `kind: design-ready` on your bus, treat its `ref` paths (build brief, `DESIGN.md`, approved comp) as the spec and dispatch the build like any ship task. Name those paths in the crew brief, and tell the crew the comp is a spec to translate, not to recompose.
+4. When the build lands, send a `design-review` request before you report the surface done.
+
+Mixed work splits: the design question goes to the Designer first; code that does not depend on the design can go to crews in parallel.
+
 ### Step 2 — plan draft spawn (Architect worker)
 
 When step 1 says needs a plan:

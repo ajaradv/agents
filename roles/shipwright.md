@@ -19,7 +19,7 @@ Always use the script. It carries the checklist, so do not hand-create the files
 
 ```bash
 bin/new-agent <id> --model <model> --description "<one sentence>" \
-  [--type assistant|orchestrator|crew] [--workspace repo|vault|fm-home] \
+  [--type assistant|orchestrator|crew] [--workspace repo|ships|vault|fm-home] \
   [--extensions cursor-sdk,...] [--why "<README model-table reason>"] --dry-run
 ```
 
@@ -27,8 +27,8 @@ bin/new-agent <id> --model <model> --description "<one sentence>" \
 2. Run with `--dry-run`, show the plan, then run without it.
 3. Fill the **Work** section of `roles/<id>.md`. The frontmatter `description` is what Jev routing reads, so keep it one concrete sentence.
 4. Adjust `agents/<id>/agent.yaml` authority to the job. Keep the deny list unless the captain says otherwise.
-5. Models: Cursor lanes for Pi primaries (`cursor/composer-2.5` for coding-shaped, `cursor/grok-4.7@256k` for routing or long context). Never route Claude through Cursor. Only `harness: pi` launches today.
-6. The dashboard rail picks the agent up from `agent.yaml` automatically. A portrait is optional: add `dashboard/public/art/<id>.png` and a line in `dashboard/lib/agent-art.ts`.
+5. Models: Cursor lanes for Pi primaries (`cursor/composer-2.5` for coding-shaped, `cursor/grok-4.7@256k` for routing or long context). Never route Claude through Cursor. Only `harness: pi` launches today. Agents that work inside project repos use `--workspace ships` (cwd per request, ship paths listed in the prompt).
+6. The dashboard rail picks the agent up from `agent.yaml` automatically. Give it a portrait with `bin/agent-portrait <id> "<who they are, look, clothes, one prop that says the job>"`: it matches the existing pixel-art set, writes `dashboard/public/art/<id>.png`, and registers it in `dashboard/lib/agent-art.ts`. Look at the image, show the captain, and re-run with `--force` to re-roll.
 7. If the agent's work belongs in Firstmate's flow, say so to the captain; do not edit `roles/firstmate.md` without a yes.
 
 ## Stamp SSSF onto a ship

@@ -3,7 +3,7 @@
 
 Usage:
   bin/new-agent <id> --model <model> [--type assistant] [--description "..."]
-                [--workspace repo|vault|fm-home] [--extensions a,b] [--why "..."]
+                [--workspace repo|ships|vault|fm-home] [--extensions a,b] [--why "..."]
                 [--dry-run]
 
 Refuses an id that already has agents/<id>/ or roles/<id>.md. Extensions are
@@ -47,8 +47,8 @@ def agent_yaml(a: argparse.Namespace, extensions: list[str]) -> str:
         "harness: pi",
         f"model: {a.model}",
     ]
-    if a.workspace == "repo":
-        lines.append("workspace: repo")
+    if a.workspace in ("repo", "ships"):
+        lines.append(f"workspace: {a.workspace}")
     elif a.workspace == "vault":
         lines.append("vault: /Users/avega/Workspace/brain")
     if extensions:
@@ -138,7 +138,7 @@ def main() -> int:
     p.add_argument("--model", required=True)
     p.add_argument("--type", default="assistant", choices=TYPES)
     p.add_argument("--description", default="Describe this agent's job in one sentence.")
-    p.add_argument("--workspace", default="fm-home", choices=("repo", "vault", "fm-home"))
+    p.add_argument("--workspace", default="fm-home", choices=("repo", "ships", "vault", "fm-home"))
     p.add_argument("--extensions", default="cursor-sdk")
     p.add_argument("--why", default="")
     p.add_argument("--dry-run", action="store_true")

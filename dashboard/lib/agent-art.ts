@@ -3,6 +3,8 @@ const AGENT_ART: Record<string, string> = {
   alice: "/art/alice.png",
   firstmate: "/art/firstmate.png",
   architect: "/art/architect.png",
+  shipwright: "/art/shipwright.png",
+  designer: "/art/designer.png",
 };
 
 export const CAPTAIN_ART = "/art/captain.png";

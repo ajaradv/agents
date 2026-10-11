@@ -73,6 +73,9 @@ architect-op:
 shipwright:
     cd "{{root}}" && bin/launch shipwright
 
+designer:
+    cd "{{root}}" && bin/launch designer
+
 # ── single extensions (same names as atria-factory) ───────────────────────
 
 pure-focus:

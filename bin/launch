@@ -319,6 +319,25 @@ def prepare_pi_launch(
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
             + DASHBOARD_CHAT_BLOCK
         )
+    elif str(agent.get("workspace") or "") == "ships":
+        # Agents that work inside project repos (designer): start in this repo, cd per request.
+        cwd = ROOT
+        ship_lines = ""
+        for y in sorted((ROOT / "fleet" / "ships").glob("*.yaml")):
+            ship = parse_simple_yaml(y)
+            if ship.get("path"):
+                ship_lines += f"  - `{ship.get('id') or y.stem}`: `{ship['path']}`\n"
+        path_block = (
+            "## Resolved paths (this session)\n\n"
+            f"- **Repo (start cwd):** `{ROOT}`; `cd` into the project named in each request\n"
+            f"- **FLEET_INBOX:** `{inbox}`\n"
+            "- Ships (id: path):\n" + (ship_lines or "  - none registered\n") +
+            f"- Firstmate project registry (read only): `{FLEET_HOME / 'data' / 'projects.md'}`\n"
+            f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
+            f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
+            f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
+            + DASHBOARD_CHAT_BLOCK
+        )
     else:
         home = FLEET_HOME
         cwd = home

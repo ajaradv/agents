@@ -8,6 +8,8 @@ export type AgentMeta = {
   role: string;
   model: string;
   harness: string;
+  /** `description:` from the roles/<role>.md frontmatter; empty when absent. */
+  description: string;
 };
 
 function parseAgentYaml(text: string): Record<string, string> {
@@ -22,6 +24,22 @@ function parseAgentYaml(text: string): Record<string, string> {
   return out;
 }
 
+/** `description:` from a role file's frontmatter block. */
+export function roleDescription(markdown: string): string {
+  const m = markdown.match(/^---\n([\s\S]*?)\n---/);
+  const line = m?.[1]?.split("\n").find((l) => l.startsWith("description:"));
+  return line ? line.slice("description:".length).trim().replace(/^["']|["']$/g, "") : "";
+}
+
+async function readRoleDescription(role: string): Promise<string> {
+  if (!/^[a-z][a-z0-9_-]*$/.test(role)) return "";
+  try {
+    return roleDescription(await readFile(join(ROOT, "roles", `${role}.md`), "utf8"));
+  } catch {
+    return "";
+  }
+}
+
 export async function loadAgents(): Promise<AgentMeta[]> {
   const dir = join(ROOT, "agents");
   const ids = await readdir(dir, { withFileTypes: true });
@@ -32,12 +50,14 @@ export async function loadAgents(): Promise<AgentMeta[]> {
     try {
       const text = await readFile(yamlPath, "utf8");
       const y = parseAgentYaml(text);
+      const role = y.role ?? ent.name;
       agents.push({
         id: y.id ?? ent.name,
         type: y.type ?? "assistant",
-        role: y.role ?? ent.name,
+        role,
         model: y.model ?? "",
         harness: y.harness ?? "pi",
+        description: await readRoleDescription(role),
       });
     } catch {
       /* skip */

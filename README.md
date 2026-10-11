@@ -22,6 +22,7 @@ bin/setup-alice-vault      brain inbox + obsidian skill symlinks
 bin/seed-fleet-home        copy vendor/firstmate → fleet/home
 bin/new-agent              scaffold agents/<id>, roles/<id>.md, just recipe, inbox, README row
 bin/stamp-ship             fleet/ships/<id>.yaml + copy SSSF into a ship + install.py (+ optional Firstmate registration)
+bin/agent-portrait         rail portrait for an agent in the house pixel style (OpenRouter image model)
 docs/harness-auth.md       per-harness login and API keys
 docs/onepassword.md        vault Fleet, Environment agents-fleet
 docs/remote-ops.md         Herdr secondmates, Alice relocate, SDLC, phone SSH
@@ -45,7 +46,7 @@ Record definitions: [fleet/ships/](fleet/ships/).
 
 | Where | Role | Examples |
 |---|---|---|
-| **This repo** | Interactive Pi, Firstmate, Alice, Architect | `just setup`, `bin/launch alice`, `bin/launch firstmate`, `just architect` |
+| **This repo** | Interactive Pi, Firstmate, Alice, Architect, Shipwright, Designer | `just setup`, `bin/launch alice`, `bin/launch firstmate`, `just architect` |
 | **Stamped ship** | ADW control plane + trace | `just demo`, `just sdlc` inside `lineage_atria` |
 
 ## Setup
@@ -67,6 +68,7 @@ just alice-op              # op run --env-file=fleet/home/.env.op (see fleet/con
 just firstmate-op
 just architect             # Pi + grok-4.7@256k, vault cwd, plan review primary
 just shipwright            # Pi + composer-2.5, repo cwd, new agents + SSSF stamping
+just designer              # Pi + gpt-5.5, project cwd per request, impeccable design decisions
 just architect-op
 just dashboard             # http://127.0.0.1:8787 — usage, fleet, chat rail, Firstmate TUI start/stop
 bin/launch alice -- -p "…" # extra pi args after --
@@ -84,6 +86,7 @@ Default models (Cursor via `pi-cursor-sdk`, listed per agent, not in `~/.pi/agen
 | Firstmate | `cursor/grok-4.7@256k` | Routing, supervision, and recon-shaped primary work |
 | Architect | `cursor/grok-4.7@256k` | Interactive plan review; workers spawned by Firstmate |
 | Shipwright | `cursor/composer-2.5` | Repo upkeep: new agents, ship stamping |
+| Designer | `cursor/gpt-5.5@272k` | design taste and image reading; impeccable comps and critique |
 
 ## Crew dispatch and billing lanes
 

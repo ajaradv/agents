@@ -16,6 +16,7 @@ authority:
     - repo-edit
     - new-agent
     - stamp-ship-dry-run
+    - agent-portrait
   deny:
     - merge
     - force-push
