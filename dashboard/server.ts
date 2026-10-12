@@ -505,7 +505,8 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return Response.json({ lines });
     }
 
-    if (path === "/" || path === "/index.html") {
+    // Section routes (/health, /fleet, /agents) are the same page; app.js reads the path.
+    if (path === "/" || path === "/index.html" || /^\/(health|fleet|agents)\/?$/.test(path)) {
       const html = await readFile(join(publicDir, "index.html"), "utf8");
       return new Response(html, {
         headers: { "Content-Type": "text/html; charset=utf-8" },

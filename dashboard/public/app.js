@@ -9,6 +9,8 @@ function readChatId() {
   }
 }
 
+const LEAVES = ["health", "fleet", "agents"];
+
 function saveChatId(id) {
   try {
     localStorage.setItem(CHAT_KEY, id);
@@ -66,11 +68,17 @@ function dashboardApp() {
       this.refreshRail();
       this.refreshAgentStatus();
       this.connectBus();
+      this.applyUrl();
+      // Old hash links (#chat/<id>, #group/<id>, #alice) still open their drawer.
       const m = location.hash.match(/^#chat\/([a-z][a-z0-9_-]*)$/);
       if (m) this.openChat(m[1]);
       else if (location.hash === "#alice") this.openChat("alice");
       const g = location.hash.match(/^#group\/([a-z][a-z0-9-]*)$/);
       if (g) this.refreshRail().then(() => this.openGroup(g[1]));
+      this.$watch("chatOpen", () => this.syncUrl());
+      this.$watch("chatId", () => this.syncUrl());
+      this.$watch("chatGroup", () => this.syncUrl());
+      window.addEventListener("popstate", () => this.applyUrl());
       document.body.addEventListener("htmx:afterSettle", (ev) => {
         const elt = ev.detail?.elt || ev.target;
         if (window.Alpine && elt) Alpine.initTree(elt);
@@ -134,10 +142,40 @@ function dashboardApp() {
       this.closePalette();
     },
 
+    /** /health, /fleet, /agents pick the section; ?chat=<id> or ?group=<id> opens the drawer. */
+    applyUrl() {
+      const leaf = location.pathname.replace(/^\/+|\/+$/g, "");
+      this.leaf = LEAVES.includes(leaf) ? leaf : "health";
+      const q = new URLSearchParams(location.search);
+      const chat = q.get("chat");
+      const group = q.get("group");
+      if (chat && /^[a-z][a-z0-9_-]{0,63}$/.test(chat)) this.openChat(chat);
+      else if (group && /^[a-z][a-z0-9-]{0,63}$/.test(group)) this.refreshRail().then(() => this.openGroup(group));
+      else this.chatOpen = false;
+    },
+
+    leafUrl() {
+      const q = !this.chatOpen ? "" : this.chatGroup ? `?group=${encodeURIComponent(this.chatGroup.id)}` : this.chatId ? `?chat=${encodeURIComponent(this.chatId)}` : "";
+      return `/${this.leaf}${q}`;
+    },
+
+    /** Opening or switching a chat replaces the URL; changing section pushes a history entry. */
+    syncUrl(push = false) {
+      const url = this.leafUrl();
+      if (url === location.pathname + location.search) return;
+      try {
+        if (push) history.pushState(null, "", url);
+        else history.replaceState(null, "", url);
+      } catch {
+        /* sandboxed preview */
+      }
+    },
+
     openLeaf(id) {
       this.chatOpen = false;
       this.closePalette();
       this.leaf = id;
+      this.syncUrl(true);
       this.hinge = id;
       window.setTimeout(() => {
         if (this.hinge === id) this.hinge = "";
