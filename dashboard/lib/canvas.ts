@@ -24,6 +24,8 @@ export type CanvasItem = {
   entry?: string;
   file?: string;
   url?: string;
+  /** url items: why the page will not show in a frame (set by withFrameChecks). */
+  frameBlocked?: string;
 };
 
 const ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -63,6 +65,43 @@ export function isLocalUrl(raw: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Why a local page cannot be framed by the dashboard, or null when it can.
+ * The dashboard is a different origin from any dev server, so X-Frame-Options
+ * of any value (Django's default is DENY) blocks it, and so does a CSP
+ * frame-ancestors list that does not name the dashboard.
+ */
+export function frameBlockReason(headers: Headers, dashboardOrigin: string): string | null {
+  const xfo = headers.get("x-frame-options");
+  if (xfo) return `the page sends X-Frame-Options: ${xfo}`;
+  const fa = /(?:^|;)\s*frame-ancestors\s+([^;]*)/i.exec(headers.get("content-security-policy") ?? "")?.[1]?.trim();
+  if (fa !== undefined) {
+    const sources = fa.split(/\s+/);
+    const host = new URL(dashboardOrigin).host;
+    if (!sources.some((src) => src === "*" || src === dashboardOrigin || src.endsWith(`//${host}`))) {
+      return `the page's Content-Security-Policy sets frame-ancestors ${fa || "'none'"}`;
+    }
+  }
+  return null;
+}
+
+/** Fill frameBlocked on url items by asking each local page for its headers. */
+export async function withFrameChecks(items: CanvasItem[], dashboardOrigin: string): Promise<CanvasItem[]> {
+  return Promise.all(
+    items.map(async (item) => {
+      if (item.kind !== "url" || !item.url) return item;
+      try {
+        const res = await fetch(item.url, { redirect: "follow", signal: AbortSignal.timeout(2000) });
+        res.body?.cancel().catch(() => {});
+        const reason = frameBlockReason(res.headers, dashboardOrigin);
+        return reason ? { ...item, frameBlocked: reason } : item;
+      } catch {
+        return { ...item, frameBlocked: "the page is not responding (is the dev server running?)" };
+      }
+    }),
+  );
 }
 
 /** Cheap change signature per agent: item ids and their item.json mtimes. */

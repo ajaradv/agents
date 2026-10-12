@@ -169,9 +169,14 @@
           </template>
           <template x-if="canvasItem().kind !== 'image'">
             <div class="canvas-frame-wrap">
-              <iframe x-ref="canvasFrame" class="canvas-frame" :src="canvasFrameSrc(canvasItem())" :sandbox="canvasSandbox(canvasItem())"
+              <div class="canvas-blocked" x-show="canvasItem().frameBlocked">
+                <p><strong>This page won't open inside the canvas:</strong> <span x-text="canvasItem().frameBlocked"></span>.</p>
+                <p><a class="btn btn-ink" :href="canvasItem().url" target="_blank" rel="noopener">Open it in a new tab</a></p>
+                <p class="muted">To review it here, the dev server has to allow framing from the dashboard (for Django in local settings: drop X-Frame-Options and send <code>frame-ancestors 'self' http://localhost:8787</code>).</p>
+              </div>
+              <iframe x-show="!canvasItem().frameBlocked" x-ref="canvasFrame" class="canvas-frame" :src="canvasFrameSrc(canvasItem())" :sandbox="canvasSandbox(canvasItem())"
                       :title="canvasItem().title" referrerpolicy="no-referrer"></iframe>
-              <a class="canvas-open muted" x-show="canvasItem().kind === 'url' || canvasItem().kind === 'html'" :href="canvasFrameSrc(canvasItem())" target="_blank" rel="noopener">Open in a new tab</a>
+              <a class="canvas-open muted" x-show="!canvasItem().frameBlocked && (canvasItem().kind === 'url' || canvasItem().kind === 'html')" :href="canvasFrameSrc(canvasItem())" target="_blank" rel="noopener">Open in a new tab</a>
             </div>
           </template>
         </div>

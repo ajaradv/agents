@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { canvasFileResponse, canvasViewResponse, isLocalUrl, listCanvas } from "./canvas.ts";
+import { canvasFileResponse, canvasViewResponse, frameBlockReason, isLocalUrl, listCanvas } from "./canvas.ts";
 
 const priorInbox = process.env.FLEET_INBOX;
 afterAll(() => {
@@ -61,5 +61,21 @@ describe("canvas", () => {
     expect(isLocalUrl("http://127.0.0.1:49458/x")).toBe(true);
     expect(isLocalUrl("https://localhost/")).toBe(false);
     expect(isLocalUrl("http://192.168.1.2/")).toBe(false);
+  });
+});
+
+describe("frameBlockReason", () => {
+  const dash = "http://localhost:8787";
+  test("X-Frame-Options of any value blocks the cross-origin dashboard", () => {
+    expect(frameBlockReason(new Headers({ "x-frame-options": "DENY" }), dash)).toContain("DENY");
+    expect(frameBlockReason(new Headers({ "x-frame-options": "SAMEORIGIN" }), dash)).toContain("SAMEORIGIN");
+  });
+  test("frame-ancestors must name the dashboard", () => {
+    expect(frameBlockReason(new Headers({ "content-security-policy": "default-src 'self'; frame-ancestors 'self'" }), dash)).toContain("'self'");
+    expect(frameBlockReason(new Headers({ "content-security-policy": "frame-ancestors 'self' http://localhost:8787" }), dash)).toBeNull();
+    expect(frameBlockReason(new Headers({ "content-security-policy": "frame-ancestors *" }), dash)).toBeNull();
+  });
+  test("no framing headers is fine", () => {
+    expect(frameBlockReason(new Headers({ "content-security-policy": "default-src 'self'" }), dash)).toBeNull();
   });
 });

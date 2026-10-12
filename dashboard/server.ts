@@ -20,7 +20,7 @@ import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
 import { resolveRoute } from "./lib/route.ts";
-import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas } from "./lib/canvas.ts";
+import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas, withFrameChecks } from "./lib/canvas.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import {
   acceptCaptainLine,
@@ -209,6 +209,9 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     }
 
     if (path === "/events" && req.method === "GET") {
+      // Bun drops connections idle for 10s by default, before the 15s ping;
+      // the browser saw ERR_INCOMPLETE_CHUNKED_ENCODING and reconnected.
+      server.timeout(req, 0);
       let ctrl: SseController | null = null;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
       const stream = new ReadableStream<Uint8Array>({
@@ -321,7 +324,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     if (canvasList && req.method === "GET") {
       const agentId = canvasList[1]!;
       if (!chatAllowed(agentId)) return Response.json({ items: [] }, { status: 404 });
-      return Response.json({ items: await listCanvas(agentId) });
+      return Response.json({ items: await withFrameChecks(await listCanvas(agentId), url.origin) });
     }
 
     const canvasView = path.match(/^\/canvas\/([a-z][a-z0-9_-]{0,63})\/([a-z0-9][a-z0-9-]{0,59})\/view$/);
