@@ -23,6 +23,7 @@ import { resolveRoute } from "./lib/route.ts";
 import { newSession } from "./lib/session-rotate.ts";
 import { onShipLogWrite } from "./lib/ship-log.ts";
 import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
+import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { dockVoyage, findShip, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
 import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas, withFrameChecks } from "./lib/canvas.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
@@ -456,6 +457,28 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return new Response(await groupsPanelHtml(), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
+    }
+
+    // Crew API for crewmates (extensions/crew.ts): status, tasks, messages, maneuvers.
+    const crewApi = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers)(?:\/(\d+))?$/);
+    if (crewApi) {
+      const [, shipId, what, num] = crewApi as unknown as [string, string, string, string | undefined];
+      let res: { ok: boolean; message: string };
+      if (what === "status" && req.method === "GET") {
+        res = await voyageStatus(shipId, url.searchParams.get("from") ?? "");
+      } else if (req.method === "POST") {
+        const b = (await req.json().catch(() => ({}))) as Record<string, unknown> & { from?: string };
+        const from = String(b.from ?? "");
+        if (what === "tasks" && num) res = await crewUpdateTask(shipId, Number(num), { ...b, from } as never);
+        else if (what === "tasks") res = await crewAddTask(shipId, { ...b, from } as never);
+        else if (what === "message") res = await crewMessage(shipId, { ...b, from } as never);
+        else if (what === "maneuvers") res = await crewStartManeuver(shipId, { ...b, from } as never);
+        else res = { ok: false, message: "unknown crew call" };
+        sseBroadcast("ship", shipId);
+      } else {
+        return new Response("method not allowed", { status: 405 });
+      }
+      return Response.json(res, { status: res.ok ? 200 : 400 });
     }
 
     // Shipyard: register, crew, budget, orchestrator, voyages (lib/shipyard.ts).

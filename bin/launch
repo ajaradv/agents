@@ -464,7 +464,8 @@ def prepare_pi_launch(
     # Every assistant can ask the captain structured questions (ask-captain.ts)
     # and show work on the dashboard canvas (canvas.ts).
     if agent_type == "assistant":
-        for name in ("ask-captain", "canvas"):
+        # Crewmates also work as a crew: tasks, crew messages, maneuvers (crew.ts).
+        for name in ("ask-captain", "canvas") + (("crew",) if aboard else ()):
             ref = str(ROOT / "extensions" / f"{name}.ts")
             if ref not in ext_refs:
                 ext_refs.append(ref)

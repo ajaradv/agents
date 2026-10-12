@@ -20,7 +20,8 @@ export type ChatQuestion = { id: string; question: string; options?: string[]; r
 export type ChatLine = {
   ts: string;
   from: string;
-  kind: "chat" | "error" | "question" | "answer";
+  /** "crew": a message from another crewmate aboard (from = its id); starts a turn like a captain line. */
+  kind: "chat" | "error" | "question" | "answer" | "crew";
   text: string;
   reason?: string;
   ref?: string;

@@ -136,6 +136,7 @@ export async function shipChecklist(ship: ShipRow): Promise<CheckItem[]> {
     firstmate
       ? { item: "Registered with Firstmate", ok: await firstmateRegistered(ship.id), required: true, note: "Firstmate runs this ship's voyages" }
       : { item: "Crew aboard", ok: ship.crew.length > 0, required: true, note: ship.crew.length ? ship.crew.join(", ") : "add at least one crewmate" },
+    ...(firstmate ? [] : [{ item: "A lead aboard", ok: ship.crew.includes("lead"), required: false, note: ship.crew.includes("lead") ? "the lead plans voyages into tasks for the crew" : "without a lead, a voyage goes to one crewmate who works it alone" }]),
     { item: "PRODUCT.md", ok: repo && existsSync(join(ship.path, "PRODUCT.md")), required: false, note: "what the product is and who it is for; the Designer writes it with impeccable init" },
     { item: "SSSF factory", ok: ship.adws.length > 0, required: false, note: ship.adws.length ? `${ship.adws.length} ADW chains` : "repeatable maneuvers (plan, build, test) need /sssf install" },
   ];
@@ -247,6 +248,16 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
 
 /** The opening message a crewmate (or Firstmate) gets when a voyage starts. */
 export function voyageBrief(ship: ShipRow, v: Voyage): string {
+  if (v.to === `${ship.id}-lead`) {
+    return [
+      `New voyage for ${ship.id}: ${v.goal}`,
+      "",
+      `Voyage record (vault): ${v.file}`,
+      `Crew aboard: ${ship.crew.filter((r) => r !== "lead").map((r) => `${ship.id}-${r}`).join(", ") || "only you"}.`,
+      ship.adws.length ? `Maneuvers available: ${ship.adws.join(", ")}.` : "No SSSF factory on this ship.",
+      "You are the lead: read voyage_status, plan the goal into tasks, assign them with task_add, tell me the plan in a few lines, and end your turn. Reports come back to you as crew messages.",
+    ].join("\n");
+  }
   return [
     `New voyage for ${ship.id}: ${v.goal}`,
     "",

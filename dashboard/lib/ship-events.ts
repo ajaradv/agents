@@ -16,6 +16,10 @@ function shipOf(agentId: string): string | null {
 export function logCrewLine(agentId: string, line: ChatLine): void {
   const ship = shipOf(agentId);
   if (!ship) return;
+  if (line.kind === "crew") {
+    logShipEvent(ship, line.from, "crew", `→ ${agentId}: ${line.text}`, { to: agentId }, { ts: line.ts });
+    return;
+  }
   const kind =
     line.from === "captain"
       ? line.kind === "answer" ? "answer" : "chat-in"

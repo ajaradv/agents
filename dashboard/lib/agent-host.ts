@@ -8,7 +8,7 @@ import {
   type ChatQuestion,
 } from "./chat.ts";
 import { dashLog } from "./log.ts";
-import { ROOT } from "./paths.ts";
+import { PORT, ROOT } from "./paths.ts";
 
 /**
  * Agent host: one long-lived `pi --mode rpc` process per agent with
@@ -293,7 +293,8 @@ function start(agentId: string): AgentProc {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: process.env,
+    // Crewmates call back into this dashboard (extensions/crew.ts).
+    env: { ...process.env, FLEET_DASHBOARD_URL: `http://127.0.0.1:${PORT}` },
   });
   const p: AgentProc = {
     id: agentId,

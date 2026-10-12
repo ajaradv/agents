@@ -35,8 +35,8 @@ Dispatch profiles live in `config/crew-dispatch.json` (seeded from `fleet/config
 |---|---|---|
 | Claude Code pane | Claude Pro/Max subscription | `harness: claude` (default `config/crew-harness`) |
 | Cursor CLI pane | Cursor subscription | `harness: cursor` with **grok** (scout/recon) or **composer** (ship) only — never Claude models via Cursor |
-| Pi + cursor-sdk | Cursor (API-shaped) | Short-session primary agents only: Alice and Shipwright `cursor/composer-2.5` (Composer draws from the Pro+ included pool; named models like GPT and Grok draw from the smaller API pool). Each Pi turn replays the whole session to Cursor uncached, so long-lived sessions do not belong here |
-| Pi + DeepSeek | DeepSeek API | Firstmate and the Architect run on `deepseek/deepseek-v4-pro`. Crews: `harness: pi`, `provider: deepseek`, models `deepseek/deepseek-v4-pro` or `deepseek/deepseek-flash` |
+| Pi + cursor-sdk | Cursor (API-shaped) | Short-session primary agents only: Alice and Shipwright `cursor/composer-2.5`, the Architect `cursor/grok-4.7@256k` (Composer and Grok bill against the Pro+ included usage; GPT and Claude-class models do not, and Claude never goes through Cursor). Each Pi turn replays the whole session to Cursor uncached, so long-lived sessions do not belong here |
+| Pi + DeepSeek | DeepSeek API | Firstmate and ship leads run on `deepseek/deepseek-v4-pro` (long sessions need real prompt caching). Crews: `harness: pi`, `provider: deepseek`, models `deepseek/deepseek-v4-pro` or `deepseek/deepseek-flash` |
 | Pi + Hugging Face | Hugging Face API | `harness: pi`, `provider: huggingface`, `HF_API_KEY` — operator-owned like OpenRouter |
 | Pi + OpenRouter | OpenRouter API | The Designer runs on `openrouter/anthropic/claude-sonnet-5.5`. Crews: `harness: pi`, `provider: openrouter` — operator configures keys and model ids |
 

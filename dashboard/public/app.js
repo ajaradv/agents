@@ -555,6 +555,14 @@ function dashboardApp() {
         row.className = "bubble-row is-captain is-answer";
         row.innerHTML = `<div class="bubble"><span class="bubble-name">You answered</span><p>${escapeHtml(m.text)}</p></div>`;
         if (m.ref) this.markDialogAnswered(log, tid, m.ref, m.text);
+      } else if (m.kind === "crew") {
+        // A crewmate wrote to this agent (lead ↔ crew); show who, not the thread's agent.
+        const from = this.findTarget(m.role) || { id: m.role, label: m.role, art: null };
+        row.className = "bubble-row is-agent is-crew";
+        const face = from.art
+          ? `<img class="avatar" src="${from.art}" alt="" width="48" height="48" />`
+          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(from))}</span>`;
+        row.innerHTML = `${face}<div class="bubble"><span class="bubble-name">${escapeHtml(from.label)} → ${escapeHtml(t.label || tid)}</span><p>${escapeHtml(m.text)}</p></div>`;
       } else if (m.role === "system" || m.role === "dashboard") {
         row.className = "bubble-row is-system";
         row.innerHTML = `<div class="bubble"><p>${escapeHtml(m.text)}</p></div>`;

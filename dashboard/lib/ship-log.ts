@@ -33,6 +33,21 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS events_actor ON events(actor, ts);
+CREATE TABLE IF NOT EXISTS tasks (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  voyage        TEXT NOT NULL,        -- the voyage note path it belongs to
+  title         TEXT NOT NULL,
+  detail        TEXT NOT NULL DEFAULT '',
+  assignee      TEXT,                 -- crewmate id, or NULL while unassigned
+  kind          TEXT NOT NULL DEFAULT 'crew',  -- 'crew' (a crewmate works it) | 'maneuver' (an ADW run)
+  adw_id        TEXT,                 -- maneuver tasks: the SSSF run id
+  status        TEXT NOT NULL DEFAULT 'open',  -- open | working | done | blocked
+  note          TEXT NOT NULL DEFAULT '',
+  created_by    TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tasks_voyage ON tasks(voyage, id);
 `;
 
 const SHIP_RE = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -46,6 +61,11 @@ export function onShipLogWrite(fn: (ship: string) => void): void {
 
 export function shipLogPath(ship: string, root = fleetInboxRoot()): string {
   return join(root, "ships", ship, "ship.db");
+}
+
+/** The ship's database (events + tasks); null for a bad ship id. */
+export function shipDb(ship: string, root?: string): Database | null {
+  return open(ship, root);
 }
 
 function open(ship: string, root?: string): Database | null {

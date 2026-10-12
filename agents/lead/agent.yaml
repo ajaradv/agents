@@ -1,0 +1,10 @@
+id: lead
+type: assistant
+role: lead
+harness: pi
+# The ship's lead takes the most turns and keeps the longest session, so it
+# needs real prompt caching: DeepSeek V4 Pro (cached input $0.044/M), not a
+# Cursor model that replays the session uncached on every turn.
+model: deepseek/deepseek-v4-pro
+# crew: only — exists only aboard ships, as <ship>-lead.
+crew: only

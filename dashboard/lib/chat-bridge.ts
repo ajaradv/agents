@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   appendAgentChat,
   appendChatError,
+  appendChatLine,
   chatLogPath,
   readCaptainChat,
   takePendingQuestions,
@@ -312,7 +313,7 @@ async function drainQueue(agentId: string): Promise<void> {
   let line: ChatLine | undefined;
   try {
     const history = await readCaptainChat(agentId, 50);
-    line = history.find((l) => l.ts === nextTs && l.from === "captain");
+    line = history.find((l) => l.ts === nextTs && (l.from === "captain" || l.kind === "crew"));
     const target = chatTarget(agentId);
     if (line && target) {
       if (target.kind === "firstmate") await runFirstmateTurn(line);
@@ -320,7 +321,11 @@ async function drainQueue(agentId: string): Promise<void> {
       else if (target.runtime === "rpc") {
         const refusal = target.ship ? await budgetRefusal(target.ship, agentId) : null;
         if (refusal) await failTurn(agentId, line, "error", 0, refusal);
-        else await submitToHost(agentId, line);
+        else if (line.kind === "crew") {
+          await submitToHost(agentId, { ...line, text: `Message from ${line.from} (crewmate aboard, not the captain):\n\n${line.text}` });
+        } else await submitToHost(agentId, line);
+      } else if (line.kind === "crew") {
+        await failTurn(agentId, line, "error", 0, `${agentId} only takes crew messages as a live crewmate.`);
       }
       else await runHeadlessTurn(agentId, line);
     } else if (line) {
@@ -355,6 +360,15 @@ function enqueueCaptainTurn(agentId: string, line: ChatLine): void {
  * The server calls this right after it appends a captain line, so a send never
  * depends on the poller having seen the thread first.
  */
+/** A crewmate messages another crewmate aboard the same ship; it starts a turn there. */
+export async function acceptCrewLine(to: string, from: string, text: string): Promise<ChatLine> {
+  const line = await appendChatLine(to, { ts: new Date().toISOString(), from, kind: "crew", text: text.slice(0, 8000) });
+  emitOwn(to, line);
+  logCrewLine(to, line);
+  enqueueCaptainTurn(to, line);
+  return line;
+}
+
 export async function acceptCaptainLine(agentId: string, line: ChatLine): Promise<void> {
   const fresh = !state.has(agentId);
   const st = agentState(agentId);

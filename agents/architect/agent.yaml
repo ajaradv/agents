@@ -2,11 +2,13 @@ id: architect
 type: assistant
 role: architect
 harness: pi
-# Direct DeepSeek API. Grok on Cursor drew from the Pro+ API pool (the one
-# that ran out) and then from on-demand spend.
-model: deepseek/deepseek-v4-pro
+# Grok on Cursor bills against the normal included usage. The Architect's
+# sessions are short (each turn starts fresh), so Cursor's per-turn replay of
+# the session stays small.
+model: cursor/grok-4.7@256k
 vault: /Users/avega/Workspace/brain
 extensions:
+  - cursor-sdk
   - hermes-memory
   - obsidian
 skills:

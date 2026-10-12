@@ -4,6 +4,7 @@ import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { escapeHtml } from "./quota.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
+import { listTasks, taskProgress, type VoyageTask } from "./voyage-tasks.ts";
 import { crewBudget, crewRoles, listVoyages, MODES, readyToSail, shipChecklist, spentToday, type CheckItem, type Voyage } from "./shipyard.ts";
 
 /**
@@ -175,6 +176,12 @@ const KIND_LABEL: Record<string, string> = {
   "turn-end": "Finished",
   tool: "Tool",
   notice: "Notice",
+  task: "Task",
+  crew: "Crew message",
+  maneuver: "Maneuver",
+  "voyage-start": "Set sail",
+  "voyage-end": "Docked",
+  shipyard: "Shipyard",
 };
 
 function logRowHtml(e: ShipEvent, labels: Map<string, string>): string {
@@ -280,6 +287,7 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
     return `<section class="voyage is-sailing stack">
       <div class="between"><h3>Under sail</h3><span class="muted">since ${escapeHtml(new Date(voyage.started).toLocaleString())}</span></div>
       <p class="voyage-goal">${escapeHtml(voyage.goal)}</p>
+      ${tasksHtml(listTasks(ship.id, voyage.file), cards)}
       <p class="muted">Goal sent to ${escapeHtml(to)} · record: <code>${escapeHtml(voyage.file.replace(/^.*\/fleet\/voyages\//, "vault fleet/voyages/"))}</code></p>
       <form class="row shipyard-form" data-api="${api}/dock">
         <input class="field" name="summary" placeholder="How it ended (optional, goes in the voyage record)" />
@@ -288,7 +296,8 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
       ${pastHtml}
     </section>`;
   }
-  const targets = (ship.orchestrator === "firstmate" ? [{ id: "firstmate", label: "Firstmate" }] : []).concat(cards.map((c) => ({ id: c.target.id, label: c.target.label })));
+  const crewTargets = cards.map((c) => ({ id: c.target.id, label: c.target.label })).sort((a, b) => Number(b.id.endsWith("-lead")) - Number(a.id.endsWith("-lead")));
+  const targets = (ship.orchestrator === "firstmate" ? [{ id: "firstmate", label: "Firstmate" }] : []).concat(crewTargets);
   if (!ready || !targets.length) {
     return `<section class="voyage stack"><h3>Voyage</h3><p class="muted">${ready ? "Bring a crewmate aboard to set sail." : "Finish the required shipyard items below, then set a course."}</p>${pastHtml}</section>`;
   }
@@ -370,4 +379,28 @@ function shipyardHtml(
       </div>
     </div>
   </details>`;
+}
+
+const TASK_MARK: Record<string, string> = { open: "○", working: "◐", done: "●", blocked: "✗" };
+
+function tasksHtml(tasks: VoyageTask[], cards: CrewCard[]): string {
+  if (!tasks.length) return `<p class="muted">No tasks yet. A lead plans the voyage into tasks; without one, the crewmate works the goal directly.</p>`;
+  const p = taskProgress(tasks);
+  const pct = Math.round((p.done / p.total) * 100);
+  const label = (id: string | null) => (id ? cards.find((c) => c.target.id === id)?.target.label ?? id : "unassigned");
+  return `<div class="voyage-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${p.total}" aria-valuenow="${p.done}" aria-label="Tasks done">
+      <span style="width:${pct}%"></span>
+    </div>
+    <p class="muted">${p.done} of ${p.total} tasks done${p.blocked ? ` · <span class="warn">${p.blocked} blocked</span>` : ""}</p>
+    <ol class="voyage-tasks">${tasks
+      .map(
+        (t) => `<li class="vtask is-${t.status}">
+        <span class="vtask-mark" aria-hidden="true">${TASK_MARK[t.status] ?? "○"}</span>
+        <span class="stack-tight">
+          <span><strong>#${t.id}</strong> ${escapeHtml(t.title)}</span>
+          <span class="muted">${t.kind === "maneuver" ? `maneuver <code>${escapeHtml(t.adwId ?? "")}</code>` : escapeHtml(label(t.assignee))} · ${escapeHtml(t.status)}${t.note ? ` · ${escapeHtml(plain(t.note).slice(0, 200))}` : ""}</span>
+        </span>
+      </li>`,
+      )
+      .join("")}</ol>`;
 }
