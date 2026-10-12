@@ -35,10 +35,10 @@ Dispatch profiles live in `config/crew-dispatch.json` (seeded from `fleet/config
 |---|---|---|
 | Claude Code pane | Claude Pro/Max subscription | `harness: claude` (default `config/crew-harness`) |
 | Cursor CLI pane | Cursor subscription | `harness: cursor` with **grok** (scout/recon) or **composer** (ship) only — never Claude models via Cursor |
-| Pi + cursor-sdk | Cursor (API-shaped) | Primary agents only: Alice `cursor/composer-2.5`, Firstmate `cursor/grok-4.7@256k` |
-| Pi + DeepSeek | DeepSeek API | `harness: pi`, `provider: deepseek`, models `deepseek/deepseek-chat` or `deepseek/deepseek-reasoner` |
+| Pi + cursor-sdk | Cursor (API-shaped) | Short-session primary agents only: Alice and Shipwright `cursor/composer-2.5` (Composer draws from the Pro+ included pool; named models like GPT and Grok draw from the smaller API pool). Each Pi turn replays the whole session to Cursor uncached, so long-lived sessions do not belong here |
+| Pi + DeepSeek | DeepSeek API | Firstmate and the Architect run on `deepseek/deepseek-v4-pro`. Crews: `harness: pi`, `provider: deepseek`, models `deepseek/deepseek-v4-pro` or `deepseek/deepseek-flash` |
 | Pi + Hugging Face | Hugging Face API | `harness: pi`, `provider: huggingface`, `HF_API_KEY` — operator-owned like OpenRouter |
-| Pi + OpenRouter | OpenRouter API | `harness: pi`, `provider: openrouter` — operator configures keys and model ids |
+| Pi + OpenRouter | OpenRouter API | The Designer runs on `openrouter/anthropic/claude-sonnet-5.5`. Crews: `harness: pi`, `provider: openrouter` — operator configures keys and model ids |
 
 When `config/crew-dispatch.json` exists, spawns need an explicit resolved profile (no silent fallback to `crew-harness` alone).
 

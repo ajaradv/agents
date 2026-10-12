@@ -14,6 +14,8 @@ export type AgentMeta = {
   turnTimeoutSec: number;
   /** `runtime:` in agent.yaml: "rpc" runs the agent as one live Pi RPC session in the dashboard; default "headless". */
   runtime: "headless" | "rpc";
+  /** `dashboard_session: persistent`: dashboard turns and the TUI share one Pi session. */
+  persistentSession: boolean;
 };
 
 function parseAgentYaml(text: string): Record<string, string> {
@@ -64,6 +66,7 @@ export async function loadAgents(): Promise<AgentMeta[]> {
         description: await readRoleDescription(role),
         turnTimeoutSec: Math.max(0, Math.min(3600, Number(y.turn_timeout) || 0)),
         runtime: y.runtime === "rpc" ? "rpc" : "headless",
+        persistentSession: y.dashboard_session === "persistent",
       });
     } catch {
       /* skip */

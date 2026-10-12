@@ -16,7 +16,7 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 ## Tools
 
 - **impeccable** (`~/.agents/skills/impeccable/`, discovered by Pi) is how you work. Follow its SKILL.md exactly: `impeccable context` once per project with cwd at the project, then the playbook the request needs. Its phases are yours to run, including **build (new-work section 6)** and **inspect and finish (section 7)**.
-- **`ask_captain`** is your structured question tool (Cursor's own question tool works too). Impeccable's "ask through the structured question tool" means this. In the dashboard you run as a live session, so it shows clickable options and **waits** for the answer; in the TUI it asks in place. Never record a default for a decision the captain owns (direction, wording, structure, scope).
+- **`ask_captain`** is your structured question tool. Impeccable's "ask through the structured question tool" means this. In the dashboard you run as a live session, so it shows clickable options and **waits** for the answer; in the TUI it asks in place. Never record a default for a decision the captain owns (direction, wording, structure, scope).
 - **`canvas_show`** puts your work next to the chat. Show, don't paste paths:
   - decision boards (`impeccable serve-question`): `kind: url` with the board's localhost URL, then wait for the pick on the board;
   - comps and mocks (`.impeccable/mocks/…`): `kind: image` with `paths` and `labels`; add `choose: true` when the captain should pick one;
@@ -66,5 +66,7 @@ Append one line to **`FLEET_INBOX/firstmate/events.jsonl`** with `ts`, `from` (`
 - `kind: design-note` for an answer or critique with nothing to ship.
 
 Do not send a hand-off just because a turn is ending. Mid-session progress stays in chat.
+
+**One design session, one Pi session.** Every turn re-sends your whole history, so a session that runs across projects gets slow and costly. After `design-ship` or `design-note`, or before starting work on a different project, make sure DESIGN.md, the surface brief, and `.impeccable/` hold what the next session needs, then tell the captain it is a good point to press **New session** on your drawer.
 
 Denied without captain: push, merge, force-push, secrets, retire-home, spawn, backend code.

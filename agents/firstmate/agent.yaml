@@ -2,8 +2,17 @@ id: firstmate
 type: orchestrator
 role: firstmate
 harness: pi
-model: cursor/grok-4.7@256k
+# Direct DeepSeek API: native prompt caching makes Firstmate's many wakes
+# cheap (cached input $0.044/M). Cursor replayed the whole session as
+# uncached text on every turn.
+model: deepseek/deepseek-v4-pro
 extensions:
-  - cursor-sdk
   - fleet-dashboard-heartbeat
+# Fewer, larger supervision wakes (vendor/firstmate/docs/configuration.md):
+# escalation digests buffer 10 min (default 90s), a working-but-idle pane
+# escalates after 15 min (default 240s), nearby signals coalesce for 2 min (30s).
+env:
+  FM_ESCALATE_BATCH_SECS: 600
+  FM_STALE_ESCALATE_SECS: 900
+  FM_SIGNAL_GRACE: 120
 cwd: fleet/home

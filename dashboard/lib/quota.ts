@@ -8,6 +8,7 @@ import { apiLaneCardHtml, readConfiguredApiLanes } from "./api-lanes.ts";
 import { getApiLaneUsageCache, refreshApiLaneUsage } from "./api-lane-usage.ts";
 import { dashLog } from "./log.ts";
 import { spawnTimed } from "./proc.ts";
+import { modelSpendHtml } from "./model-spend.ts";
 
 export type QuotaCache = {
   at: string;
@@ -313,6 +314,7 @@ export async function usagePartialHtml(): Promise<string> {
     ${emptyMsg}
     <div class="grid-3">${cards}</div>
     ${lanes}
+    ${await modelSpendHtml().catch(() => "")}
     ${unsignedCollapse}
     ${help}
     ${parsed.parseError && cards ? `<p class="warn">${escapeHtml(parsed.parseError)}</p>` : ""}

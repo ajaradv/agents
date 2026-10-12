@@ -20,6 +20,7 @@ import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
 import { resolveRoute } from "./lib/route.ts";
+import { newSession } from "./lib/session-rotate.ts";
 import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas, withFrameChecks } from "./lib/canvas.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import {
@@ -350,6 +351,15 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
         return Response.json({ ok: false, message: "not a live agent" }, { status: 404 });
       }
       return Response.json({ ok: await abortHost(agentId) });
+    }
+
+    const newSess = path.match(/^\/api\/agents\/([a-z][a-z0-9_-]{0,63})\/new-session$/);
+    if (newSess && req.method === "POST") {
+      const agentId = newSess[1]!;
+      if (!chatAllowed(agentId) || !chatTarget(agentId)?.persistentSession) {
+        return Response.json({ ok: false, message: "This agent has no shared session." }, { status: 404 });
+      }
+      return Response.json(await newSession(agentId));
     }
 
     const dialogAnswer = path.match(/^\/api\/dialog\/([a-z][a-z0-9_-]{0,63})\/([A-Za-z0-9_.:-]{1,128})$/);

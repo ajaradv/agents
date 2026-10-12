@@ -614,6 +614,20 @@ function dashboardApp() {
       }
     },
 
+    async newAgentSession() {
+      const t = this.current();
+      if (!t || !t.persistentSession) return;
+      if (!confirm(`Start ${t.label} on a fresh session? It forgets this conversation (the old session stays on disk).`)) return;
+      let j = { ok: false, message: "Could not reach the dashboard." };
+      try {
+        const r = await fetch(`/api/agents/${encodeURIComponent(t.id)}/new-session`, { method: "POST" });
+        j = await r.json();
+      } catch {
+        /* keep the fallback message */
+      }
+      this.appendChatLine({ role: "system", kind: "notice", text: j.message, ts: new Date().toISOString() }, t.id);
+    },
+
     /** A captain line after a question means it was answered; lock the buttons. */
     markAnswered(log, tid, ts) {
       log.querySelectorAll(`.bubble-row.is-question[data-thread="${CSS.escape(tid)}"]:not(.is-answered):not([data-dialog])`).forEach((r) => {

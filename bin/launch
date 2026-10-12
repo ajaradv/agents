@@ -76,7 +76,7 @@ def parse_simple_yaml(path: Path) -> dict:
             list_key = None
         if rest == "":
             if indent == 0:
-                if key in ("authority",):
+                if key in ("authority", "env"):
                     data[key] = {}
                     nested = data[key]
                     nested_key = None
@@ -411,6 +411,10 @@ def prepare_pi_launch(
             if ref not in ext_refs:
                 ext_refs.append(ref)
     os.environ["FLEET_AGENT_ID"] = agent_id
+    # Per-agent tuning (e.g. Firstmate's FM_* watcher settings); the caller's env wins.
+    for key, val in (agent.get("env") or {}).items():
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*", str(key)) and val is not None and key not in os.environ:
+            os.environ[key] = str(val)
 
     for ref in ext_refs:
         args.extend(["-e", ref])
@@ -439,14 +443,22 @@ def persistent_session_args(agent_id: str) -> list[str]:
 
     Dashboard turns and the interactive TUI (`just <id>`, or Start TUI on the
     dashboard) resume the same session, so the conversation carries across both.
-    Delete fleet/inbox/<id>/sessions/ to start the agent fresh.
+    The dashboard's New session writes a fresh id to sessions/current; without
+    that file the id is dashboard-<id>.
     """
     agent = parse_simple_yaml(ROOT / "agents" / agent_id / "agent.yaml")
     if str(agent.get("dashboard_session") or "") != "persistent":
         return []
     session_dir = fleet_inbox_root() / agent_id / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
-    return ["--session-dir", str(session_dir), "--session-id", f"dashboard-{agent_id}"]
+    session_id = f"dashboard-{agent_id}"
+    try:
+        current = (session_dir / "current").read_text().strip()
+        if re.fullmatch(r"dashboard-[a-z0-9_-]{1,80}", current):
+            session_id = current
+    except OSError:
+        pass
+    return ["--session-dir", str(session_dir), "--session-id", session_id]
 
 
 def tui_pid_alive(agent_id: str) -> int | None:

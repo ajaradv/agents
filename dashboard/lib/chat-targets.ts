@@ -25,6 +25,8 @@ export type ChatTarget = {
   turnTimeoutSec?: number;
   /** "rpc": a live Pi session in the dashboard's agent host (lib/agent-host.ts). */
   runtime?: "headless" | "rpc";
+  /** Shares one Pi session across turns and the TUI; New session starts a fresh one. */
+  persistentSession?: boolean;
   /** Task role on the rail: crew or secondmate. */
   role?: "crew" | "secondmate";
   state?: string;
@@ -75,6 +77,7 @@ async function refreshAgents(): Promise<void> {
       description: a.description,
       turnTimeoutSec: a.turnTimeoutSec || undefined,
       runtime: a.runtime,
+      persistentSession: a.persistentSession || undefined,
     }));
 }
 
