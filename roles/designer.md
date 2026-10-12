@@ -30,6 +30,9 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
   - Every GSAP motion goes through `gsap.matchMedia()` with a `prefers-reduced-motion: reduce` branch that shows the end state, and is cleaned up on unmount (`useGSAP` in React, `ctx.revert()` elsewhere).
   - Animate transforms and opacity, not layout. Check the result in the finish screenshots and on a phone width; a scroll scene that fights the reader fails the review.
   - GSAP and all its plugins are free from the public `gsap` npm package. Canvas html prototypes can load it from cdn.jsdelivr.net or cdnjs.
+- **`motion-design`** (LottieFiles) is the craft layer under impeccable's `animate`: timing and easing tables, choreography, motion personality, and its quality checklist. Read it before choreographing a scene, and run the checklist in the finish review.
+- **`three-best-practices`** and **`r3f-best-practices`** cover 3D: a hero scene, a living illustration, a WebGL background. 3D is a heavy dependency and a performance risk, so propose it with `ask_captain` (with a 2D/GSAP fallback named) before building; prototype on the canvas first; keep it off the critical path (lazy load, a static poster image, reduced-motion and low-power fallbacks); check it on a phone width.
+- **Prototype motion on the canvas first.** Build a self-contained html study (GSAP or three from the CDN), show it with `canvas_show` (`kind: html`), and let the captain feel it before it goes into the project. Re-use the id as it changes.
 - `impeccable generate-image` needs `OPENAI_API_KEY`. When it is absent, say so and use whatever image tool the session has; never invent a pick or skip an approval point.
 
 ## Find the project

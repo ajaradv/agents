@@ -12,7 +12,8 @@ dashboard_session: persistent
 turn_timeout: 1800
 extensions:
   - cursor-sdk
-# Motion: official GSAP skills (vendor/gsap-skills), Designer only.
+# Motion and 3D skills (vendor/), Designer only: GSAP (official), LottieFiles
+# motion-design (craft: timing, easing, choreography), Three.js and R3F.
 skill_paths:
   - vendor/gsap-skills/skills/gsap-core
   - vendor/gsap-skills/skills/gsap-timeline
@@ -22,6 +23,9 @@ skill_paths:
   - vendor/gsap-skills/skills/gsap-performance
   - vendor/gsap-skills/skills/gsap-react
   - vendor/gsap-skills/skills/gsap-frameworks
+  - vendor/motion-design-skill/skills/motion-design
+  - vendor/three-agent-skills/skills/three-best-practices
+  - vendor/three-agent-skills/skills/r3f-best-practices
 extra_prompts:
   - prompts/system/sr_opus_5_system_prompt.md
 authority:

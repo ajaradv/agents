@@ -17,6 +17,8 @@ fleet/home/                firstmate FM_HOME (gitignored; seeded from vendor/fir
 vendor/firstmate/          firstmate distro (ajaradv fork)
 vendor/obsidian-skills/    kepano obsidian skills (symlinked into brain vault)
 vendor/gsap-skills/        greensock GSAP skills (Designer motion work)
+vendor/motion-design-skill/ LottieFiles motion-design craft skill (Designer)
+vendor/three-agent-skills/ Three.js + R3F best-practice skills (Designer)
 bin/launch                 start an agent from agent.yaml
 bin/setup                  submodules + bun + alice vault
 bin/setup-alice-vault      brain inbox + obsidian skill symlinks
