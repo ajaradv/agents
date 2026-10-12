@@ -16,6 +16,7 @@ fleet/config/              crew-harness + crew-dispatch (copied into fleet/home/
 fleet/home/                firstmate FM_HOME (gitignored; seeded from vendor/firstmate)
 vendor/firstmate/          firstmate distro (ajaradv fork)
 vendor/obsidian-skills/    kepano obsidian skills (symlinked into brain vault)
+vendor/gsap-skills/        greensock GSAP skills (Designer motion work)
 bin/launch                 start an agent from agent.yaml
 bin/setup                  submodules + bun + alice vault
 bin/setup-alice-vault      brain inbox + obsidian skill symlinks

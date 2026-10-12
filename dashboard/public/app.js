@@ -700,6 +700,23 @@ function dashboardApp() {
       if (!text) return;
       this.sendText(this.current().id, text);
       this.chatDraft = "";
+      this.growComposer();
+    },
+
+    // Enter sends; Shift+Enter (or Enter while an IME is composing) adds a line.
+    composerEnter(ev) {
+      if (ev.shiftKey || ev.isComposing || ev.keyCode === 229) return;
+      ev.preventDefault();
+      ev.target.form?.requestSubmit();
+    },
+
+    growComposer() {
+      this.$nextTick(() => {
+        const field = this.$refs.chatField;
+        if (!field) return;
+        field.style.height = "auto";
+        field.style.height = Math.min(field.scrollHeight + 2, 200) + "px";
+      });
     },
 
     sendText(to, text) {

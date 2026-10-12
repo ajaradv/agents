@@ -198,7 +198,7 @@
       <div class="composer">
         <button type="button" class="btn" :class="{ 'btn-ink': autoRoute }" :aria-pressed="autoRoute"
                 title="Let Jev pick an agent, a group (its lead), or Firstmate" @click="autoRoute = !autoRoute">Auto</button>
-        <input class="field" x-ref="chatField" x-model="chatDraft" :placeholder="autoRoute ? 'Message — Jev picks who' : 'Message ' + current().label" autocomplete="off" :aria-label="autoRoute ? 'Message, routed by Jev' : 'Message ' + current().label" />
+        <textarea class="field chat-field" x-ref="chatField" x-model="chatDraft" rows="1" @input="growComposer()" @keydown.enter="composerEnter($event)" :placeholder="autoRoute ? 'Message — Jev picks who' : 'Message ' + current().label" autocomplete="off" :aria-label="autoRoute ? 'Message, routed by Jev (Shift+Enter for a new line)' : 'Message ' + current().label + ' (Shift+Enter for a new line)'"></textarea>
         <button class="btn btn-ink" type="submit">Send</button>
       </div>
     </form>

@@ -567,7 +567,7 @@ pre, .raw {
   overflow-wrap: anywhere;
 }
 
-.bubble p { margin: 0; }
+.bubble p { margin: 0; white-space: pre-wrap; }
 .bubble-name { display: block; font-size: 0.72rem; color: var(--quiet); margin-bottom: 0.2rem; }
 
 .bubble-row.is-captain .bubble { background: var(--ink); color: var(--bone); }
@@ -587,6 +587,8 @@ pre, .raw {
 .chat-compose .field { background: var(--bone); }
 .chat-compose .composer { flex: 1; margin: 0; min-width: 0; }
 .chat-compose .field { min-width: 0; }
+.chat-field { resize: none; max-height: 200px; overflow-y: auto; line-height: 1.4; display: block; }
+.chat-compose .composer { align-items: flex-end; }
 
 .dock { display: none; }
 

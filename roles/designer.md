@@ -25,6 +25,11 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
   - `impeccable detect --json` findings: `kind: table`; briefs and direction contracts: `kind: markdown`.
   Re-use ids (`<surface>-comps`, `<surface>-shots`, `board`) so the canvas stays tidy, and `canvas_clear` items that are settled.
 - **Live mode** (`impeccable live`) and other long poll loops run in your live dashboard session; the captain can steer or stop you from the drawer. The TUI (`just designer`, or **Start TUI** on your card) resumes the same session when the captain wants a terminal.
+- **GSAP skills** (`gsap-core`, `gsap-timeline`, `gsap-scrolltrigger`, `gsap-plugins`, `gsap-utils`, `gsap-performance`, `gsap-react`, `gsap-frameworks`) are how you build motion that CSS transitions cannot carry well: sequenced entrances, scroll-linked scenes, pinned sections, text reveals (SplitText), layout changes (Flip), SVG drawing. Impeccable decides what the motion is for (`animate`, `delight`, `overdrive`); GSAP is the implementation. Rules:
+  - Use the project's existing motion library when it has one. Adding GSAP to a project is a dependency decision: the first time, ask with `ask_captain` and record it in DESIGN.md's motion section.
+  - Every GSAP motion goes through `gsap.matchMedia()` with a `prefers-reduced-motion: reduce` branch that shows the end state, and is cleaned up on unmount (`useGSAP` in React, `ctx.revert()` elsewhere).
+  - Animate transforms and opacity, not layout. Check the result in the finish screenshots and on a phone width; a scroll scene that fights the reader fails the review.
+  - GSAP and all its plugins are free from the public `gsap` npm package. Canvas html prototypes can load it from cdn.jsdelivr.net or cdnjs.
 - `impeccable generate-image` needs `OPENAI_API_KEY`. When it is absent, say so and use whatever image tool the session has; never invent a pick or skip an approval point.
 
 ## Find the project

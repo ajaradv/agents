@@ -12,6 +12,16 @@ dashboard_session: persistent
 turn_timeout: 1800
 extensions:
   - cursor-sdk
+# Motion: official GSAP skills (vendor/gsap-skills), Designer only.
+skill_paths:
+  - vendor/gsap-skills/skills/gsap-core
+  - vendor/gsap-skills/skills/gsap-timeline
+  - vendor/gsap-skills/skills/gsap-scrolltrigger
+  - vendor/gsap-skills/skills/gsap-plugins
+  - vendor/gsap-skills/skills/gsap-utils
+  - vendor/gsap-skills/skills/gsap-performance
+  - vendor/gsap-skills/skills/gsap-react
+  - vendor/gsap-skills/skills/gsap-frameworks
 extra_prompts:
   - prompts/system/sr_opus_5_system_prompt.md
 authority:
