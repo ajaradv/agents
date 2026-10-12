@@ -28,7 +28,8 @@ export type AgentStatusJson = {
 };
 
 export async function agentsStatusJson(): Promise<{ agents: AgentStatusJson[] }> {
-  const agents = await loadAgents();
+  // Crew-only templates (scout) exist only aboard ships, as <ship>-<role>.
+  const agents = (await loadAgents()).filter((a) => !a.crewOnly);
   const out: AgentStatusJson[] = [];
   for (const a of agents) {
     const status = chatAllowed(a.id)

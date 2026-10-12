@@ -11,6 +11,7 @@ import {
 import { hostRunning, registerHostHooks, submitToHost, type HostEvent } from "./agent-host.ts";
 import { allChatTargetIds, chatTarget } from "./chat-targets.ts";
 import { logCrewEvent, logCrewLine, logCrewTurn } from "./ship-events.ts";
+import { budgetRefusal } from "./shipyard.ts";
 import { dashLog } from "./log.ts";
 import { spawnTimed } from "./proc.ts";
 import { fleetInboxRoot, ROOT } from "./paths.ts";
@@ -316,7 +317,11 @@ async function drainQueue(agentId: string): Promise<void> {
     if (line && target) {
       if (target.kind === "firstmate") await runFirstmateTurn(line);
       else if (target.kind === "task") await runTaskTurn(agentId, line);
-      else if (target.runtime === "rpc") await submitToHost(agentId, line);
+      else if (target.runtime === "rpc") {
+        const refusal = target.ship ? await budgetRefusal(target.ship, agentId) : null;
+        if (refusal) await failTurn(agentId, line, "error", 0, refusal);
+        else await submitToHost(agentId, line);
+      }
       else await runHeadlessTurn(agentId, line);
     } else if (line) {
       await failTurn(agentId, line, "error", 0, `${agentId} is no longer on the rail.`);

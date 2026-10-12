@@ -23,6 +23,7 @@ import { resolveRoute } from "./lib/route.ts";
 import { newSession } from "./lib/session-rotate.ts";
 import { onShipLogWrite } from "./lib/ship-log.ts";
 import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
+import { dockVoyage, findShip, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
 import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas, withFrameChecks } from "./lib/canvas.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import {
@@ -35,7 +36,7 @@ import {
   startChatBridge,
 } from "./lib/chat-bridge.ts";
 import { abortHost, answerDialog, hostAlive, hostRunning, startHostReaper, stopHost, type HostEvent } from "./lib/agent-host.ts";
-import { chatAllowed, chatTarget, listChatTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
+import { chatAllowed, chatTarget, listChatTargets, refreshAgentTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import { HOST, PORT, ROOT } from "./lib/paths.ts";
 
 type WsData = { agentId: string };
@@ -455,6 +456,61 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return new Response(await groupsPanelHtml(), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
+    }
+
+    // Shipyard: register, crew, budget, orchestrator, voyages (lib/shipyard.ts).
+    if (path === "/api/ships" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const res = await registerShip({
+        id: String(b.id ?? "").trim(),
+        path: String(b.path ?? "").trim(),
+        mode: String(b.mode ?? ""),
+        factory: b.factory === true || b.factory === "on",
+        firstmate: String(b.firstmate ?? ""),
+      });
+      if (res.ok) sseBroadcast("ship", String(b.id));
+      return Response.json(res, { status: res.ok ? 200 : 400 });
+    }
+
+    const shipAction = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/(crew|orchestrator|voyage|dock)$/);
+    if (shipAction && req.method === "POST") {
+      const [, shipId, action] = shipAction as unknown as [string, string, string];
+      const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      let res: { ok: boolean; message: string };
+      if (action === "crew") {
+        const role = String(b.role ?? "");
+        res = await setCrew(shipId, {
+          ...(b.add ? { add: String(b.add) } : {}),
+          ...(b.remove ? { remove: String(b.remove) } : {}),
+          ...("budget" in b ? { budget: { role, usd: b.budget === "" || b.budget === null ? null : Number(b.budget) } } : {}),
+          ...("model" in b ? { model: { role, model: b.model === null ? null : String(b.model) } } : {}),
+        });
+        if (res.ok) {
+          await refreshAgentTargets();
+          sseBroadcast("rail");
+        }
+      } else if (action === "orchestrator") {
+        res = await setOrchestrator(shipId, String(b.orchestrator ?? ""));
+      } else if (action === "voyage") {
+        const ship = await findShip(shipId);
+        const to = String(b.to ?? "");
+        const allowed = ship ? (ship.orchestrator === "firstmate" ? ["firstmate"] : []).concat(ship.crew.map((r) => `${shipId}-${r}`)) : [];
+        if (!allowed.includes(to)) {
+          res = { ok: false, message: "Send the voyage to Firstmate or a crewmate aboard." };
+        } else {
+          const started = await startVoyage(shipId, String(b.goal ?? ""), to);
+          res = started;
+          if (started.ok && started.voyage && ship) {
+            const line = await appendCaptainChat(to, voyageBrief(ship, started.voyage));
+            broadcastChat(to, line);
+            await acceptCaptainLine(to, line);
+          }
+        }
+      } else {
+        res = await dockVoyage(shipId, String(b.summary ?? ""));
+      }
+      sseBroadcast("ship", shipId);
+      return Response.json(res, { status: res.ok ? 200 : 400 });
     }
 
     if (path === "/partials/harbor" && req.method === "GET") {

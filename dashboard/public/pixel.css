@@ -798,3 +798,30 @@ body.chat-open { overflow: hidden; }
 .ship-deck .crew-card.is-working { box-shadow: 3px 3px 0 var(--ultra); }
 .ship-deck .crew-card.is-waiting { box-shadow: 3px 3px 0 var(--vermilion); }
 @media (max-width: 640px) { .ship-deck { padding: 0.7rem; box-shadow: none; } }
+
+/* ---------- Shipyard and voyages ---------- */
+.ship-voyage { margin: 0; font-size: 0.75rem; color: var(--ultra); overflow-wrap: anywhere; }
+.voyage { border: 2px solid var(--ink); background: var(--bone); padding: 0.8rem; }
+.voyage.is-sailing { background: #e7ecfb; border-color: var(--ultra); }
+.voyage h3 { margin: 0; }
+.voyage-goal { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.voyage textarea.field { width: 100%; resize: vertical; min-height: 3.2rem; }
+.voyage form.row .field { flex: 1; min-width: 12rem; }
+.shipyard { border: 2px solid var(--ink); background: var(--sheet); }
+.shipyard > summary { padding: 0.55rem 0.7rem; cursor: pointer; }
+.shipyard-cols { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding: 0 0.8rem 0.8rem; }
+@media (max-width: 900px) { .shipyard-cols { grid-template-columns: minmax(0, 1fr); } }
+.shipyard h4 { margin: 0; }
+.checklist, .crew-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; }
+.check { display: grid; grid-template-columns: 1.4rem minmax(0, 1fr); gap: 0.4rem; font-size: 0.8rem; overflow-wrap: anywhere; }
+.check-mark { font-weight: bold; }
+.check.is-ok .check-mark { color: #1f7a45; }
+.check.is-bad .check-mark { color: var(--vermilion); }
+.check.is-optional .check-mark { color: var(--quiet); }
+.crew-row { display: grid; gap: 0.3rem; padding: 0.5rem; border: 1px solid var(--line); background: var(--bone); overflow-wrap: anywhere; }
+.budget-field { width: 5.5rem; flex: 0 0 auto; }
+.form-grid { display: grid; gap: 0.6rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); }
+.new-ship { margin-top: 1rem; background: var(--sheet); }
+.new-ship form { padding: 0 0.8rem 0.8rem; }
+.shipyard-form select.field { min-width: 0; max-width: 100%; }
+.form-grid .field, .stack-tight > .field { flex: none; }

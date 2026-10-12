@@ -69,7 +69,7 @@ async function refreshAgents(): Promise<void> {
   const rows = await loadAgents();
   agents = rows
     .filter((a) => CHAT_ID_RE.test(a.id))
-    .filter((a) => a.type === "assistant" || a.id === "firstmate")
+    .filter((a) => (a.type === "assistant" && !a.crewOnly) || a.id === "firstmate")
     .map((a) => ({
       id: a.id,
       kind: a.id === "firstmate" ? "firstmate" : "headless",
@@ -164,6 +164,11 @@ export async function archiveEndedTaskThreads(liveIds: Set<string>): Promise<str
     moved.push(name);
   }
   return moved;
+}
+
+/** Re-read agents and ship crews only (no Firstmate snapshot); after crew changes. */
+export async function refreshAgentTargets(): Promise<void> {
+  await refreshAgents();
 }
 
 export async function refreshChatTargets(): Promise<void> {

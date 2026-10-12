@@ -1,5 +1,7 @@
 id: designer
 type: assistant
+# Can be deployed aboard ships as <ship>-designer (fleet/ships/<ship>.yaml crew:).
+crew: true
 role: designer
 harness: pi
 # Claude Sonnet 5.5 through OpenRouter (direct API, never through Cursor):

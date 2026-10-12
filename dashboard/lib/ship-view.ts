@@ -4,6 +4,7 @@ import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { escapeHtml } from "./quota.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
+import { crewBudget, crewRoles, listVoyages, MODES, readyToSail, shipChecklist, spentToday, type CheckItem, type Voyage } from "./shipyard.ts";
 
 /**
  * Harbor (every ship) and ship deck (one ship) partials. Read-only: crew status
@@ -67,6 +68,11 @@ function ago(iso: string | null): string {
   return `${Math.round(s / 86400)}d ago`;
 }
 
+/** Chat text without Markdown punctuation, for one-line previews. */
+function plain(s: string): string {
+  return s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
+}
+
 function usd(n: number): string {
   return n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : "$0";
 }
@@ -79,12 +85,12 @@ function portrait(t: ChatTarget, size = 56): string {
     : `<span class="portrait portrait-initials" style="width:${size}px;height:${size}px">${escapeHtml(t.label.slice(0, 2).toUpperCase())}</span>`;
 }
 
-/** Ship state for the harbor: in the yard (no crew), sailing (someone working), docked. */
-function shipState(cards: CrewCard[], fmCrews: ChatTarget[]): { state: "yard" | "sailing" | "docked"; label: string } {
-  if (!cards.length && !fmCrews.length) return { state: "yard", label: "In the yard" };
-  if (cards.some((c) => c.status === "working") || fmCrews.some((w) => /work|run|busy|active|spawn|build/i.test(w.state ?? ""))) {
+/** In the yard (not ready to sail), under sail (open voyage or crew at work), or docked. */
+function shipState(ready: boolean, voyage: Voyage | null, cards: CrewCard[], fmCrews: ChatTarget[]): { state: "yard" | "sailing" | "docked"; label: string } {
+  if (voyage || cards.some((c) => c.status === "working") || fmCrews.some((w) => /work|run|busy|active|spawn|build/i.test(w.state ?? ""))) {
     return { state: "sailing", label: "Under sail" };
   }
+  if (!ready) return { state: "yard", label: "In the yard" };
   return { state: "docked", label: "Docked" };
 }
 
@@ -93,11 +99,13 @@ function shipState(cards: CrewCard[], fmCrews: ChatTarget[]): { state: "yard" | 
 export async function harborHtml(): Promise<string> {
   const ships = await readShips();
   if (!ships.length) return `<p class="muted">No ships yet. Register one with bin/stamp-ship.</p>`;
-  const tiles = ships.map((ship) => {
+  const tiles = ships.map(async (ship) => {
     const events = recentShipEvents(ship.id, 200);
     const cards = crewCards(ship, events);
     const fm = firstmateCrews(ship);
-    const st = shipState(cards, fm);
+    const voyages = await listVoyages(ship.id);
+    const voyage = voyages.find((v) => v.status === "sailing") ?? null;
+    const st = shipState(readyToSail(await shipChecklist(ship)), voyage, cards, fm);
     const waiting = cards.filter((c) => c.status === "waiting").length;
     const deck = [...cards.map((c) => c.target), ...fm].slice(0, 6);
     return `<a class="ship-tile is-${st.state}" href="/ships/${encodeURIComponent(ship.id)}" data-ship="${escapeHtml(ship.id)}">
@@ -108,11 +116,25 @@ export async function harborHtml(): Promise<string> {
           ${waiting ? `<span class="detent detent-hot">${waiting} need${waiting === 1 ? "s" : ""} you</span>` : `<span class="detent">${st.label}</span>`}
         </div>
         <p class="muted ship-meta">${escapeHtml(ship.orchestrator === "firstmate" ? "Orchestrator: Firstmate" : `Orchestrator: ${ship.orchestrator}`)} · ${escapeHtml(ship.mode || "mode unset")}${ship.adws.length ? ` · ${ship.adws.length} ADWs` : ""}</p>
+        ${voyage ? `<p class="ship-voyage">⚑ ${escapeHtml(voyage.goal.slice(0, 120))}</p>` : ""}
         <div class="ship-deck-faces">${deck.length ? deck.map((t) => portrait(t, 36)).join("") : `<span class="muted">No crew aboard</span>`}</div>
       </div>
     </a>`;
   });
-  return `<div class="harbor">${tiles.join("")}</div>`;
+  return `<div class="harbor">${(await Promise.all(tiles)).join("")}</div>
+  <details class="fold new-ship">
+    <summary>Build a new ship</summary>
+    <form class="stack shipyard-form" data-api="/api/ships" data-then="ship">
+      <div class="form-grid">
+        <label class="stack-tight">Ship id <input class="field" name="id" required pattern="[a-z][a-z0-9_-]{0,40}" placeholder="pochteca" /></label>
+        <label class="stack-tight">Repo path <input class="field" name="path" required placeholder="/Users/you/Workspace/project" /></label>
+        <label class="stack-tight">Delivery mode <select class="field" name="mode">${MODES.map((m) => `<option${m === "no-mistakes" ? " selected" : ""}>${m}</option>`).join("")}</select></label>
+        <label class="stack-tight">Register with Firstmate (one-line description, optional) <input class="field" name="firstmate" placeholder="Leave empty to run it with its own crew" /></label>
+      </div>
+      <label class="row"><input type="checkbox" name="factory" /> Install the SSSF factory (writes adws/ and .claude/skills/sssf into the repo)</label>
+      <div class="row"><button class="btn btn-ink" type="submit">Lay the keel</button><span class="muted" data-note></span></div>
+    </form>
+  </details>`;
 }
 
 // ---------------------------------------------------------------- ship deck
@@ -126,7 +148,7 @@ function crewCardHtml(c: CrewCard): string {
         <h4 class="sheet-title">${escapeHtml(t.label)}</h4>
         <span class="crew-status">${STATUS_LABEL[c.status]}</span>
       </div>
-      <p class="crew-activity">${escapeHtml(c.activity.slice(0, 220))}</p>
+      <p class="crew-activity">${escapeHtml(plain(c.activity).slice(0, 220))}</p>
       <p class="muted crew-meta">${escapeHtml(t.model ?? "")}${c.lastAt ? ` · ${ago(c.lastAt)}` : ""} · 7d ${usd(c.cost7d)} over ${c.turns7d} turn${c.turns7d === 1 ? "" : "s"}${c.errors7d ? ` · <span class="warn">${c.errors7d} failed</span>` : ""}</p>
       <div class="row"><a class="btn btn-ink" href="?chat=${encodeURIComponent(t.id)}" data-chat="${escapeHtml(t.id)}">Chat</a></div>
     </div>
@@ -192,7 +214,13 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
   const events = recentShipEvents(ship.id, 200);
   const cards = crewCards(ship, events);
   const fm = firstmateCrews(ship);
-  const st = shipState(cards, fm);
+  const checklist = await shipChecklist(ship);
+  const ready = readyToSail(checklist);
+  const voyages = await listVoyages(ship.id);
+  const voyage = voyages.find((v) => v.status === "sailing") ?? null;
+  const st = shipState(ready, voyage, cards, fm);
+  const roles = await crewRoles();
+  const budgets = Object.fromEntries(await Promise.all(ship.crew.map(async (r) => [r, await crewBudget(ship.id, r)] as const)));
   const labels = new Map(cards.map((c) => [c.target.id, c.target.label]));
   const maneuvers = recentManeuvers(ship.path);
   const cost7d = cards.reduce((n, c) => n + c.cost7d, 0);
@@ -214,11 +242,15 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
       </div>
     </div>
 
+    ${voyageHtml(ship, voyage, voyages, ready, cards)}
+
     <section class="stack">
       <h3>Crew</h3>
       ${cards.length ? `<div class="crew-grid">${cards.map(crewCardHtml).join("")}</div>` : `<p class="muted">No crewmates aboard. Add roles under <code>crew:</code> in fleet/ships/${escapeHtml(ship.id)}.yaml.</p>`}
       ${fm.length ? `<h4>Firstmate crews on this ship</h4><div class="crew-grid">${fm.map(fmCrewHtml).join("")}</div>` : ""}
     </section>
+
+    ${shipyardHtml(ship, checklist, roles.map((r) => ({ id: r.id, model: r.model, description: r.description })), budgets, !voyage && !ready)}
 
     <div class="deck-cols">
       <section class="stack">
@@ -231,4 +263,111 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
       </section>
     </div>
   </div>`;
+}
+
+// ---------------------------------------------------------------- shipyard + voyage
+
+function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: boolean, cards: CrewCard[]): string {
+  const api = `/api/ships/${encodeURIComponent(ship.id)}`;
+  const past = all.filter((v) => v.status === "docked").slice(0, 3);
+  const pastHtml = past.length
+    ? `<details class="fold"><summary>${past.length} past voyage${past.length === 1 ? "" : "s"}</summary><ul class="meter-list">${past
+        .map((v) => `<li><span>${escapeHtml(v.goal.slice(0, 140))}</span><span class="muted">${escapeHtml(v.started.slice(0, 10))}</span></li>`)
+        .join("")}</ul></details>`
+    : "";
+  if (voyage) {
+    const to = cards.find((c) => c.target.id === voyage.to)?.target.label ?? voyage.to;
+    return `<section class="voyage is-sailing stack">
+      <div class="between"><h3>Under sail</h3><span class="muted">since ${escapeHtml(new Date(voyage.started).toLocaleString())}</span></div>
+      <p class="voyage-goal">${escapeHtml(voyage.goal)}</p>
+      <p class="muted">Goal sent to ${escapeHtml(to)} · record: <code>${escapeHtml(voyage.file.replace(/^.*\/fleet\/voyages\//, "vault fleet/voyages/"))}</code></p>
+      <form class="row shipyard-form" data-api="${api}/dock">
+        <input class="field" name="summary" placeholder="How it ended (optional, goes in the voyage record)" />
+        <button class="btn" type="submit">Dock</button><span class="muted" data-note></span>
+      </form>
+      ${pastHtml}
+    </section>`;
+  }
+  const targets = (ship.orchestrator === "firstmate" ? [{ id: "firstmate", label: "Firstmate" }] : []).concat(cards.map((c) => ({ id: c.target.id, label: c.target.label })));
+  if (!ready || !targets.length) {
+    return `<section class="voyage stack"><h3>Voyage</h3><p class="muted">${ready ? "Bring a crewmate aboard to set sail." : "Finish the required shipyard items below, then set a course."}</p>${pastHtml}</section>`;
+  }
+  return `<section class="voyage stack">
+    <h3>Set a course</h3>
+    <form class="stack shipyard-form" data-api="${api}/voyage">
+      <textarea class="field" name="goal" rows="2" required placeholder="What should this voyage achieve? e.g. Ship the V4 home page with mobile fixes"></textarea>
+      <div class="row">
+        <label class="row">Send to <select class="field" name="to">${targets.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.label)}</option>`).join("")}</select></label>
+        <button class="btn btn-ink" type="submit">Set sail</button><span class="muted" data-note></span>
+      </div>
+    </form>
+    ${pastHtml}
+  </section>`;
+}
+
+function checkRow(c: CheckItem): string {
+  const mark = c.ok ? "✓" : c.required ? "✗" : "○";
+  return `<li class="check ${c.ok ? "is-ok" : c.required ? "is-bad" : "is-optional"}"><span class="check-mark" aria-hidden="true">${mark}</span><span><strong>${escapeHtml(c.item)}</strong>${c.required ? "" : " <span class=\"muted\">(optional)</span>"}<br /><span class="muted">${escapeHtml(c.note)}</span></span></li>`;
+}
+
+function shipyardHtml(
+  ship: ShipRow,
+  checklist: CheckItem[],
+  roles: { id: string; model: string; description: string }[],
+  budgets: Record<string, number | null>,
+  open: boolean,
+): string {
+  const api = `/api/ships/${encodeURIComponent(ship.id)}`;
+  const aboard = ship.crew.map((r) => {
+    const id = `${ship.id}-${r}`;
+    const spent = spentToday(ship.id, id);
+    const budget = budgets[r];
+    const model = ship.crewModels[r] ?? roles.find((x) => x.id === r)?.model ?? "";
+    return `<li class="crew-row">
+      <strong>${escapeHtml(r)}</strong>
+      <span class="muted">${escapeHtml(model)}</span>
+      <form class="row shipyard-form" data-api="${api}/crew">
+        <input type="hidden" name="role" value="${escapeHtml(r)}" />
+        <label class="row">Daily $ <input class="field budget-field" name="budget" type="number" min="0" step="0.5" value="${budget ?? ""}" placeholder="none" /></label>
+        <button class="btn" type="submit">Save</button>
+        <span class="muted">today ${usd(spent)}${budget ? ` of ${usd(budget)}` : ""}</span>
+        <span class="muted" data-note></span>
+      </form>
+      <form class="shipyard-form" data-api="${api}/crew" data-confirm="Send ${escapeHtml(r)} ashore? Its session stays on disk.">
+        <button class="btn" type="submit" name="remove" value="${escapeHtml(r)}">Ashore</button>
+      </form>
+    </li>`;
+  });
+  const available = roles.filter((r) => !ship.crew.includes(r.id));
+  return `<details class="fold shipyard"${open ? " open" : ""}>
+    <summary>Shipyard · ${checklist.filter((c) => c.required && !c.ok).length ? "not ready" : "ready"} · ${ship.crew.length} aboard</summary>
+    <div class="shipyard-cols">
+      <div class="stack">
+        <h4>Checklist</h4>
+        <ul class="checklist">${checklist.map(checkRow).join("")}</ul>
+        <form class="row shipyard-form" data-api="${api}/orchestrator">
+          <label class="row">Voyages run by <select class="field" name="orchestrator">
+            <option value="firstmate"${ship.orchestrator === "firstmate" ? " selected" : ""}>Firstmate</option>
+            <option value="lead"${ship.orchestrator === "lead" ? " selected" : ""}>This ship's crew</option>
+          </select></label>
+          <button class="btn" type="submit">Save</button><span class="muted" data-note></span>
+        </form>
+      </div>
+      <div class="stack">
+        <h4>Crew</h4>
+        ${aboard.length ? `<ul class="crew-list">${aboard.join("")}</ul>` : `<p class="muted">Nobody aboard yet.</p>`}
+        ${
+          available.length
+            ? `<form class="stack shipyard-form" data-api="${api}/crew">
+          <label class="stack-tight">Bring aboard <select class="field" name="add">${available
+            .map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.id)} · ${escapeHtml(r.model)}</option>`)
+            .join("")}</select></label>
+          <p class="muted">${available.map((r) => `<strong>${escapeHtml(r.id)}</strong>: ${escapeHtml(r.description)}`).join("<br />")}</p>
+          <div class="row"><button class="btn btn-ink" type="submit">Bring aboard</button><span class="muted" data-note></span></div>
+        </form>`
+            : `<p class="muted">Every crew role is aboard. New roles: agents/&lt;role&gt;/agent.yaml with <code>crew: true</code>.</p>`
+        }
+      </div>
+    </div>
+  </details>`;
 }

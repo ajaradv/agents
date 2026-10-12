@@ -17,6 +17,10 @@ export type AgentMeta = {
   runtime: "headless" | "rpc";
   /** `dashboard_session: persistent`: dashboard turns and the TUI share one Pi session. */
   persistentSession: boolean;
+  /** `crew: true`: the template can be deployed aboard ships as a crewmate. */
+  crewEligible: boolean;
+  /** `crew: only`: a template that exists only aboard ships, never on the rail by itself. */
+  crewOnly: boolean;
   /** Set for ship crewmates (`<ship>-<role>`): the ship they serve aboard. */
   ship?: string;
 };
@@ -70,6 +74,8 @@ export async function loadAgents(): Promise<AgentMeta[]> {
         turnTimeoutSec: Math.max(0, Math.min(3600, Number(y.turn_timeout) || 0)),
         runtime: y.runtime === "rpc" ? "rpc" : "headless",
         persistentSession: y.dashboard_session === "persistent",
+        crewEligible: y.crew === "true" || y.crew === "only",
+        crewOnly: y.crew === "only",
       });
     } catch {
       /* skip */
@@ -87,6 +93,7 @@ export async function loadAgents(): Promise<AgentMeta[]> {
         model: ship.crewModels[role] || t.model,
         runtime: "rpc",
         persistentSession: true,
+        crewOnly: false,
         ship: ship.id,
       });
     }

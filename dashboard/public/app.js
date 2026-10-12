@@ -208,6 +208,36 @@ function dashboardApp() {
       }
     },
 
+    /** Shipyard forms (data-api) post their fields as JSON and refresh the deck. */
+    async harborSubmit(ev) {
+      const form = ev.target.closest("form[data-api]");
+      if (!form) return;
+      ev.preventDefault();
+      if (form.dataset.confirm && !confirm(form.dataset.confirm)) return;
+      const body = {};
+      for (const [k, v] of new FormData(form, ev.submitter)) body[k] = v;
+      const note = form.querySelector("[data-note]");
+      const buttons = form.querySelectorAll("button");
+      buttons.forEach((b) => (b.disabled = true));
+      if (note) note.textContent = "…";
+      let j = { ok: false, message: "Could not reach the dashboard." };
+      try {
+        const r = await fetch(form.dataset.api, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        j = await r.json();
+      } catch {
+        /* keep the fallback */
+      }
+      buttons.forEach((b) => (b.disabled = false));
+      if (!j.ok) {
+        if (note) note.textContent = j.message || "Failed.";
+        else alert(j.message || "Failed.");
+        return;
+      }
+      if (form.dataset.then === "ship" && body.id) return this.openShip(String(body.id));
+      this.refreshRail();
+      this.loadHarbor();
+    },
+
     openLeaf(id) {
       this.chatOpen = false;
       if (id === "harbor") {

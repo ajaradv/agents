@@ -8,6 +8,8 @@ const AGENT_ART: Record<string, string> = {
   architect: "/art/architect.png",
   shipwright: "/art/shipwright.png",
   designer: "/art/designer.png",
+  // Crew roles reuse the crew pool's named portraits.
+  scout: "/art/crew/lookout.png",
 };
 
 export const CAPTAIN_ART = "/art/captain.png";

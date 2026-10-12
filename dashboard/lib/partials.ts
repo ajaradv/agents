@@ -70,7 +70,8 @@ function lastTurnHtml(agentId: string, turn: { at: string; status: string; ms: n
 }
 
 export async function agentsSidebarHtml(): Promise<string> {
-  const agents = await loadAgents();
+  // Crew-only templates (scout) exist only aboard ships, as <ship>-<role>.
+  const agents = (await loadAgents()).filter((a) => !a.crewOnly);
   const rows: string[] = [];
   for (const a of agents) {
     const status = chatAllowed(a.id) ? await resolveAgentStatus(a.id) : null;
