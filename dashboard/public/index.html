@@ -19,6 +19,9 @@
   </header>
 
   <nav class="leaf-tabs" role="tablist" aria-label="Fleet sections">
+    <button type="button" class="tab" role="tab" id="tab-harbor" aria-controls="leaf-harbor"
+            :aria-selected="leaf === 'harbor'" :class="{ 'is-open': leaf === 'harbor' }"
+            @click="openLeaf('harbor')"><span class="punch" aria-hidden="true"></span>Harbor</button>
     <button type="button" class="tab" role="tab" id="tab-health" aria-controls="leaf-health"
             :aria-selected="leaf === 'health'" :class="{ 'is-open': leaf === 'health' }"
             @click="openLeaf('health')"><span class="punch" aria-hidden="true"></span>Health</button>
@@ -31,6 +34,12 @@
   </nav>
 
   <main>
+    <section id="leaf-harbor" class="leaf" role="tabpanel" aria-labelledby="tab-harbor"
+             :class="{ 'is-open': leaf === 'harbor', 'is-hinge': hinge === 'harbor' }">
+      <h2 x-text="shipSel ? 'Ship' : 'Harbor'">Harbor</h2>
+      <div id="harbor-view" @click="harborClick($event)"></div>
+    </section>
+
     <section id="leaf-health" class="leaf" role="tabpanel" aria-labelledby="tab-health"
              :class="{ 'is-open': leaf === 'health', 'is-hinge': hinge === 'health' }">
       <h2>Health</h2>
@@ -226,6 +235,10 @@
   </div>
 
   <nav class="dock" aria-label="Fleet sections">
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'harbor' && !chatOpen }" @click="openLeaf('harbor')">
+      <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M10 2h2v9h6l-2 4H6l-2-4h6zM2 17h18v2H2z"/></svg>
+      Harbor
+    </button>
     <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'health' && !chatOpen }" @click="openLeaf('health')">
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M9 2h4v7h7v4h-7v7H9v-7H2V9h7z"/></svg>
       Health

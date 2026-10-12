@@ -21,6 +21,8 @@ import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/group
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
 import { resolveRoute } from "./lib/route.ts";
 import { newSession } from "./lib/session-rotate.ts";
+import { onShipLogWrite } from "./lib/ship-log.ts";
+import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
 import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas, withFrameChecks } from "./lib/canvas.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import {
@@ -96,6 +98,19 @@ export function sseBroadcast(event: string, data = "") {
     }
   }
 }
+
+// Ship's log writes come in bursts (tool steps); tell pages at most every 1.5s per ship.
+const shipPending = new Map<string, ReturnType<typeof setTimeout>>();
+onShipLogWrite((ship) => {
+  if (shipPending.has(ship)) return;
+  shipPending.set(
+    ship,
+    setTimeout(() => {
+      shipPending.delete(ship);
+      sseBroadcast("ship", ship);
+    }, 1500),
+  );
+});
 
 setLifecycleEmitter(() => {
   sseBroadcast("agents");
@@ -442,6 +457,18 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       });
     }
 
+    if (path === "/partials/harbor" && req.method === "GET") {
+      return new Response(await harborHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+
+    const shipPartial = path.match(/^\/partials\/ship\/([a-z][a-z0-9_-]{0,63})$/);
+    if (shipPartial && req.method === "GET") {
+      const html = await shipDeckHtml(shipPartial[1]!);
+      return html === null
+        ? new Response(`<p class="warn">No ship named ${shipPartial[1]}.</p>`, { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } })
+        : new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+
     if (path === "/partials/agents" && req.method === "GET") {
       return new Response(await agentsSidebarHtml(), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -506,7 +533,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     }
 
     // Section routes (/health, /fleet, /agents) are the same page; app.js reads the path.
-    if (path === "/" || path === "/index.html" || /^\/(health|fleet|agents)\/?$/.test(path)) {
+    if (path === "/" || path === "/index.html" || /^\/(harbor|health|fleet|agents)\/?$/.test(path) || /^\/ships\/[a-z][a-z0-9_-]{0,63}\/?$/.test(path)) {
       const html = await readFile(join(publicDir, "index.html"), "utf8");
       return new Response(html, {
         headers: { "Content-Type": "text/html; charset=utf-8" },

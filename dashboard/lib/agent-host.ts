@@ -37,7 +37,7 @@ export type HostEvent =
 export type HostHooks = {
   line: (agentId: string, line: ChatLine) => void;
   event: (agentId: string, ev: HostEvent) => void;
-  settled: (agentId: string, outcome: { ok: boolean; ms: number; error?: string }) => void;
+  settled: (agentId: string, outcome: { ok: boolean; ms: number; error?: string; cost: number; tokens: number }) => void;
 };
 
 const IDLE_MS = 20 * 60_000;
@@ -60,6 +60,9 @@ type AgentProc = {
   stderrTail: string;
   lastCaptainTs: string | null;
   turnError: string | null;
+  /** This turn's billed cost and tokens, summed from Pi's assistant message usage. */
+  turnCost: number;
+  turnTokens: number;
 };
 
 let hooks: HostHooks = { line: () => {}, event: () => {}, settled: () => {} };
@@ -184,6 +187,8 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
         p.running = true;
         p.startedAt = Date.now();
         p.turnError = null;
+        p.turnCost = 0;
+        p.turnTokens = 0;
         hooks.event(p.id, { kind: "running", running: true });
       }
       return;
@@ -199,8 +204,15 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       return;
     }
     case "message_end": {
-      const msg = rec.message as { role?: string; stopReason?: string; errorMessage?: string } | undefined;
+      const msg = rec.message as
+        | { role?: string; stopReason?: string; errorMessage?: string; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } } }
+        | undefined;
       if (msg?.role !== "assistant") return;
+      const u = msg.usage;
+      if (u) {
+        p.turnCost += u.cost?.total ?? 0;
+        p.turnTokens += (u.input ?? 0) + (u.output ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
+      }
       p.streamText = "";
       hooks.event(p.id, { kind: "stream", text: "" });
       if (msg.stopReason === "error" && msg.errorMessage) p.turnError = msg.errorMessage;
@@ -225,9 +237,9 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       const ms = Date.now() - p.startedAt;
       if (p.turnError && p.lastCaptainTs) {
         hooks.line(p.id, await appendChatError(p.id, p.turnError, p.lastCaptainTs));
-        hooks.settled(p.id, { ok: false, ms, error: p.turnError });
+        hooks.settled(p.id, { ok: false, ms, error: p.turnError, cost: p.turnCost, tokens: p.turnTokens });
       } else {
-        hooks.settled(p.id, { ok: true, ms });
+        hooks.settled(p.id, { ok: true, ms, cost: p.turnCost, tokens: p.turnTokens });
       }
       return;
     }
@@ -297,6 +309,8 @@ function start(agentId: string): AgentProc {
     stderrTail: "",
     lastCaptainTs: null,
     turnError: null,
+    turnCost: 0,
+    turnTokens: 0,
   };
   procs.set(agentId, p);
   void dashLog("agent-host", `start ${agentId} pid=${proc.pid}`);

@@ -10,6 +10,7 @@ import {
 } from "./chat.ts";
 import { hostRunning, registerHostHooks, submitToHost, type HostEvent } from "./agent-host.ts";
 import { allChatTargetIds, chatTarget } from "./chat-targets.ts";
+import { logCrewEvent, logCrewLine, logCrewTurn } from "./ship-events.ts";
 import { dashLog } from "./log.ts";
 import { spawnTimed } from "./proc.ts";
 import { fleetInboxRoot, ROOT } from "./paths.ts";
@@ -86,9 +87,16 @@ export function registerChatEventBroadcaster(fn: ChatEventBroadcaster): void {
 }
 
 registerHostHooks({
-  line: (agentId, line) => emitOwn(agentId, line),
-  event: (agentId, ev) => broadcastEvent(agentId, ev),
+  line: (agentId, line) => {
+    logCrewLine(agentId, line);
+    emitOwn(agentId, line);
+  },
+  event: (agentId, ev) => {
+    logCrewEvent(agentId, ev);
+    broadcastEvent(agentId, ev);
+  },
   settled: (agentId, outcome) => {
+    logCrewTurn(agentId, outcome);
     recordTurn(agentId, {
       at: new Date().toISOString(),
       status: outcome.ok ? "ok" : "error",
@@ -349,6 +357,7 @@ export async function acceptCaptainLine(agentId: string, line: ChatLine): Promis
   const key = lineKey(line);
   if (st.seenKeys.has(key)) return; // the poller already queued it
   st.seenKeys.add(key);
+  logCrewLine(agentId, line);
   enqueueCaptainTurn(agentId, line);
 }
 
@@ -397,6 +406,7 @@ async function pollAgentFile(agentId: string): Promise<void> {
     const key = lineKey(line);
     if (st.seenKeys.has(key)) continue;
     st.seenKeys.add(key);
+    logCrewLine(agentId, line);
 
     if (line.from === "captain") {
       enqueueCaptainTurn(agentId, line);

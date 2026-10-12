@@ -12,6 +12,11 @@ export type ShipRow = {
   factory: string | null;
   declaredAdws: string[];
   adws: string[];
+  /** Who runs voyages: "firstmate" today, "lead" for the fleet's own orchestrator. */
+  orchestrator: string;
+  /** Roles deployed aboard as `<ship>-<role>` crewmates (bin/launch resolve_crewmate). */
+  crew: string[];
+  crewModels: Record<string, string>;
 };
 
 /** One vault note under `{ALICE_VAULT}/fleet/initiatives/`. */
@@ -52,6 +57,11 @@ export function parseShipYaml(text: string, fallbackId: string): Omit<ShipRow, "
     mode: String(y.mode ?? ""),
     factory: factory?.skill ? String(factory.skill) : null,
     declaredAdws: strList(factory?.adws),
+    orchestrator: String(y.orchestrator ?? "firstmate"),
+    crew: strList(y.crew).filter((r) => /^[a-z][a-z0-9_-]*$/.test(r)),
+    crewModels: Object.fromEntries(
+      Object.entries((y.crew_models as Record<string, unknown> | null) ?? {}).map(([k, v]) => [k, String(v)]),
+    ),
   };
 }
 

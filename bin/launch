@@ -76,7 +76,7 @@ def parse_simple_yaml(path: Path) -> dict:
             list_key = None
         if rest == "":
             if indent == 0:
-                if key in ("authority", "env"):
+                if key in ("authority", "env", "crew_models"):
                     data[key] = {}
                     nested = data[key]
                     nested_key = None
@@ -267,16 +267,56 @@ def dashboard_chat_block() -> str:
     return DASHBOARD_RPC_BLOCK if RUNTIME == "rpc" else DASHBOARD_CHAT_BLOCK
 
 
+def resolve_crewmate(agent_id: str) -> tuple[dict, dict] | None:
+    """`<ship>-<role>` for a role listed under `crew:` in fleet/ships/<ship>.yaml.
+
+    Returns (ship, role agent.yaml merged with the ship's overrides), or None.
+    A crewmate is the role's template deployed aboard one ship: cwd is the ship's
+    repo, the session is persistent and lives in fleet/inbox/<ship>-<role>/.
+    """
+    for y in sorted((ROOT / "fleet" / "ships").glob("*.yaml")):
+        ship = parse_simple_yaml(y)
+        sid = str(ship.get("id") or y.stem)
+        if not agent_id.startswith(sid + "-"):
+            continue
+        role = agent_id[len(sid) + 1 :]
+        if role not in [str(r) for r in ship.get("crew") or []]:
+            continue
+        template = ROOT / "agents" / role / "agent.yaml"
+        if not template.is_file() or not ship.get("path"):
+            return None
+        agent = parse_simple_yaml(template)
+        model = (ship.get("crew_models") or {}).get(role)
+        if model:
+            agent["model"] = model
+        agent["runtime"] = "rpc"
+        agent["dashboard_session"] = "persistent"
+        ship["id"] = sid
+        return ship, agent
+    return None
+
+
+def load_agent(agent_id: str) -> tuple[dict, dict | None] | None:
+    """(agent.yaml, ship or None) for a registered agent or a ship crewmate."""
+    path = ROOT / "agents" / agent_id / "agent.yaml"
+    if path.is_file():
+        return parse_simple_yaml(path), None
+    crew = resolve_crewmate(agent_id)
+    if crew:
+        return crew[1], crew[0]
+    return None
+
+
 def prepare_pi_launch(
     agent_id: str, extra: list[str] | None = None
 ) -> tuple[Path, list[str], Path, str | None] | None:
     """Build pi argv for agent_id. Returns (cwd, args, temp_role_prompt_path, model)."""
     extra = extra or []
-    agent_path = ROOT / "agents" / agent_id / "agent.yaml"
-    if not agent_path.is_file():
-        print(f"missing {agent_path}", file=sys.stderr)
+    loaded = load_agent(agent_id)
+    if not loaded:
+        print(f"missing {ROOT / 'agents' / agent_id / 'agent.yaml'} (and no ship crewmate by that id)", file=sys.stderr)
         return None
-    agent = parse_simple_yaml(agent_path)
+    agent, aboard = loaded
     agent_type = str(agent.get("type") or "")
     harness = str(agent.get("harness") or "pi")
     role = str(agent.get("role") or agent_id)
@@ -305,7 +345,25 @@ def prepare_pi_launch(
     vault_agents = {"alice", "architect"}
     cwd: Path
     path_block: str
-    if vault_raw or agent_id in vault_agents:
+    if aboard:
+        # Ship crewmate: lives in the ship's repo for the whole session.
+        ship_path = Path(str(aboard["path"])).expanduser()
+        cwd = ship_path
+        os.environ["FLEET_SHIP"] = str(aboard["id"])
+        crew = ", ".join(f"`{aboard['id']}-{r}`" for r in aboard.get("crew") or [])
+        path_block = (
+            "## Resolved paths (this session)\n\n"
+            f"- **Aboard ship:** `{aboard['id']}`; you are its `{role}` crewmate (`{agent_id}`)\n"
+            f"- **Ship repo (cwd):** `{ship_path}`; stay in this project. Work for other ships belongs to their crews.\n"
+            f"- **Delivery mode:** `{aboard.get('mode') or 'unset'}`\n"
+            f"- **Crew aboard:** {crew}\n"
+            f"- **FLEET_INBOX:** `{inbox}`\n"
+            f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
+            f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
+            f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
+            + dashboard_chat_block()
+        )
+    elif vault_raw or agent_id in vault_agents:
         default_vault = str(vault_raw) if vault_raw else "/Users/avega/Workspace/brain"
         vault_path = Path(os.environ.get("ALICE_VAULT", default_vault)).expanduser().resolve()
         os.environ["ALICE_VAULT"] = str(vault_path)
@@ -446,7 +504,8 @@ def persistent_session_args(agent_id: str) -> list[str]:
     The dashboard's New session writes a fresh id to sessions/current; without
     that file the id is dashboard-<id>.
     """
-    agent = parse_simple_yaml(ROOT / "agents" / agent_id / "agent.yaml")
+    loaded = load_agent(agent_id)
+    agent = loaded[0] if loaded else {}
     if str(agent.get("dashboard_session") or "") != "persistent":
         return []
     session_dir = fleet_inbox_root() / agent_id / "sessions"

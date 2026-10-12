@@ -637,7 +637,7 @@ body.chat-open { overflow: hidden; }
   .between { flex-wrap: wrap; }
   .dock {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     position: fixed;
     z-index: 40;
     left: 0;
@@ -718,3 +718,83 @@ body.chat-open { overflow: hidden; }
 .spend-table th, .spend-table td { border: 1px solid var(--line); padding: 0.3rem 0.45rem; text-align: left; overflow-wrap: anywhere; }
 .spend-table th { background: var(--bone); }
 .spend-note { background: var(--sheet); padding: 0.4rem 0.55rem; border: 1px solid var(--line); margin: 0; }
+
+/* ---------- Harbor and ship deck ---------- */
+.stack-tight { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.harbor { display: grid; gap: 0.9rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); }
+.ship-tile {
+  display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: 0.8rem; align-items: center;
+  padding: 0.8rem; border: 2px solid var(--ink); background: var(--sheet); color: var(--ink); text-decoration: none;
+  box-shadow: 4px 4px 0 var(--ink); transition: transform 120ms steps(2), box-shadow 120ms steps(2);
+}
+.ship-tile:hover, .ship-tile:focus-visible { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 var(--ink); outline: none; }
+.ship-tile:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 3px; }
+.ship-name { margin: 0; text-transform: capitalize; overflow-wrap: anywhere; }
+.ship-meta { margin: 0; font-size: 0.72rem; overflow-wrap: anywhere; }
+.ship-deck-faces { display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center; min-height: 36px; }
+.ship-deck-faces .portrait { width: 36px; height: 36px; }
+
+/* A pixel ship: hull, mast and sail drawn with clip-path; a wake when sailing. */
+.ship-sprite { position: relative; width: 6.5rem; height: 5rem; background: #cfe3dc; border: 2px solid var(--ink); overflow: hidden; image-rendering: pixelated; }
+.ship-sprite::after { content: ""; position: absolute; inset: auto 0 0 0; height: 1.3rem; background: repeating-linear-gradient(90deg, #2f6f7a 0 8px, #3a8590 8px 16px); }
+.ship-hull { position: absolute; left: 18%; bottom: 0.95rem; width: 64%; height: 1.1rem; background: #6b3f1f; clip-path: polygon(0 0, 100% 0, 86% 100%, 14% 100%); z-index: 2; box-shadow: inset 0 -4px 0 #4a2a14; }
+.ship-sail { position: absolute; left: 34%; bottom: 2rem; width: 34%; height: 2.4rem; background: #fffaf2; clip-path: polygon(0 100%, 100% 100%, 46% 0); border-bottom: 3px solid var(--ink); z-index: 2; }
+.ship-sail::before { content: ""; position: absolute; left: 44%; top: 0; width: 3px; height: 100%; background: var(--ink); }
+.ship-wake { position: absolute; left: 4%; bottom: 0.95rem; width: 22%; height: 0.35rem; background: repeating-linear-gradient(90deg, #fffaf2 0 6px, transparent 6px 10px); opacity: 0; z-index: 3; }
+.ship-tile.is-yard .ship-sprite { background: #e8dcc2; }
+.ship-tile.is-yard .ship-sprite::after { background: repeating-linear-gradient(90deg, #8a6a3e 0 8px, #9c7a4a 8px 16px); }
+.ship-tile.is-yard .ship-sail { opacity: 0.25; }
+.ship-tile.is-docked .ship-sail { height: 1.2rem; bottom: 2rem; }
+.ship-tile.is-sailing .ship-wake { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  .ship-tile.is-sailing .ship-hull, .ship-tile.is-sailing .ship-sail { animation: ship-rock 1.6s steps(2) infinite; }
+  .ship-tile.is-sailing .ship-wake { animation: ship-wake 0.8s steps(4) infinite; }
+}
+@keyframes ship-rock { 50% { transform: translateY(2px); } }
+@keyframes ship-wake { to { background-position: 10px 0; } }
+
+.ship-head { align-items: flex-start; gap: 0.8rem; flex-wrap: wrap; }
+.ship-head .path { margin: 0; overflow-wrap: anywhere; }
+.crew-grid { display: grid; gap: 0.7rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr)); }
+.crew-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.7rem; padding: 0.7rem; border: 2px solid var(--ink); background: var(--sheet); }
+.crew-card.is-working { box-shadow: 4px 4px 0 var(--ultra); }
+.crew-card.is-waiting { box-shadow: 4px 4px 0 var(--vermilion); }
+.crew-card.is-asleep { opacity: 0.8; }
+.crew-card h4 { margin: 0; overflow-wrap: anywhere; }
+.crew-status { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
+.crew-card.is-working .crew-status { color: var(--ultra); }
+.crew-card.is-waiting .crew-status { color: var(--vermilion); }
+.crew-activity { margin: 0; font-size: 0.8rem; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.crew-meta { margin: 0; font-size: 0.7rem; overflow-wrap: anywhere; }
+
+.deck-cols { display: grid; gap: 1rem; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: start; }
+@media (max-width: 900px) { .deck-cols { grid-template-columns: minmax(0, 1fr); } }
+.ship-log { list-style: none; margin: 0; padding: 0; border: 2px solid var(--ink); background: var(--sheet); max-height: 32rem; overflow: auto; }
+.log-row { display: grid; grid-template-columns: 4.4rem minmax(0, 8rem) minmax(0, 6.5rem) minmax(0, 1fr); gap: 0.5rem; padding: 0.35rem 0.55rem; border-bottom: 1px solid var(--bone); font-size: 0.75rem; align-items: baseline; }
+.log-row time, .log-kind { color: var(--quiet); }
+.log-who, .log-kind, .log-text { overflow-wrap: anywhere; min-width: 0; }
+.log-row.kind-tool .log-text { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.7rem; }
+.log-row.kind-chat-in { background: #f4efe4; }
+.log-row.is-ask .log-kind { color: var(--vermilion); }
+.log-row.is-bad { background: #fbe9ec; }
+.log-row.is-bad .log-kind { color: var(--vermilion); }
+@media (max-width: 600px) {
+  .log-row { grid-template-columns: 3rem minmax(0, 1fr); }
+  .log-kind { grid-column: 2; }
+  .log-text { grid-column: 1 / -1; }
+}
+.maneuver { border: 2px solid var(--ink); background: var(--sheet); padding: 0.7rem; display: grid; gap: 0.4rem; }
+.maneuver h4, .maneuver p { margin: 0; overflow-wrap: anywhere; }
+.phase-chain { list-style: none; display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0; padding: 0; }
+.phase { font-size: 0.7rem; padding: 0.2rem 0.45rem; border: 2px solid var(--ink); background: var(--bone); }
+.phase + .phase::before { content: "→ "; color: var(--quiet); }
+.phase.is-ok { background: #dcefe3; }
+.phase.is-run { background: #dfe3fb; }
+.phase.is-bad { background: #fbe9ec; border-color: var(--vermilion); }
+
+.ship-deck { background: var(--sheet); border: 2px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); padding: 1rem; }
+.ship-deck h3 { margin: 0; }
+.ship-deck .crew-card, .ship-deck .maneuver, .ship-deck .ship-log { box-shadow: none; }
+.ship-deck .crew-card.is-working { box-shadow: 3px 3px 0 var(--ultra); }
+.ship-deck .crew-card.is-waiting { box-shadow: 3px 3px 0 var(--vermilion); }
+@media (max-width: 640px) { .ship-deck { padding: 0.7rem; box-shadow: none; } }

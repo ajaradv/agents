@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readShips } from "./fleet-layers.ts";
 import { ROOT } from "./paths.ts";
 
 export type AgentMeta = {
@@ -16,6 +17,8 @@ export type AgentMeta = {
   runtime: "headless" | "rpc";
   /** `dashboard_session: persistent`: dashboard turns and the TUI share one Pi session. */
   persistentSession: boolean;
+  /** Set for ship crewmates (`<ship>-<role>`): the ship they serve aboard. */
+  ship?: string;
 };
 
 function parseAgentYaml(text: string): Record<string, string> {
@@ -70,6 +73,22 @@ export async function loadAgents(): Promise<AgentMeta[]> {
       });
     } catch {
       /* skip */
+    }
+  }
+  // Ship crewmates: a role template deployed aboard a ship (always live and persistent).
+  const templates = new Map(agents.map((a) => [a.id, a]));
+  for (const ship of await readShips()) {
+    for (const role of ship.crew) {
+      const t = templates.get(role);
+      if (!t || !ship.path) continue;
+      agents.push({
+        ...t,
+        id: `${ship.id}-${role}`,
+        model: ship.crewModels[role] || t.model,
+        runtime: "rpc",
+        persistentSession: true,
+        ship: ship.id,
+      });
     }
   }
   return agents.sort((a, b) => a.id.localeCompare(b.id));

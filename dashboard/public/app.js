@@ -9,7 +9,7 @@ function readChatId() {
   }
 }
 
-const LEAVES = ["health", "fleet", "agents"];
+const LEAVES = ["harbor", "health", "fleet", "agents"];
 
 function saveChatId(id) {
   try {
@@ -21,7 +21,9 @@ function saveChatId(id) {
 
 function dashboardApp() {
   return {
-    leaf: "health",
+    leaf: "harbor",
+    /** Ship shown on the harbor leaf (/ships/<id>), or "" for the harbor itself. */
+    shipSel: "",
     hinge: "",
     paletteOpen: false,
     paletteIndex: 0,
@@ -53,6 +55,7 @@ function dashboardApp() {
 
     paletteItems() {
       const base = [
+        { id: "harbor", label: "Go to Harbor", run: () => this.openLeaf("harbor") },
         { id: "health", label: "Go to Health", run: () => this.openLeaf("health") },
         { id: "fleet", label: "Go to Fleet", run: () => this.openLeaf("fleet") },
         { id: "agents", label: "Go to Agents", run: () => this.openLeaf("agents") },
@@ -145,7 +148,10 @@ function dashboardApp() {
     /** /health, /fleet, /agents pick the section; ?chat=<id> or ?group=<id> opens the drawer. */
     applyUrl() {
       const leaf = location.pathname.replace(/^\/+|\/+$/g, "");
-      this.leaf = LEAVES.includes(leaf) ? leaf : "health";
+      const ship = leaf.match(/^ships\/([a-z][a-z0-9_-]{0,63})$/);
+      this.shipSel = ship ? ship[1] : "";
+      this.leaf = ship ? "harbor" : LEAVES.includes(leaf) ? leaf : "harbor";
+      if (this.leaf === "harbor") this.loadHarbor();
       const q = new URLSearchParams(location.search);
       const chat = q.get("chat");
       const group = q.get("group");
@@ -156,7 +162,8 @@ function dashboardApp() {
 
     leafUrl() {
       const q = !this.chatOpen ? "" : this.chatGroup ? `?group=${encodeURIComponent(this.chatGroup.id)}` : this.chatId ? `?chat=${encodeURIComponent(this.chatId)}` : "";
-      return `/${this.leaf}${q}`;
+      const base = this.leaf === "harbor" && this.shipSel ? `/ships/${encodeURIComponent(this.shipSel)}` : `/${this.leaf}`;
+      return `${base}${q}`;
     },
 
     /** Opening or switching a chat replaces the URL; changing section pushes a history entry. */
@@ -171,8 +178,42 @@ function dashboardApp() {
       }
     },
 
+    /** Harbor or one ship's deck into #harbor-view. */
+    loadHarbor() {
+      this.$nextTick(() => this.pull(this.shipSel ? `/partials/ship/${encodeURIComponent(this.shipSel)}` : "/partials/harbor", "#harbor-view"));
+    },
+
+    openShip(id) {
+      this.closePalette();
+      this.chatOpen = false;
+      this.leaf = "harbor";
+      this.shipSel = id;
+      this.syncUrl(true);
+      this.loadHarbor();
+    },
+
+    /** Links inside the harbor partials navigate in place instead of reloading. */
+    harborClick(ev) {
+      const a = ev.target.closest("a");
+      if (!a || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+      if (a.dataset.ship) {
+        ev.preventDefault();
+        this.openShip(a.dataset.ship);
+      } else if (a.dataset.harbor !== undefined) {
+        ev.preventDefault();
+        this.openLeaf("harbor");
+      } else if (a.dataset.chat) {
+        ev.preventDefault();
+        this.openChat(a.dataset.chat);
+      }
+    },
+
     openLeaf(id) {
       this.chatOpen = false;
+      if (id === "harbor") {
+        this.shipSel = "";
+        this.loadHarbor();
+      }
       this.closePalette();
       this.leaf = id;
       this.syncUrl(true);
@@ -197,6 +238,13 @@ function dashboardApp() {
         this.refreshRail();
       });
       es.addEventListener("rail", () => this.refreshRail());
+      // The ship's log moved, or crew came and went: refresh what the harbor shows.
+      const harborRefresh = (ship) => {
+        if (this.leaf !== "harbor" || document.hidden) return;
+        if (!this.shipSel || !ship || ship === this.shipSel) this.loadHarbor();
+      };
+      es.addEventListener("ship", (ev) => harborRefresh(ev.data));
+      es.addEventListener("agents", () => harborRefresh(""));
       es.addEventListener("canvas", (ev) => {
         if (this.chatOpen && !this.chatGroup && ev.data === this.chatId) this.loadCanvas(true);
       });

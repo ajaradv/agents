@@ -27,6 +27,8 @@ export type ChatTarget = {
   runtime?: "headless" | "rpc";
   /** Shares one Pi session across turns and the TUI; New session starts a fresh one. */
   persistentSession?: boolean;
+  /** Ship crewmates: the ship they serve aboard. */
+  ship?: string;
   /** Task role on the rail: crew or secondmate. */
   role?: "crew" | "secondmate";
   state?: string;
@@ -71,13 +73,14 @@ async function refreshAgents(): Promise<void> {
     .map((a) => ({
       id: a.id,
       kind: a.id === "firstmate" ? "firstmate" : "headless",
-      label: a.id,
-      art: agentArtOrNull(a.id),
+      label: a.ship ? `${a.ship} · ${a.role}` : a.id,
+      art: agentArtOrNull(a.ship ? a.role : a.id),
       model: a.model,
       description: a.description,
       turnTimeoutSec: a.turnTimeoutSec || undefined,
       runtime: a.runtime,
       persistentSession: a.persistentSession || undefined,
+      ship: a.ship,
     }));
 }
 

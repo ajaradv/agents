@@ -21,7 +21,17 @@ describe("parseShipYaml", () => {
       mode: "no-mistakes",
       factory: ".claude/skills/sssf",
       declaredAdws: ["adw_plan_build_test"],
+      orchestrator: "firstmate",
+      crew: [],
+      crewModels: {},
     });
+  });
+
+  test("reads crew and per-role model overrides", () => {
+    const row = parseShipYaml("id: kinwork\npath: /k\norchestrator: lead\ncrew:\n  - designer\n  - Bad Role\ncrew_models:\n  designer: deepseek/deepseek-v4-pro\n", "k");
+    expect(row.orchestrator).toBe("lead");
+    expect(row.crew).toEqual(["designer"]);
+    expect(row.crewModels).toEqual({ designer: "deepseek/deepseek-v4-pro" });
   });
 
   test("factory null means no factory", () => {
