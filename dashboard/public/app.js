@@ -11,6 +11,40 @@ function readChatId() {
 
 const LEAVES = ["harbor", "health", "fleet", "agents"];
 
+/** Float32 chunks at `rate` → 16 kHz mono 16-bit WAV (what the transcriber wants). */
+function encodeWav16k(chunks, rate) {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const ratio = rate / 16000;
+  const outLen = Math.floor(total / ratio);
+  const pcm = new Int16Array(outLen);
+  let ci = 0, off = 0, acc = 0, count = 0, o = 0, next = ratio;
+  for (let i = 0; i < total && o < outLen; i++) {
+    const v = chunks[ci][off];
+    acc += v;
+    count++;
+    if (i + 1 >= next) {
+      const s = Math.max(-1, Math.min(1, acc / count));
+      pcm[o++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      acc = 0;
+      count = 0;
+      next += ratio;
+    }
+    if (++off >= chunks[ci].length) {
+      ci++;
+      off = 0;
+    }
+  }
+  const buf = new ArrayBuffer(44 + pcm.length * 2);
+  const dv = new DataView(buf);
+  const str = (p, s) => [...s].forEach((ch, k) => dv.setUint8(p + k, ch.charCodeAt(0)));
+  str(0, "RIFF"); dv.setUint32(4, 36 + pcm.length * 2, true); str(8, "WAVE"); str(12, "fmt ");
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, 16000, true); dv.setUint32(28, 32000, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  str(36, "data"); dv.setUint32(40, pcm.length * 2, true);
+  new Int16Array(buf, 44).set(pcm);
+  return new Blob([buf], { type: "audio/wav" });
+}
+
 function saveChatId(id) {
   try {
     localStorage.setItem(CHAT_KEY, id);
@@ -36,6 +70,11 @@ function dashboardApp() {
     chatId: readChatId(),
     chatEmpty: true,
     chatDraft: "",
+    /** Voice: "idle" | "listening" | "transcribing"; replies are spoken when voiceReplies is on. */
+    voiceState: "idle",
+    voiceReplies: false,
+    voiceSpeaking: false,
+    voiceNote: "",
     chatConn: "",
     chatThinking: false,
     chatActivity: "",
@@ -68,6 +107,12 @@ function dashboardApp() {
     },
 
     init() {
+      try {
+        this.voiceReplies = localStorage.getItem("fleet.voiceReplies") === "1";
+      } catch {
+        /* private window */
+      }
+      this.voiceSince = Date.now();
       this.refreshRail();
       this.refreshAgentStatus();
       this.connectBus();
@@ -96,7 +141,17 @@ function dashboardApp() {
         this.openPalette();
         return;
       }
+      if (ev.altKey && ev.code === "KeyV" && this.chatOpen && !this.chatGroup) {
+        ev.preventDefault();
+        this.toggleListening();
+        return;
+      }
       if (!this.paletteOpen) {
+        if (ev.key === "Escape" && this.voiceSpeaking) {
+          ev.preventDefault();
+          this.stopSpeaking();
+          return;
+        }
         if (ev.key === "Escape" && this.chatOpen) {
           ev.preventDefault();
           this.closeChat();
@@ -516,6 +571,7 @@ function dashboardApp() {
           const t = this.findTarget(id);
           if (m.role !== "captain" && !(t && t.runtime === "rpc")) this.chatThinking = false;
           this.appendChatLine(m, id);
+          this.maybeSpeak(m, id);
         } catch {
           /* ignore */
         }
@@ -750,6 +806,195 @@ function dashboardApp() {
         /* keep the fallback message */
       }
       this.appendChatLine({ role: "system", kind: "notice", text: j.message, ts: new Date().toISOString() }, t.id);
+    },
+
+    // ------------------------------------------------------------ voice
+
+    /** Hold to talk (pointerdown/up); a quick click toggles instead. */
+    micDown(ev) {
+      ev.preventDefault();
+      this.micPressedAt = Date.now();
+      if (this.voiceState === "listening") return;
+      this.startListening();
+    },
+
+    micUp() {
+      if (this.voiceState !== "listening") return;
+      if (Date.now() - (this.micPressedAt || 0) < 350) {
+        this.voiceNote = "Listening… click the mic again to send.";
+        this.micToggled = true;
+        return;
+      }
+      this.stopListening(true);
+    },
+
+    micClick() {
+      if (this.micToggled && this.voiceState === "listening" && Date.now() - (this.micPressedAt || 0) > 400) {
+        this.micToggled = false;
+        this.stopListening(true);
+      }
+    },
+
+    toggleListening() {
+      if (this.voiceState === "listening") this.stopListening(true);
+      else if (this.voiceState === "idle") this.startListening();
+    },
+
+    async startListening() {
+      this.stopSpeaking();
+      this.voiceNote = "";
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = ctx.createMediaStreamSource(stream);
+        const node = ctx.createScriptProcessor(4096, 1, 1);
+        const chunks = [];
+        node.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+        src.connect(node);
+        node.connect(ctx.destination);
+        this.rec = { stream, ctx, src, node, chunks, started: Date.now() };
+        this.voiceState = "listening";
+        if (!this.voiceNote) this.voiceNote = "Listening… release to send.";
+        this.recTimer = setTimeout(() => this.stopListening(true), 60_000);
+      } catch (e) {
+        this.voiceState = "idle";
+        this.voiceNote = e && e.name === "NotAllowedError" ? "Microphone blocked. Allow it for this page in the browser." : "No microphone available.";
+      }
+    },
+
+    async stopListening(send) {
+      const r = this.rec;
+      this.rec = null;
+      clearTimeout(this.recTimer);
+      this.micToggled = false;
+      if (!r) return;
+      try {
+        r.node.disconnect();
+        r.src.disconnect();
+        r.stream.getTracks().forEach((t) => t.stop());
+      } catch {
+        /* already stopped */
+      }
+      const rate = r.ctx.sampleRate;
+      r.ctx.close();
+      if (!send || Date.now() - r.started < 400) {
+        this.voiceState = "idle";
+        this.voiceNote = send ? "Too short. Hold the mic while you speak." : "";
+        return;
+      }
+      // Silence never leaves the page (transcribers invent text for it).
+      let peak = 0, sum = 0, n = 0;
+      for (const c of r.chunks) for (let i = 0; i < c.length; i += 8) { const a = Math.abs(c[i]); sum += a * a; n++; if (a > peak) peak = a; }
+      if (Math.sqrt(sum / Math.max(1, n)) < 0.004 && peak < 0.05) {
+        this.voiceState = "idle";
+        this.voiceNote = "Didn't hear anything. Check the microphone.";
+        return;
+      }
+      this.voiceState = "transcribing";
+      this.voiceNote = "Transcribing…";
+      const wav = encodeWav16k(r.chunks, rate);
+      try {
+        const res = await fetch("/api/voice/stt", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
+        const j = await res.json();
+        if (!j.ok) throw new Error(j.message || "transcription failed");
+        const text = (j.text || "").trim();
+        if (!text) {
+          this.voiceNote = "Didn't catch that.";
+        } else {
+          this.voiceNote = "";
+          this.chatDraft = text;
+          this.sendChat();
+        }
+      } catch (e) {
+        this.voiceNote = e.message || "Transcription failed.";
+      }
+      this.voiceState = "idle";
+    },
+
+    toggleVoiceReplies() {
+      this.voiceReplies = !this.voiceReplies;
+      this.voiceSince = Date.now();
+      if (!this.voiceReplies) this.stopSpeaking();
+      try {
+        localStorage.setItem("fleet.voiceReplies", this.voiceReplies ? "1" : "0");
+      } catch {
+        /* private window */
+      }
+    },
+
+    /** Speak an agent's chat line when voice replies are on and it arrived live. */
+    maybeSpeak(m, threadId) {
+      if (!this.voiceReplies || this.chatGroup || threadId !== this.chatId) return;
+      if (m.role === "captain" || m.role === "system" || m.role === "dashboard" || (m.kind !== "chat" && m.kind !== "question")) return;
+      if (!m.ts || Date.parse(m.ts) < this.voiceSince) return;
+      (this.speechQueue ||= []).push({ agent: threadId, text: m.text });
+      if (!this.voiceSpeaking) this.speakNext();
+    },
+
+    async speakNext() {
+      const item = (this.speechQueue || []).shift();
+      if (!item) {
+        this.voiceSpeaking = false;
+        return;
+      }
+      this.voiceSpeaking = true;
+      const gen = (this.speechGen = (this.speechGen || 0) + 1);
+      const fetchPart = (part) =>
+        fetch("/api/voice/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent: item.agent, text: item.text, part }) });
+      try {
+        let res = await fetchPart(0);
+        if (res.status === 503) return this.speakWithBrowser(item.text, gen);
+        const total = Number(res.headers.get("X-Parts") || 0);
+        for (let part = 0; part < total && gen === this.speechGen; part++) {
+          if (res.status !== 200) break;
+          const blob = await res.blob();
+          const next = part + 1 < total ? fetchPart(part + 1) : null; // fetch ahead while this part plays
+          await this.playBlob(blob, gen);
+          if (!next) break;
+          res = await next;
+        }
+      } catch {
+        /* network hiccup; skip this line */
+      }
+      if (gen === this.speechGen) this.speakNext();
+    },
+
+    playBlob(blob, gen) {
+      return new Promise((resolve) => {
+        if (gen !== this.speechGen) return resolve();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        this.speechAudio = audio;
+        const done = () => {
+          URL.revokeObjectURL(url);
+          resolve();
+        };
+        audio.onended = done;
+        audio.onerror = done;
+        audio.play().catch(done);
+      });
+    },
+
+    /** Fallback when local voice is not set up: the browser's own speech. */
+    speakWithBrowser(text, gen) {
+      if (!window.speechSynthesis) return this.speakNext();
+      const plain = text.replace(/```[\s\S]*?```/g, " ").replace(/[*_`#>|]/g, "").slice(0, 1200);
+      const u = new SpeechSynthesisUtterance(plain);
+      u.onend = u.onerror = () => {
+        if (gen === this.speechGen) this.speakNext();
+      };
+      speechSynthesis.speak(u);
+    },
+
+    stopSpeaking() {
+      this.speechGen = (this.speechGen || 0) + 1;
+      this.speechQueue = [];
+      if (this.speechAudio) {
+        this.speechAudio.pause();
+        this.speechAudio = null;
+      }
+      if (window.speechSynthesis) speechSynthesis.cancel();
+      this.voiceSpeaking = false;
     },
 
     /** A captain line after a question means it was answered; lock the buttons. */

@@ -21,6 +21,8 @@ import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/group
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
 import { resolveRoute } from "./lib/route.ts";
 import { newSession } from "./lib/session-rotate.ts";
+import { loadAgents } from "./lib/agents.ts";
+import { speakable, speechParts, sttAvailable, synthesize, transcribe, ttsState, voiceFor } from "./lib/voice.ts";
 import { onShipLogWrite } from "./lib/ship-log.ts";
 import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
 import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
@@ -457,6 +459,36 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return new Response(await groupsPanelHtml(), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
+    }
+
+    // Voice (lib/voice.ts): local Kokoro speech, OpenRouter transcription.
+    if (path === "/api/voice/status" && req.method === "GET") {
+      return Response.json({ tts: ttsState(), stt: await sttAvailable() });
+    }
+    if (path === "/api/voice/stt" && req.method === "POST") {
+      const buf = new Uint8Array(await req.arrayBuffer());
+      if (buf.length < 1000 || buf.length > 12_000_000) return Response.json({ ok: false, message: "Recording too short or too long." }, { status: 400 });
+      try {
+        const r = await transcribe(buf);
+        return Response.json({ ok: true, text: r.text, cost: r.cost });
+      } catch (e) {
+        return Response.json({ ok: false, message: e instanceof Error ? e.message : "transcription failed" }, { status: 502 });
+      }
+    }
+    if (path === "/api/voice/tts" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { agent?: string; text?: string; part?: number };
+      const agentId = String(b.agent ?? "");
+      const parts = speechParts(speakable(String(b.text ?? "")));
+      const part = Math.max(0, Math.floor(Number(b.part) || 0));
+      if (!parts.length || part >= parts.length) return new Response(null, { status: 204, headers: { "X-Parts": String(parts.length) } });
+      const meta = (await loadAgents()).find((a) => a.id === agentId);
+      const voice = voiceFor(agentId, meta?.role, meta?.voice);
+      try {
+        const wav = await synthesize(parts[part]!, voice);
+        return new Response(wav, { headers: { "Content-Type": "audio/wav", "X-Parts": String(parts.length), "X-Voice": voice, "Cache-Control": "no-store" } });
+      } catch (e) {
+        return Response.json({ ok: false, message: e instanceof Error ? e.message : "speech failed" }, { status: 503 });
+      }
     }
 
     // Crew API for crewmates (extensions/crew.ts): status, tasks, messages, maneuvers.

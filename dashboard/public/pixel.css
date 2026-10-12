@@ -835,3 +835,21 @@ body.chat-open { overflow: hidden; }
 .vtask.is-done .vtask-mark { color: #1f7a45; }
 .vtask.is-working .vtask-mark { color: var(--ultra); }
 .vtask.is-blocked .vtask-mark, .vtask.is-blocked strong { color: var(--vermilion); }
+
+/* ---------- Voice ---------- */
+.mic-btn { touch-action: none; user-select: none; -webkit-user-select: none; }
+.mic-btn.is-live { background: var(--vermilion); color: var(--sheet); border-color: var(--vermilion); }
+.mic-btn.is-busy { opacity: 0.7; }
+@media (prefers-reduced-motion: no-preference) { .mic-btn.is-live { animation: mic-pulse 1s steps(2) infinite; } }
+@keyframes mic-pulse { 50% { box-shadow: 0 0 0 3px #f3c2cb; } }
+.icon-btn { display: inline-grid; place-items: center; padding: 0.35rem 0.5rem; min-width: 2.4rem; }
+.icon-btn svg { width: 16px; height: 16px; image-rendering: pixelated; }
+.chat-compose { position: relative; }
+.voice-note { position: absolute; left: 4.4rem; bottom: calc(100% + 4px); margin: 0; padding: 0.2rem 0.5rem; font-size: 0.72rem; background: var(--sheet); border: 1px solid var(--ink); color: var(--ink); max-width: calc(100% - 5rem); }
+@media (max-width: 640px) { .voice-note { left: 0.75rem; max-width: calc(100% - 1.5rem); } }
+@media (max-width: 640px) {
+  .chat-compose > .avatar { display: none; }
+  .chat-compose .composer { flex-wrap: wrap; justify-content: flex-end; }
+  .chat-compose .chat-field { flex: 1 1 100%; order: -1; }
+  .voice-note { bottom: calc(100% + 4px); }
+}

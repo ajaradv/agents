@@ -215,8 +215,21 @@
         <button type="button" class="btn" :class="{ 'btn-ink': autoRoute }" :aria-pressed="autoRoute"
                 title="Let Jev pick an agent, a group (its lead), or Firstmate" @click="autoRoute = !autoRoute">Auto</button>
         <textarea class="field chat-field" x-ref="chatField" x-model="chatDraft" rows="1" @input="growComposer()" @keydown.enter="composerEnter($event)" :placeholder="autoRoute ? 'Message — Jev picks who' : 'Message ' + current().label" autocomplete="off" :aria-label="autoRoute ? 'Message, routed by Jev (Shift+Enter for a new line)' : 'Message ' + current().label + ' (Shift+Enter for a new line)'"></textarea>
+        <button type="button" class="btn icon-btn" x-show="!chatGroup" :class="{ 'btn-ink': voiceReplies }" :aria-pressed="voiceReplies"
+                :aria-label="voiceReplies ? 'Voice replies on' : 'Voice replies off'" :title="voiceReplies ? 'Voice replies on: new replies are spoken (Esc stops)' : 'Voice replies off'"
+                @click="voiceSpeaking ? stopSpeaking() : toggleVoiceReplies()">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6h3l4-3v10L5 10H2z"/><path x-show="voiceReplies" fill="currentColor" d="M11 5h1v6h-1zM13 3h1v10h-1z"/><path x-show="!voiceReplies" fill="currentColor" d="M11 6l1-1 3 3-1 1zm0 4l3-3 1 1-3 3z"/></svg>
+        </button>
+        <button type="button" class="btn icon-btn mic-btn" x-show="!chatGroup" :class="{ 'is-live': voiceState === 'listening', 'is-busy': voiceState === 'transcribing' }"
+                :aria-pressed="voiceState === 'listening'" :aria-label="voiceState === 'listening' ? 'Listening, release to send' : 'Hold to talk (Option+V)'"
+                title="Hold to talk, or click to start and stop (Option+V)"
+                @pointerdown="micDown($event)" @pointerup="micUp()" @pointerleave="voiceState === 'listening' && !micToggled && micUp()" @click="micClick()">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M6 1h4v8H6zM4 7h1v2h6V7h1v3H9v2h2v2H5v-2h2v-2H4z"/></svg>
+        </button>
         <button class="btn btn-ink" type="submit">Send</button>
       </div>
+      <p class="voice-note" role="status" aria-live="polite" x-show="voiceNote || voiceSpeaking" x-cloak
+         x-text="voiceNote || 'Speaking… press Esc or the speaker to stop.'"></p>
     </form>
   </aside>
 

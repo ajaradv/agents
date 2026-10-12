@@ -22,6 +22,7 @@ vendor/three-agent-skills/ Three.js + R3F best-practice skills (Designer)
 bin/launch                 start an agent from agent.yaml
 bin/setup                  submodules + bun + alice vault
 bin/setup-alice-vault      brain inbox + obsidian skill symlinks
+bin/voice-setup            local text-to-speech model (Kokoro) for dashboard voice replies
 bin/seed-fleet-home        copy vendor/firstmate → fleet/home
 bin/new-agent              scaffold agents/<id>, roles/<id>.md, just recipe, inbox, README row
 bin/stamp-ship             fleet/ships/<id>.yaml + copy SSSF into a ship + install.py (+ optional Firstmate registration)

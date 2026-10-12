@@ -21,6 +21,8 @@ export type AgentMeta = {
   crewEligible: boolean;
   /** `crew: only`: a template that exists only aboard ships, never on the rail by itself. */
   crewOnly: boolean;
+  /** `voice:` Kokoro voice id (e.g. af_heart); empty means the role's default. */
+  voice: string;
   /** Set for ship crewmates (`<ship>-<role>`): the ship they serve aboard. */
   ship?: string;
 };
@@ -76,6 +78,7 @@ export async function loadAgents(): Promise<AgentMeta[]> {
         persistentSession: y.dashboard_session === "persistent",
         crewEligible: y.crew === "true" || y.crew === "only",
         crewOnly: y.crew === "only",
+        voice: y.voice ?? "",
       });
     } catch {
       /* skip */
