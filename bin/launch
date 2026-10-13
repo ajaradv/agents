@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -185,7 +186,16 @@ def parse_env_file(path: Path) -> dict[str, str]:
     """Last assignment wins; # comments and blank lines ignored."""
     out: dict[str, str] = {}
     text = _read_env_file_contents(path)
+    # The secrets manager's pipe serves one reader at a time; an empty read is
+    # usually a collision, so try again before launching without keys.
+    for _ in range(2):
+        if text.strip():
+            break
+        time.sleep(0.5)
+        text = _read_env_file_contents(path)
     if not text:
+        if path.exists():
+            print(f"launch: {path} gave no keys; provider calls may fail", file=sys.stderr)
         return out
     for raw in text.splitlines():
         line = raw.strip()

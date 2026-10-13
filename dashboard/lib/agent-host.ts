@@ -7,6 +7,7 @@ import {
   type ChatLine,
   type ChatQuestion,
 } from "./chat.ts";
+import { agentKeyEnv } from "./fleet-env.ts";
 import { dashLog } from "./log.ts";
 import { PORT, ROOT } from "./paths.ts";
 
@@ -287,14 +288,14 @@ async function drainStderr(p: AgentProc): Promise<void> {
   }
 }
 
-function start(agentId: string): AgentProc {
+function start(agentId: string, keys: Record<string, string>): AgentProc {
   const proc = Bun.spawn(["python3", join(ROOT, "bin/launch"), "rpc", agentId], {
     cwd: ROOT,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
     // Crewmates call back into this dashboard (extensions/crew.ts).
-    env: { ...process.env, FLEET_DASHBOARD_URL: `http://127.0.0.1:${PORT}` },
+    env: { ...process.env, ...keys, FLEET_DASHBOARD_URL: `http://127.0.0.1:${PORT}` },
   });
   const p: AgentProc = {
     id: agentId,
@@ -338,7 +339,11 @@ function start(agentId: string): AgentProc {
 
 /** Hand a captain line to the agent's live session (starting it when needed). */
 export async function submitToHost(agentId: string, line: ChatLine): Promise<void> {
-  const p = procs.get(agentId) ?? start(agentId);
+  let p = procs.get(agentId);
+  if (!p) {
+    const keys = await agentKeyEnv();
+    p = procs.get(agentId) ?? start(agentId, keys);
+  }
   p.lastCaptainTs = line.ts;
   p.lastActive = Date.now();
   if (p.running) {
@@ -352,7 +357,16 @@ export async function submitToHost(agentId: string, line: ChatLine): Promise<voi
   }
   const r = await send(p, { type: "prompt", message: line.text });
   if (!r.success) {
-    hooks.line(agentId, await appendChatError(agentId, String(r.error ?? "prompt rejected"), line.ts));
+    const error = String(r.error ?? "prompt rejected");
+    if (/No API key found/i.test(error)) {
+      // Launched while the secrets pipe was silent: this process will never have
+      // the key. Stop it so the next message relaunches with fresh keys.
+      await stopHost(agentId);
+      void dashLog("agent-host", `${agentId} started without a provider key; stopped for relaunch`);
+      hooks.line(agentId, await appendChatError(agentId, `${error.split("\n")[0]} The agent was restarted without its keys; send the message again.`, line.ts));
+      return;
+    }
+    hooks.line(agentId, await appendChatError(agentId, error, line.ts));
   }
 }
 
