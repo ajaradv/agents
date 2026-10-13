@@ -583,7 +583,10 @@ function dashboardApp() {
       if (!log) return;
       this.chatEmpty = false;
       const tid = threadId || this.chatId;
-      if (m.ts && log.querySelector(`[data-at="${CSS.escape(m.ts)}"][data-thread="${CSS.escape(tid)}"]`)) return;
+      // Replays and live events repeat lines; ts + kind identifies one (an answer and
+      // the follow-up dialog it opens can share a millisecond).
+      const kind = m.kind || "chat";
+      if (m.ts && log.querySelector(`[data-at="${CSS.escape(m.ts)}"][data-kind="${CSS.escape(kind)}"][data-thread="${CSS.escape(tid)}"]`)) return;
       const t = this.findTarget(tid) || { id: tid, label: tid, art: null };
       const row = document.createElement("div");
       if (m.kind === "error") {
@@ -636,6 +639,7 @@ function dashboardApp() {
         row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}</span><p>${escapeHtml(m.text)}</p></div>`;
       }
       if (m.ts) row.dataset.at = m.ts;
+      row.dataset.kind = kind;
       row.dataset.thread = tid;
       if (m.role === "captain" && m.ts) this.markAnswered(log, tid, m.ts);
       // Stacked group threads replay one member at a time; keep the drawer in time order.
@@ -650,7 +654,9 @@ function dashboardApp() {
       const intro = (m.text || "").split("\n")[0].replace(/^Question for you:\s*/, "");
       const qs = m.questions
         .map((q, qi) => {
+          // ask_captain's "Other (type an answer)" opens a second dialog; the text box below already sends typed text.
           const opts = (q.options || [])
+            .filter((o) => !/^Other \(type an answer\)$/.test(o))
             .map(
               (o) =>
                 `<button type="button" class="chip" data-q="${qi}" data-opt="${escapeHtml(o)}" aria-pressed="false">${escapeHtml(o)}${o === q.recommended ? ' <span class="detent">recommended</span>' : ""}</button>`,
