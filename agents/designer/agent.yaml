@@ -4,11 +4,12 @@ type: assistant
 crew: true
 role: designer
 harness: pi
-# JetBrains Junie credits (pi-jetbrains-junie-bridge) until that account
-# expires: Claude Opus 5 for visual judgment and screenshots. Afterwards back
-# to Claude Sonnet 5.5 through OpenRouter (never through Cursor):
-#   model: openrouter/anthropic/claude-sonnet-5.5
+# JetBrains Junie credits (pi-jetbrains-junie-bridge, until 2026-10-26):
+# Claude Opus 5 for visual judgment and screenshots. bin/launch checks the
+# Junie balance at each start and uses fallback_model once credits run out:
+# Claude Sonnet 5.5 through OpenRouter (never through Cursor).
 model: junie/claude-opus-5
+fallback_model: openrouter/anthropic/claude-sonnet-5.5
 workspace: ships
 # Live session in the dashboard's agent host (pi --mode rpc), shared with the
 # TUI (Start TUI on the dashboard, or just designer). turn_timeout only applies

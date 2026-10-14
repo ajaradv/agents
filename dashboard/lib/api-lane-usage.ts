@@ -165,16 +165,20 @@ async function junieToken(): Promise<{ access: string; expires: number } | null>
 }
 
 export async function junieSignedIn(): Promise<boolean> {
-  return Boolean(await junieToken());
+  return Boolean(envKeyValue("JUNIE_API_KEY", await loadFleetDotenv()) || (await junieToken()));
 }
+
+/** When the Junie account ends (subscription quota first, then top-up credits). */
+const JUNIE_UNTIL = "2026-10-26T23:59:59";
 
 /** Grazie reports credits, 100,000 to the dollar (as the bridge shows them). */
 const JUNIE_CREDITS_PER_USD = 100_000;
 
-async function fetchJunie(): Promise<ApiLaneUsage> {
+async function fetchJunie(apiKey: string): Promise<ApiLaneUsage> {
   const at = new Date().toISOString();
   const prev = usageCache.junie;
-  const tok = await junieToken();
+  // The API key (JUNIE_API_KEY) never expires mid-day; Pi's sign-in lasts an hour.
+  const tok = apiKey ? { access: apiKey, expires: 0 } : await junieToken();
   if (!tok) return { provider: "junie", ok: false, error: "not signed in (pi /login → JetBrains Junie)", at };
   if (tok.expires && tok.expires < Date.now()) {
     if (prev?.ok) return { ...prev, stale: true, error: "sign-in refreshes when a Junie agent runs", at };
@@ -187,12 +191,14 @@ async function fetchJunie(): Promise<ApiLaneUsage> {
   const o = (body ?? {}) as { balanceLeft?: number; balanceUnit?: string; licenseType?: string; active?: boolean };
   if (typeof o.balanceLeft !== "number") return { provider: "junie", ok: false, error: `HTTP ${status || "error"}`, at };
   const usd = o.balanceUnit === "CREDITS" ? o.balanceLeft / JUNIE_CREDITS_PER_USD : o.balanceLeft;
+  const days = Math.ceil((Date.parse(JUNIE_UNTIL) - Date.now()) / 86_400_000);
+  const pace = days > 0 ? ` · ${formatUsd(usd / days)}/day uses it all by ${JUNIE_UNTIL.slice(5)}` : "";
   return {
     provider: "junie",
     ok: true,
     at,
     headline: `${formatUsd(usd)} credits left`,
-    detail: `${o.licenseType ?? "Junie"} licence${o.active === false ? " (inactive)" : ""} · use before it expires`,
+    detail: `${o.licenseType ?? "Junie"} licence${o.active === false ? " (inactive)" : ""}${pace}`,
   };
 }
 
@@ -234,7 +240,7 @@ export async function refreshApiLaneUsage(): Promise<Record<string, ApiLaneUsage
       };
     }
     jobs.push(
-      fetchJunie().then((u) => {
+      fetchJunie(envKeyValue("JUNIE_API_KEY", dotenv)).then((u) => {
         next.junie = u;
       }),
     );

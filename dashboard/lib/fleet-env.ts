@@ -74,6 +74,7 @@ const AGENT_KEYS = [
   "HF_TOKEN",
   "CURSOR_API_KEY",
   "ANTHROPIC_API_KEY",
+  "JUNIE_API_KEY",
 ];
 
 /**

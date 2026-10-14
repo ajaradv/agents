@@ -28,6 +28,7 @@ ENV_ALLOWLIST = frozenset(
         "HF_TOKEN",
         "CURSOR_API_KEY",
         "ANTHROPIC_API_KEY",
+        "JUNIE_API_KEY",
     }
 )
 
@@ -317,6 +318,54 @@ def load_agent(agent_id: str) -> tuple[dict, dict | None] | None:
     return None
 
 
+JUNIE_MIN_CREDITS = 50_000  # $0.50 at Grazie's 100,000 credits to the dollar
+
+
+def junie_usable() -> bool:
+    """Whether the JetBrains Junie account can still take work: an active licence
+    with credits left (subscription quota first, then top-up credits). A network
+    blip counts as usable, so a slow check never flips an agent's model."""
+    token = os.environ.get("JUNIE_API_KEY", "").strip()
+    if not token:
+        try:
+            cred = json.loads((Path.home() / ".pi" / "agent" / "auth.json").read_text()).get("junie") or {}
+            token = str(cred.get("access") or "")
+        except (OSError, ValueError):
+            token = ""
+    if not token:
+        return False
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        "https://ingrazzio-cloud-prod.labs.jb.gg/auth/test",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=4) as res:
+            info = json.loads(res.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        if e.code == 402:
+            return False
+        # A rejected API key is final (Grazie answers a bad key with 407); an
+        # expired sign-in token is one Pi refreshes itself.
+        return not (e.code in (401, 403, 407) and os.environ.get("JUNIE_API_KEY"))
+    except (OSError, ValueError):
+        return True
+    left = info.get("balanceLeft")
+    return info.get("active") is not False and (not isinstance(left, (int, float)) or left > JUNIE_MIN_CREDITS)
+
+
+def model_with_fallback(model: object, fallback: object, agent_id: str) -> object:
+    """junie/* models run while the Junie account has credits, then fallback_model."""
+    if not (isinstance(model, str) and model.startswith("junie/") and fallback):
+        return model
+    if junie_usable():
+        return model
+    print(f"launch: Junie credits are used up or the licence ended; {agent_id} runs on {fallback}", file=sys.stderr)
+    return fallback
+
+
 def prepare_pi_launch(
     agent_id: str, extra: list[str] | None = None
 ) -> tuple[Path, list[str], Path, str | None] | None:
@@ -345,6 +394,7 @@ def prepare_pi_launch(
         subprocess.run([str(ROOT / "bin" / "seed-fleet-home")], check=False)
 
     apply_fleet_home_env()
+    model = model_with_fallback(model, agent.get("fallback_model"), agent_id)
 
     inbox = fleet_inbox_root()
     os.environ.setdefault("FLEET_INBOX", str(inbox))

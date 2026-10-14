@@ -44,6 +44,7 @@ export type HostHooks = {
 const IDLE_MS = 20 * 60_000;
 const STREAM_THROTTLE_MS = 120;
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
+const BILLING_ERROR = /\b402\b|billing|insufficient|quota|out of credits|requires more credits|balance/i;
 
 type Dialog = { method: string; lineTs: string; timer?: ReturnType<typeof setTimeout> };
 
@@ -239,6 +240,12 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       if (p.turnError && p.lastCaptainTs) {
         hooks.line(p.id, await appendChatError(p.id, p.turnError, p.lastCaptainTs));
         hooks.settled(p.id, { ok: false, ms, error: p.turnError, cost: p.turnCost, tokens: p.turnTokens });
+        if (BILLING_ERROR.test(p.turnError)) {
+          // Out of credits: the next message relaunches through bin/launch, which
+          // moves a Junie agent to its fallback_model once Junie credits are gone.
+          void dashLog("agent-host", `${p.id} hit a billing error; stopped so the next message relaunches`);
+          setTimeout(() => void stopHost(p.id), 0);
+        }
       } else {
         hooks.settled(p.id, { ok: true, ms, cost: p.turnCost, tokens: p.turnTokens });
       }
