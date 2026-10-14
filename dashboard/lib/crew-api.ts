@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, openSync } from "node:fs";
+import { closeSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { hostRunning } from "./agent-host.ts";
 import { acceptCrewLine } from "./chat-bridge.ts";
@@ -163,7 +163,13 @@ export async function crewStartManeuver(shipId: string, b: { from: string; adw?:
   mkdirSync(maneuverLogDir(shipId), { recursive: true });
   const log = join(maneuverLogDir(shipId), `${adwId}.log`);
   const fd = openSync(log, "a");
-  const proc = Bun.spawn(["uv", "run", `adws/${adw}.py`, prompt, "--adw-id", adwId], { cwd: a.ship.path, stdout: fd, stderr: fd, stdin: "ignore" });
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn(["uv", "run", `adws/${adw}.py`, prompt, "--adw-id", adwId], { cwd: a.ship.path, stdout: fd, stderr: fd, stdin: "ignore" });
+  } finally {
+    // The child has its own copy of the log descriptor; keeping ours leaks one per maneuver.
+    closeSync(fd);
+  }
   running.set(adwId, { taskId: task.id, ship: shipId });
   logShipEvent(shipId, b.from, "maneuver", `${adw} launched (${adwId})`, { adw, adwId, task: task.id, log });
   void proc.exited.then(async (code) => {

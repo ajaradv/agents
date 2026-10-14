@@ -171,7 +171,17 @@ export async function refreshAgentTargets(): Promise<void> {
   await refreshAgents();
 }
 
-export async function refreshChatTargets(): Promise<void> {
+let refreshing: Promise<void> | null = null;
+
+/** Overlapping calls share one refresh (the 20s timer must not stack them). */
+export function refreshChatTargets(): Promise<void> {
+  refreshing ??= doRefreshChatTargets().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+async function doRefreshChatTargets(): Promise<void> {
   try {
     await refreshAgents();
   } catch (e) {

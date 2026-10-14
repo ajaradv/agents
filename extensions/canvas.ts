@@ -16,7 +16,7 @@
  * bin/launch loads this for every assistant and sets FLEET_AGENT_ID.
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, realpathSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -133,9 +133,11 @@ export default function (pi: ExtensionAPI) {
           }
           case "html": {
             if (params.dir) {
-              const dir = abs(params.dir, cwd);
+              const dir = realpathSync(abs(params.dir, cwd));
               if (dirSize(dir) > MAX_DIR) throw new Error(`${params.dir} is over 50 MB`);
-              cpSync(dir, join(tmp, "site"), { recursive: true, filter: (s) => !/\/(node_modules|\.git)(\/|$)/.test(s) });
+              // Symlinks are left out: a link could point anywhere on disk, and the
+              // dashboard serves this folder.
+              cpSync(dir, join(tmp, "site"), { recursive: true, filter: (s) => !/\/(node_modules|\.git)(\/|$)/.test(s) && !lstatSync(s).isSymbolicLink() });
               const entry = params.path ?? "index.html";
               if (!existsSync(join(tmp, "site", entry))) throw new Error(`${entry} not found in ${params.dir}`);
               item.entry = `site/${entry}`;

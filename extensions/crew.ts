@@ -27,7 +27,8 @@ async function call(method: "GET" | "POST", path: string, body?: Record<string, 
     const url = `${base}/api/crew/${encodeURIComponent(ship)}/${path}${method === "GET" ? `?from=${encodeURIComponent(me)}` : ""}`;
     const res = await fetch(url, {
       method,
-      headers: { "Content-Type": "application/json" },
+      // The dashboard knows this process by FLEET_CREW_TOKEN, not by name.
+      headers: { "Content-Type": "application/json", "x-fleet-crew-token": process.env.FLEET_CREW_TOKEN ?? "" },
       ...(method === "POST" ? { body: JSON.stringify({ ...body, from: me }) } : {}),
       signal: AbortSignal.timeout(20_000),
     });

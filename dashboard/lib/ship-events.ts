@@ -25,6 +25,9 @@ export function logCrewLine(agentId: string, line: ChatLine): void {
       ? line.kind === "answer" ? "answer" : "chat-in"
       : line.kind === "question" ? "question" : line.kind === "error" ? "notice" : "chat-out";
   const payload: Record<string, unknown> = {};
+  // Which crewmate the captain was talking to, so an answer to one does not
+  // clear another's "Needs you" (lib/ship-view.ts).
+  if (line.from === "captain") payload.to = agentId;
   if (line.questions?.length) payload.questions = line.questions.map((q) => q.question);
   if (line.kind === "error") payload.level = "error";
   logShipEvent(ship, line.from === "captain" ? "captain" : agentId, kind, line.text, Object.keys(payload).length ? payload : null, { ts: line.ts });

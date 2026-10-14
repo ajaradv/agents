@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseDocument } from "yaml";
+import { isMap, parseDocument } from "yaml";
 import { loadAgents, type AgentMeta } from "./agents.ts";
 import { frontmatter, readShips, type ShipRow } from "./fleet-layers.ts";
 import { aliceVault, ROOT } from "./paths.ts";
@@ -34,6 +34,11 @@ export async function crewRoles(): Promise<AgentMeta[]> {
   return (await loadAgents()).filter((a) => a.crewEligible && !a.ship);
 }
 
+/** Remove map.key when the map exists; a ship without that map has nothing to remove. */
+function deleteKey(doc: ReturnType<typeof parseDocument>, map: string, key: string): void {
+  if (isMap(doc.get(map))) doc.deleteIn([map, key]);
+}
+
 async function editShip(id: string, edit: (doc: ReturnType<typeof parseDocument>) => void): Promise<void> {
   const path = shipFile(id);
   const doc = parseDocument(await readFile(path, "utf8"));
@@ -54,17 +59,17 @@ export async function setCrew(
     if (change.add) crew.add(change.add);
     if (change.remove) {
       crew.delete(change.remove);
-      doc.deleteIn(["crew_budgets", change.remove]);
-      doc.deleteIn(["crew_models", change.remove]);
+      deleteKey(doc, "crew_budgets", change.remove);
+      deleteKey(doc, "crew_models", change.remove);
     }
     doc.set("crew", [...crew]);
     if (change.budget && ROLE_RE.test(change.budget.role)) {
-      if (change.budget.usd === null || !(change.budget.usd > 0)) doc.deleteIn(["crew_budgets", change.budget.role]);
+      if (change.budget.usd === null || !(change.budget.usd > 0)) deleteKey(doc, "crew_budgets", change.budget.role);
       else doc.setIn(["crew_budgets", change.budget.role], Math.max(0.001, Math.round(change.budget.usd * 1000) / 1000));
     }
     if (change.model && ROLE_RE.test(change.model.role)) {
       const m = change.model.model?.trim();
-      if (!m) doc.deleteIn(["crew_models", change.model.role]);
+      if (!m) deleteKey(doc, "crew_models", change.model.role);
       else if (/^[a-z0-9._@:/-]{3,120}$/i.test(m)) doc.setIn(["crew_models", change.model.role], m);
     }
   });

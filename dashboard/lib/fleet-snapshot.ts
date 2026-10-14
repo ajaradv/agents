@@ -109,20 +109,25 @@ export type FleetSnapshot = {
 };
 
 const TERMINAL = new Set(["done", "failed"]);
+const SNAPSHOT_TIMEOUT_MS = 15_000;
 
 export async function runFleetSnapshotJson(): Promise<FleetSnapshot> {
   const snapshotPath = join(FM_HOME, "bin", "fm-fleet-snapshot.sh");
   try {
-    const res = await Bun.spawn(["bash", snapshotPath, "--json"], {
+    const res = Bun.spawn(["bash", snapshotPath, "--json"], {
       cwd: FM_HOME,
       env: { ...process.env, FM_HOME },
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([
+    // A hung script must not hold the rail: kill it after SNAPSHOT_TIMEOUT_MS.
+    // stderr is drained too, or a chatty script blocks on a full pipe.
+    const timer = setTimeout(() => res.kill(), SNAPSHOT_TIMEOUT_MS);
+    const [stdout, , exitCode] = await Promise.all([
       new Response(res.stdout).text(),
+      new Response(res.stderr).text(),
       res.exited,
-    ]);
+    ]).finally(() => clearTimeout(timer));
     if (exitCode !== 0) {
       return { ok: false, error: "snapshot unavailable", tasks: [], backlog: [] };
     }

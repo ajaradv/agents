@@ -27,7 +27,7 @@ type CrewCard = {
 
 const DAY_MS = 86_400_000;
 
-function crewStatus(id: string, events: ShipEvent[]): { status: CrewStatus; activity: string; lastAt: string | null } {
+export function crewStatus(id: string, events: ShipEvent[]): { status: CrewStatus; activity: string; lastAt: string | null } {
   const mine = events.filter((e) => e.actor === id);
   const last = mine[0];
   if (hostRunning(id)) {
@@ -37,7 +37,14 @@ function crewStatus(id: string, events: ShipEvent[]): { status: CrewStatus; acti
   // Waiting: its newest line is a question the captain has not answered since.
   const question = mine.find((e) => e.kind === "question");
   if (question) {
-    const answered = events.some((e) => e.actor === "captain" && (e.kind === "answer" || e.kind === "chat-in") && e.ts > question.ts);
+    // Rows logged before captain lines carried `to` count for every crewmate.
+    const answered = events.some(
+      (e) =>
+        e.actor === "captain" &&
+        (e.kind === "answer" || e.kind === "chat-in") &&
+        e.ts > question.ts &&
+        (e.payload?.to === undefined || e.payload.to === id),
+    );
     if (!answered) return { status: "waiting", activity: question.summary, lastAt: question.ts };
   }
   if (!last) return { status: "asleep", activity: "Not started on this ship yet", lastAt: null };

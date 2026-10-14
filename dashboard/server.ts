@@ -10,7 +10,6 @@ import { agentsSidebarHtml } from "./lib/partials.ts";
 import { agentsStatusJson } from "./lib/agents-api.ts";
 import {
   appendCaptainChat,
-  chatAllowed,
   readCaptainChat,
   type ChatLine,
 } from "./lib/chat.ts";
@@ -38,9 +37,11 @@ import {
   setChatTurnEmitter,
   startChatBridge,
 } from "./lib/chat-bridge.ts";
-import { abortHost, answerDialog, hostAlive, hostRunning, startHostReaper, stopHost, type HostEvent } from "./lib/agent-host.ts";
+import { abortHost, answerDialog, crewCaller, hostAlive, hostRunning, startHostReaper, stopHost, type HostEvent } from "./lib/agent-host.ts";
 import { chatAllowed, chatTarget, listChatTargets, refreshAgentTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import { HOST, PORT, ROOT } from "./lib/paths.ts";
+import { requestRefusal } from "./lib/request-guard.ts";
+import { dashLog } from "./lib/log.ts";
 
 type WsData = { agentId: string };
 const chatSockets = new Map<string, Set<WebSocket>>();
@@ -162,6 +163,11 @@ const server = Bun.serve({
   hostname: HOST,
   port: PORT,
   async fetch(req, server) {
+    const refusal = requestRefusal(req, PORT);
+    if (refusal) {
+      void dashLog("guard", `refused ${req.method} ${new URL(req.url).pathname}: ${refusal}`);
+      return new Response("forbidden", { status: 403 });
+    }
     try {
       return await handleFetch(req, server);
     } catch (e) {
@@ -495,12 +501,15 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     const crewApi = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers)(?:\/(\d+))?$/);
     if (crewApi) {
       const [, shipId, what, num] = crewApi as unknown as [string, string, string, string | undefined];
+      // The caller is whoever holds the token its live process was given; a
+      // name in the request ("from") is never trusted.
+      const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+      if (!from) return Response.json({ ok: false, message: "Crew calls come from a crewmate's live session." }, { status: 403 });
       let res: { ok: boolean; message: string };
       if (what === "status" && req.method === "GET") {
-        res = await voyageStatus(shipId, url.searchParams.get("from") ?? "");
+        res = await voyageStatus(shipId, from);
       } else if (req.method === "POST") {
-        const b = (await req.json().catch(() => ({}))) as Record<string, unknown> & { from?: string };
-        const from = String(b.from ?? "");
+        const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
         if (what === "tasks" && num) res = await crewUpdateTask(shipId, Number(num), { ...b, from } as never);
         else if (what === "tasks") res = await crewAddTask(shipId, { ...b, from } as never);
         else if (what === "message") res = await crewMessage(shipId, { ...b, from } as never);
@@ -532,7 +541,12 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       const [, shipId, action] = shipAction as unknown as [string, string, string];
       const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       let res: { ok: boolean; message: string };
-      if (action === "crew") {
+      const ashore = action === "crew" && b.remove ? `${shipId}-${String(b.remove)}` : "";
+      if (ashore && hostRunning(ashore)) {
+        // Off the rail it could no longer be watched or stopped; finish or stop the turn first.
+        res = { ok: false, message: `${ashore} is mid-task. Stop it or let it finish, then send it ashore.` };
+      } else if (action === "crew") {
+        if (ashore) await stopHost(ashore);
         const role = String(b.role ?? "");
         res = await setCrew(shipId, {
           ...(b.add ? { add: String(b.add) } : {}),

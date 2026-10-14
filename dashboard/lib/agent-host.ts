@@ -295,14 +295,25 @@ async function drainStderr(p: AgentProc): Promise<void> {
   }
 }
 
+/** Crew API credentials: token → the agent whose process holds it. */
+const crewTokens = new Map<string, string>();
+
+/** Who is calling the crew API, from the token only that agent's process was given. */
+export function crewCaller(token: string): string | null {
+  return (token && crewTokens.get(token)) || null;
+}
+
 function start(agentId: string, keys: Record<string, string>): AgentProc {
+  const crewToken = crypto.randomUUID();
+  crewTokens.set(crewToken, agentId);
   const proc = Bun.spawn(["python3", join(ROOT, "bin/launch"), "rpc", agentId], {
     cwd: ROOT,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    // Crewmates call back into this dashboard (extensions/crew.ts).
-    env: { ...process.env, ...keys, FLEET_DASHBOARD_URL: `http://127.0.0.1:${PORT}` },
+    // Crewmates call back into this dashboard (extensions/crew.ts) and prove
+    // who they are with FLEET_CREW_TOKEN, never with a name in the request.
+    env: { ...process.env, ...keys, FLEET_DASHBOARD_URL: `http://127.0.0.1:${PORT}`, FLEET_CREW_TOKEN: crewToken },
   });
   const p: AgentProc = {
     id: agentId,
@@ -326,6 +337,7 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
   void pump(p);
   void drainStderr(p);
   void proc.exited.then(async (code) => {
+    crewTokens.delete(crewToken);
     if (procs.get(agentId) === p) procs.delete(agentId);
     for (const [, d] of p.dialogs) if (d.timer) clearTimeout(d.timer);
     for (const [, resolve] of p.pending) resolve({ success: false, error: "agent process exited" });

@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { join, normalize, sep } from "node:path";
 import { escapeHtml } from "./quota.ts";
 import { fleetInboxRoot } from "./paths.ts";
@@ -132,14 +132,29 @@ const SANDBOX_SCRIPTS =
 const SANDBOX_STATIC =
   "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:";
 
+/**
+ * A regular file inside an item's folder, or null. Checked after resolving
+ * symlinks too, so a link copied into the item cannot point outside it.
+ */
+export async function confinedFile(base: string, rel: string): Promise<string | null> {
+  const full = normalize(join(base, rel));
+  if (!full.startsWith(base + sep)) return null;
+  try {
+    const [realBase, realFull] = await Promise.all([realpath(base), realpath(full)]);
+    if (!realFull.startsWith(realBase + sep)) return null;
+    return (await stat(realFull)).isFile() ? realFull : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Serve one file of an item, confined to the item's folder. */
 export async function canvasFileResponse(agentId: string, itemId: string, rel: string): Promise<Response> {
   if (!ID_RE.test(agentId) || !ITEM_RE.test(itemId)) return new Response("not found", { status: 404 });
   const base = join(canvasDir(agentId), itemId);
-  const full = normalize(join(base, rel));
-  if (!full.startsWith(base + sep) || full.endsWith(`${sep}item.json`)) return new Response("not found", { status: 404 });
+  const full = await confinedFile(base, rel);
+  if (!full || full.endsWith(`${sep}item.json`)) return new Response("not found", { status: 404 });
   const file = Bun.file(full);
-  if (!(await file.exists())) return new Response("not found", { status: 404 });
   const isHtml = /\.html?$/i.test(full);
   const isSvg = /\.svg$/i.test(full);
   return new Response(file, {
@@ -193,7 +208,9 @@ function tableHtml(rows: unknown[]): string {
 export async function canvasViewResponse(agentId: string, itemId: string): Promise<Response> {
   const item = (await listCanvas(agentId)).find((i) => i.id === itemId);
   if (!item || !item.file) return new Response("not found", { status: 404 });
-  const raw = await readFile(join(canvasDir(agentId), itemId, item.file), "utf8");
+  const path = await confinedFile(join(canvasDir(agentId), itemId), item.file);
+  if (!path) return new Response("not found", { status: 404 });
+  const raw = await readFile(path, "utf8");
   if (item.kind === "markdown") return viewPage(item.title, Bun.markdown.html(raw));
   if (item.kind === "table") {
     let rows: unknown = [];

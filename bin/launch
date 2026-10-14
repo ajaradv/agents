@@ -688,7 +688,13 @@ def rpc_main() -> int:
     prepared = prepare_pi_launch(agent_id, [])
     if prepared is None:
         return 1
-    cwd, base_args, _prompt_file, _model = prepared
+    cwd, base_args, prompt_file, _model = prepared
+    # exec leaves nobody to delete a temp prompt, so RPC launches keep one
+    # stable copy per agent, replaced on each launch.
+    stable = fleet_inbox_root() / agent_id / "role-prompt.md"
+    stable.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(prompt_file, stable)
+    base_args = [str(stable) if a == str(prompt_file) else a for a in base_args]
     session_args = persistent_session_args(agent_id) or ["--no-session"]
     args = base_args + ["--mode", "rpc", *session_args]
     print(f"cd {cwd} && {' '.join(base_args)} --mode rpc {' '.join(session_args)}", file=sys.stderr)
