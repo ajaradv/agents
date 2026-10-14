@@ -8,20 +8,34 @@
  * and swaps older ones for a one-line note. The session file is untouched, so
  * nothing is lost; the agent can re-read a file if it needs the picture again.
  *
- * Tune with FLEET_IMAGE_KEEP (count, default 6) and FLEET_IMAGE_MB (default 12).
+ * Tune with FLEET_IMAGE_KEEP (earlier-turn count, default 6) and FLEET_IMAGE_MB
+ * (total cap, default 20; providers refuse requests over 32 MB).
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 const KEEP = Math.max(0, Number(process.env.FLEET_IMAGE_KEEP ?? 6) || 0);
-const MAX_BYTES = Math.max(1, Number(process.env.FLEET_IMAGE_MB ?? 12) || 12) * 1_000_000;
-const NOTE = "[Earlier image left out to keep requests small. Read the file again if you need to see it.]";
+const MAX_BYTES = Math.max(1, Number(process.env.FLEET_IMAGE_MB ?? 20) || 20) * 1_000_000;
+const NOTE = "[Image from an earlier turn left out to keep requests small. You saw it then; rely on what you concluded, and re-read it only if a decision now depends on it.]";
 
 type Block = { type: string; data?: string; text?: string };
-type Msg = { content?: string | Block[] };
+type Msg = { role?: string; content?: string | Block[] };
 
-/** Drop all but the newest images; returns null when nothing changes. */
+/**
+ * Drop older images; returns null when nothing changes.
+ *
+ * Images since the captain's last message (this turn) are all kept, up to the
+ * byte cap: dropping one mid-task made an agent re-read screenshots in a loop
+ * (2026-10-14). From earlier turns, only the newest `keep` images stay.
+ */
 export function windowImages<T extends Msg>(messages: T[], keep = KEEP, maxBytes = MAX_BYTES): T[] | null {
+  let lastUser = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "user") {
+      lastUser = i;
+      break;
+    }
+  }
   let kept = 0;
   let bytes = 0;
   let changed = false;
@@ -29,6 +43,7 @@ export function windowImages<T extends Msg>(messages: T[], keep = KEEP, maxBytes
   for (let i = out.length - 1; i >= 0; i--) {
     const m = out[i]!;
     if (!Array.isArray(m.content) || !m.content.some((b) => b?.type === "image")) continue;
+    const thisTurn = i >= lastUser;
     let dropped = false;
     const content: Block[] = [];
     // Newest last within a message too: walk it backwards, then restore order.
@@ -39,8 +54,8 @@ export function windowImages<T extends Msg>(messages: T[], keep = KEEP, maxBytes
         continue;
       }
       const size = b.data?.length ?? 0;
-      if (kept < keep && bytes + size <= maxBytes) {
-        kept += 1;
+      if ((thisTurn || kept < keep) && bytes + size <= maxBytes) {
+        if (!thisTurn) kept += 1;
         bytes += size;
         content.unshift(b);
       } else {
