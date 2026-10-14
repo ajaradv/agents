@@ -44,6 +44,11 @@ export type HostHooks = {
 const IDLE_MS = 20 * 60_000;
 const STREAM_THROTTLE_MS = 120;
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
+// A provider stream cut off mid-response. Pi only retries errors it recognises
+// as network failures; a proxy (e.g. the Junie bridge) that ends the response
+// mid-event surfaces as a parse error instead.
+const STREAM_DROPPED = /Could not parse .*SSE event|Unexpected end of JSON input|stream (ended|closed|terminated)|terminated|ECONNRESET|socket hang up/i;
+const STREAM_RETRIES = 2;
 const BILLING_ERROR = /\b402\b|billing|insufficient|quota|out of credits|requires more credits|balance/i;
 
 type Dialog = { method: string; lineTs: string; timer?: ReturnType<typeof setTimeout> };
@@ -62,6 +67,8 @@ type AgentProc = {
   stderrTail: string;
   lastCaptainTs: string | null;
   turnError: string | null;
+  /** Continues sent for the current captain line after a dropped stream. */
+  streamRetries: number;
   /** This turn's billed cost and tokens, summed from Pi's assistant message usage. */
   turnCost: number;
   turnTokens: number;
@@ -237,6 +244,19 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       hooks.event(p.id, { kind: "running", running: false });
       hooks.event(p.id, { kind: "activity", text: "" });
       const ms = Date.now() - p.startedAt;
+      if (p.turnError && STREAM_DROPPED.test(p.turnError) && p.streamRetries < STREAM_RETRIES) {
+        // The work so far is in the session; ask the agent to carry on from there.
+        p.streamRetries += 1;
+        void dashLog("agent-host", `${p.id} stream dropped (${p.turnError.slice(0, 80)}); continue ${p.streamRetries}/${STREAM_RETRIES}`);
+        hooks.event(p.id, { kind: "notice", text: "The model's connection dropped mid-reply; continuing where it left off.", level: "warning" });
+        setTimeout(() => {
+          void send(p, {
+            type: "prompt",
+            message: "Your last reply was cut off by a dropped connection to the model provider. Continue exactly where you left off; do not redo finished steps.",
+          });
+        }, 2000);
+        return;
+      }
       if (p.turnError && p.lastCaptainTs) {
         hooks.line(p.id, await appendChatError(p.id, p.turnError, p.lastCaptainTs));
         hooks.settled(p.id, { ok: false, ms, error: p.turnError, cost: p.turnCost, tokens: p.turnTokens });
@@ -329,6 +349,7 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
     stderrTail: "",
     lastCaptainTs: null,
     turnError: null,
+    streamRetries: 0,
     turnCost: 0,
     turnTokens: 0,
   };
@@ -364,6 +385,7 @@ export async function submitToHost(agentId: string, line: ChatLine): Promise<voi
     p = procs.get(agentId) ?? start(agentId, keys);
   }
   p.lastCaptainTs = line.ts;
+  p.streamRetries = 0;
   p.lastActive = Date.now();
   if (p.running) {
     const r = await send(p, { type: "prompt", message: line.text, streamingBehavior: "steer" });
