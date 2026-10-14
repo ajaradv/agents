@@ -27,7 +27,28 @@ export type ChatLine = {
   ref?: string;
   questions?: ChatQuestion[];
   dialog?: { id: string; method: string; timeoutMs?: number };
+  /** Client-chosen id for a captain send; a retry with the same id is not sent twice. */
+  requestId?: string;
 };
+
+const REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,80}$/;
+const recentSends = new Map<string, ChatLine>();
+const RECENT_SENDS_MAX = 500;
+
+/** A captain line already sent with this requestId (memory first, then the chat file). */
+export async function findSentLine(agentId: string, requestId: string): Promise<ChatLine | null> {
+  if (!REQUEST_ID_RE.test(requestId)) return null;
+  const hit = recentSends.get(`${agentId}\u0000${requestId}`);
+  if (hit) return hit;
+  const lines = await readCaptainChat(agentId, 200).catch(() => [] as ChatLine[]);
+  return lines.find((l) => l.from === "captain" && l.requestId === requestId) ?? null;
+}
+
+function rememberSend(agentId: string, line: ChatLine): void {
+  if (!line.requestId) return;
+  recentSends.set(`${agentId}\u0000${line.requestId}`, line);
+  if (recentSends.size > RECENT_SENDS_MAX) recentSends.delete(recentSends.keys().next().value!);
+}
 
 function chatPath(agentId: string): string {
   return join(fleetInboxRoot(), agentId, "captain-chat.jsonl");
@@ -40,6 +61,7 @@ function busPath(agentId: string): string {
 export async function appendCaptainChat(
   agentId: string,
   text: string,
+  requestId?: string,
 ): Promise<ChatLine> {
   if (!chatAllowed(agentId)) throw new Error("chat not enabled for agent");
   const line: ChatLine = {
@@ -47,8 +69,10 @@ export async function appendCaptainChat(
     from: "captain",
     kind: "chat",
     text: text.trim(),
+    ...(requestId && REQUEST_ID_RE.test(requestId) ? { requestId } : {}),
   };
   if (!line.text) throw new Error("empty message");
+  rememberSend(agentId, line);
   const dir = join(fleetInboxRoot(), agentId);
   await mkdir(dir, { recursive: true });
   const target = chatTarget(agentId);

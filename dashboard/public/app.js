@@ -1111,14 +1111,18 @@ function dashboardApp() {
     sendText(to, text) {
       const t = this.findTarget(to) || { id: to, kind: "headless" };
       if (t.kind !== "firstmate" && t.kind !== "task") this.chatThinking = true;
+      // One id per message: the server sends it at most once, so retries are safe.
+      const requestId = crypto.randomUUID();
       const ws = this.chatSockets[to];
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(text);
-      } else {
+        ws.send(JSON.stringify({ text, requestId }));
+        return;
+      }
+      const post = (attempt) =>
         fetch("/chat/" + encodeURIComponent(to), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text, requestId }),
         })
           .then((r) => r.json())
           .then((j) => {
@@ -1126,9 +1130,11 @@ function dashboardApp() {
             if (!j.ok) this.chatThinking = false;
           })
           .catch(() => {
-            this.chatThinking = false;
+            // Network trouble (a phone between cells): try again with the same id.
+            if (attempt < 3) setTimeout(() => post(attempt + 1), 800 * 2 ** attempt);
+            else this.chatThinking = false;
           });
-      }
+      post(0);
     },
   };
 }

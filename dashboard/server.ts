@@ -10,6 +10,7 @@ import { agentsSidebarHtml } from "./lib/partials.ts";
 import { agentsStatusJson } from "./lib/agents-api.ts";
 import {
   appendCaptainChat,
+  findSentLine,
   readCaptainChat,
   type ChatLine,
 } from "./lib/chat.ts";
@@ -195,12 +196,8 @@ const server = Bun.serve({
     },
     message(ws, message) {
       const data = ws.data as WsData;
-      const text = message.toString();
-      appendCaptainChat(data.agentId, text)
-        .then((line) => {
-          broadcastChat(data.agentId, line);
-          return acceptCaptainLine(data.agentId, line);
-        })
+      const { text, requestId } = parseWsSend(message.toString());
+      captainSend(data.agentId, text, requestId)
         .catch(() => {
           ws.send(JSON.stringify({ error: "send failed" }));
         });
@@ -211,6 +208,47 @@ const server = Bun.serve({
     },
   },
 });
+
+const sendsInFlight = new Map<string, Promise<ChatLine>>();
+
+/**
+ * One captain send, at most once per requestId: a retry (flaky phone link,
+ * reconnecting socket) gets the line already sent instead of a second turn.
+ */
+async function captainSend(agentId: string, text: string, requestId?: string): Promise<{ line: ChatLine; duplicate: boolean }> {
+  const key = requestId ? `${agentId}\u0000${requestId}` : "";
+  const pending = key ? sendsInFlight.get(key) : undefined;
+  if (pending) return { line: await pending, duplicate: true };
+  const work = (async () => {
+    const prior = requestId ? await findSentLine(agentId, requestId) : null;
+    if (prior) return { line: prior, duplicate: true };
+    const line = await appendCaptainChat(agentId, text, requestId);
+    broadcastChat(agentId, line);
+    await acceptCaptainLine(agentId, line);
+    return { line, duplicate: false };
+  })();
+  if (!key) return work;
+  const linePromise = work.then((r) => r.line);
+  sendsInFlight.set(key, linePromise);
+  try {
+    return await work;
+  } finally {
+    sendsInFlight.delete(key);
+  }
+}
+
+/** WebSocket sends are JSON {text, requestId} from current pages, plain text from older ones. */
+function parseWsSend(raw: string): { text: string; requestId?: string } {
+  if (raw.startsWith("{")) {
+    try {
+      const j = JSON.parse(raw) as { text?: unknown; requestId?: unknown };
+      if (typeof j.text === "string") return { text: j.text, ...(typeof j.requestId === "string" ? { requestId: j.requestId } : {}) };
+    } catch {
+      /* plain text that happens to start with { */
+    }
+  }
+  return { text: raw };
+}
 
 async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): Promise<Response> {
     const url = new URL(req.url);
@@ -632,17 +670,15 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
 
     if (path.startsWith("/chat/") && req.method === "POST") {
       const agentId = path.replace("/chat/", "");
-      let body: { text?: string };
+      let body: { text?: string; requestId?: string };
       try {
-        body = (await req.json()) as { text?: string };
+        body = (await req.json()) as { text?: string; requestId?: string };
       } catch {
         return new Response("bad json", { status: 400 });
       }
       try {
-        const line = await appendCaptainChat(agentId, body.text ?? "");
-        broadcastChat(agentId, line);
-        await acceptCaptainLine(agentId, line);
-        return Response.json({ ok: true, line });
+        const { line, duplicate } = await captainSend(agentId, body.text ?? "", body.requestId);
+        return Response.json({ ok: true, line, ...(duplicate ? { duplicate: true } : {}) });
       } catch (e) {
         return Response.json(
           { ok: false, error: e instanceof Error ? e.message : "error" },
