@@ -7,3 +7,5 @@ crew:
   - designer
 factory: null
 mode: no-mistakes-prod-only
+crew_budgets:
+  designer: 6
