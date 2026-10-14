@@ -20,16 +20,13 @@
 
   <nav class="leaf-tabs" role="tablist" aria-label="Fleet sections">
     <button type="button" class="tab" role="tab" id="tab-harbor" aria-controls="leaf-harbor"
-            :aria-selected="leaf === 'harbor'" :class="{ 'is-open': leaf === 'harbor' }"
+            :aria-selected="leaf === 'harbor'" :class="{ 'is-open': leaf === 'harbor', 'is-ring': anyWaiting() }"
             @click="openLeaf('harbor')"><span class="punch" aria-hidden="true"></span>Harbor</button>
     <button type="button" class="tab" role="tab" id="tab-health" aria-controls="leaf-health"
             :aria-selected="leaf === 'health'" :class="{ 'is-open': leaf === 'health' }"
             @click="openLeaf('health')"><span class="punch" aria-hidden="true"></span>Health</button>
-    <button type="button" class="tab" role="tab" id="tab-fleet" aria-controls="leaf-fleet"
-            :aria-selected="leaf === 'fleet'" :class="{ 'is-open': leaf === 'fleet', 'is-ring': waiting }"
-            @click="openLeaf('fleet')"><span class="punch" aria-hidden="true"></span>Fleet</button>
     <button type="button" class="tab" role="tab" id="tab-agents" aria-controls="leaf-agents"
-            :aria-selected="leaf === 'agents'" :class="{ 'is-open': leaf === 'agents', 'is-ring': waiting }"
+            :aria-selected="leaf === 'agents'" :class="{ 'is-open': leaf === 'agents', 'is-ring': anyWaiting() }"
             @click="openLeaf('agents')"><span class="punch" aria-hidden="true"></span>Agents</button>
   </nav>
 
@@ -47,18 +44,10 @@
         <p x-text="waitSummary"></p>
       </aside>
       <div class="stack">
+        <div id="fleet" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerHTML"></div>
         <div id="usage" hx-get="/partials/usage" hx-trigger="load" hx-swap="innerHTML"></div>
         <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerHTML"></div>
       </div>
-    </section>
-
-    <section id="leaf-fleet" class="leaf" role="tabpanel" aria-labelledby="tab-fleet"
-             :class="{ 'is-open': leaf === 'fleet', 'is-hinge': hinge === 'fleet' }">
-      <h2>Fleet</h2>
-      <aside class="slip" x-show="waitSummary" x-cloak>
-        <p x-text="waitSummary"></p>
-      </aside>
-      <div id="fleet" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerHTML"></div>
     </section>
 
     <section id="leaf-agents" class="leaf" role="tabpanel" aria-labelledby="tab-agents"
@@ -72,10 +61,11 @@
 
   </main>
 
-  <nav class="rail" aria-label="Chat">
-    <template x-for="t in rail.agents" :key="t.id">
-      <button type="button" class="rail-face" :class="{ 'is-open': chatOpen && !chatGroup && chatId === t.id, 'is-busy': t.thinking }"
-              :aria-label="'Chat with ' + t.label" :title="t.description ? t.label + ' · ' + t.description : t.label" @click="openChat(t.id)">
+  <nav class="rail" aria-label="Chat" @scroll.passive="hideTip()" @click="hideTip()">
+    <template x-for="t in railList('agents')" :key="t.id">
+      <button type="button" class="rail-face" :class="{ 'is-open': chatOpen && !chatGroup && chatId === t.id, 'is-busy': t.thinking, 'is-waiting': t.waiting }"
+              :aria-label="(t.waiting ? t.label + ' is waiting on you. ' : '') + 'Chat with ' + t.label" :data-name="t.label + (t.waiting ? ' · needs you' : t.thinking ? ' · working' : '')" @click="openChat(t.id)"
+              @mouseenter="showTip($event)" @mouseleave="hideTip()" @focus="showTip($event)" @blur="hideTip()">
         <img x-show="t.art" :src="t.art" width="44" height="44" alt="" />
         <span x-show="!t.art" x-text="initials(t)"></span>
       </button>
@@ -90,14 +80,17 @@
       </button>
     </template>
     <p class="rail-label" x-show="rail.workers.length" x-cloak>Crew</p>
-    <template x-for="t in rail.workers" :key="t.id">
-      <button type="button" class="rail-face rail-worker" :class="{ 'is-open': chatOpen && chatId === t.id }"
-              :aria-label="'Chat with ' + (t.role || 'worker') + ' ' + t.label" :title="t.label + ' · ' + [t.role, t.state].filter(Boolean).join(' · ')" @click="openChat(t.id)">
+    <template x-for="t in railList('workers')" :key="t.id">
+      <button type="button" class="rail-face rail-worker" :class="{ 'is-open': chatOpen && chatId === t.id, 'is-busy': t.thinking, 'is-waiting': t.waiting }"
+              :aria-label="(t.waiting ? t.label + ' is waiting on you. ' : '') + 'Chat with ' + (t.role || 'worker') + ' ' + t.label" :data-name="t.label + (t.waiting ? ' · needs you' : '')" @click="openChat(t.id)"
+              @mouseenter="showTip($event)" @mouseleave="hideTip()" @focus="showTip($event)" @blur="hideTip()">
         <img x-show="t.art" :src="t.art" width="34" height="34" alt="" />
         <span x-show="!t.art" x-text="initials(t)"></span>
       </button>
     </template>
   </nav>
+
+  <div class="rail-tip" role="presentation" x-show="railTip.text" x-cloak :style="`left:${railTip.x}px;top:${railTip.y}px`" x-text="railTip.text"></div>
 
   <button type="button" class="rail-toggle" :class="{ 'is-open': chatOpen }" aria-label="Open chat" @click="toggleChat()">
     <img class="fab-face" :src="current().art || '/art/captain.png'" width="32" height="32" alt="" />
@@ -139,8 +132,8 @@
           </template>
         </button>
       </template>
-      <template x-for="t in rail.agents.concat(rail.workers)" :key="t.id">
-        <button type="button" class="rail-face" :class="{ 'is-open': !chatGroup && chatId === t.id, 'rail-worker': !t.art }"
+      <template x-for="t in railList('agents').concat(railList('workers'))" :key="t.id">
+        <button type="button" class="rail-face" :class="{ 'is-open': !chatGroup && chatId === t.id, 'rail-worker': !t.art, 'is-waiting': t.waiting }"
                 :aria-label="'Chat with ' + t.label" @click="openChat(t.id)">
           <img x-show="t.art" :src="t.art" width="36" height="36" alt="" />
           <span x-show="!t.art" x-text="initials(t)"></span>
@@ -248,7 +241,7 @@
   </div>
 
   <nav class="dock" aria-label="Fleet sections">
-    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'harbor' && !chatOpen }" @click="openLeaf('harbor')">
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'harbor' && !chatOpen, 'is-ring': anyWaiting() }" @click="openLeaf('harbor')">
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M10 2h2v9h6l-2 4H6l-2-4h6zM2 17h18v2H2z"/></svg>
       Harbor
     </button>
@@ -256,16 +249,13 @@
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M9 2h4v7h7v4h-7v7H9v-7H2V9h7z"/></svg>
       Health
     </button>
-    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'fleet' && !chatOpen, 'is-ring': waiting }" @click="openLeaf('fleet')">
-      <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M10 2h2v3h5v2h-1l2 8H4l2-8H5V5h5V2zm-5 15h12v3H5z"/></svg>
-      Fleet
-    </button>
-    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'agents' && !chatOpen, 'is-ring': waiting }" @click="openLeaf('agents')">
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'agents' && !chatOpen, 'is-ring': anyWaiting() }" @click="openLeaf('agents')">
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M4 4h6v6H4zm8 0h6v6h-6zM4 12h6v6H4zm8 0h6v6h-6z"/></svg>
       Agents
     </button>
   </nav>
 
+  <script src="/md.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

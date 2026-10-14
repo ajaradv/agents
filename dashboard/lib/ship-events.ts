@@ -1,6 +1,7 @@
 import type { HostEvent } from "./agent-host.ts";
 import type { ChatLine } from "./chat.ts";
 import { chatTarget } from "./chat-targets.ts";
+import { formatDuration } from "./partials.ts";
 import { logShipEvent } from "./ship-log.ts";
 
 /**
@@ -44,8 +45,8 @@ export function logCrewEvent(agentId: string, ev: HostEvent): void {
 export function logCrewTurn(agentId: string, outcome: { ok: boolean; ms: number; error?: string; cost: number; tokens: number }): void {
   const ship = shipOf(agentId);
   if (!ship) return;
-  const secs = Math.round(outcome.ms / 1000);
-  const summary = outcome.ok ? `Turn done in ${secs}s` : `Turn failed after ${secs}s: ${outcome.error ?? "error"}`;
+  const took = formatDuration(outcome.ms);
+  const summary = outcome.ok ? `Turn done in ${took}` : `Turn failed after ${took}: ${outcome.error ?? "error"}`;
   logShipEvent(ship, agentId, "turn-end", summary, {
     ms: outcome.ms,
     cost: outcome.cost,

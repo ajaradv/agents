@@ -192,7 +192,12 @@ async function fetchJunie(apiKey: string): Promise<ApiLaneUsage> {
   if (typeof o.balanceLeft !== "number") return { provider: "junie", ok: false, error: `HTTP ${status || "error"}`, at };
   const usd = o.balanceUnit === "CREDITS" ? o.balanceLeft / JUNIE_CREDITS_PER_USD : o.balanceLeft;
   const days = Math.ceil((Date.parse(JUNIE_UNTIL) - Date.now()) / 86_400_000);
-  const pace = days > 0 ? ` · ${formatUsd(usd / days)}/day uses it all by ${JUNIE_UNTIL.slice(5, 10)}` : "";
+  const pace =
+    usd < 0.5
+      ? " · used up; Junie agents run on their fallback models"
+      : days > 0
+        ? ` · ${formatUsd(usd / days)}/day uses it all by ${JUNIE_UNTIL.slice(5, 10)}`
+        : "";
   return {
     provider: "junie",
     ok: true,

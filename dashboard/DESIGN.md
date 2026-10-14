@@ -37,6 +37,12 @@ typography:
     fontWeight: 400
     lineHeight: 1.45
     letterSpacing: "0"
+  read:
+    fontFamily: "Departure Mono, ui-monospace, SF Mono, Menlo, monospace"
+    fontSize: "0.875rem"
+    fontWeight: 400
+    lineHeight: 1.55
+    letterSpacing: "0"
   label:
     fontFamily: "Silkscreen, ui-sans-serif, sans-serif"
     fontSize: "0.8rem"
@@ -100,7 +106,7 @@ components:
 
 **Creative North Star: "Punched Pixel Leaves"**
 
-The dashboard is a tabbed board drawn on a pixel grid. One leaf is open and readable. Health, fleet, and agents are sections you hinge between. Alice is a full-height panel that slides in from the right over a night crossing. The page refuses a scrolling pile of cards and a chat bar pinned to the footer.
+The dashboard is a tabbed board drawn on a pixel grid. One leaf is open and readable. Harbor, Health, and Agents are sections you hinge between. The chat drawer, for any agent, slides in from the right over a night crossing, with the canvas beside the thread. The page refuses a scrolling pile of cards and a chat bar pinned to the footer.
 
 Type, borders, and state marks are bitmap and square. Color is a reading of state: teal when a meter or detent is healthy, yellow when it is mid, ultramarine for focus, vermilion when something is waiting. Controls stay ordinary buttons, tabs, and fields. The only motion is a 90ms two-frame hinge when a leaf opens.
 
@@ -108,8 +114,8 @@ Type, borders, and state marks are bitmap and square. Color is a reading of stat
 
 - One open leaf. Closed leaves are not drawn.
 - Bone ground ruled at 8px, 1px ink edges, no radius and no drop shadow.
-- Silkscreen for display and body.
-- Selection is a punched square. A waiting agent rings that punch in vermilion.
+- Silkscreen for display, labels, and controls; Departure Mono for reading text.
+- Selection is a punched square. When anyone waits on the captain, the Harbor and Agents punches ring in vermilion and the waiting agent's rail face carries a vermilion corner flag.
 - Phone width stacks every grid to one column. A bottom dock replaces the tabs.
 
 ## Colors
@@ -144,16 +150,17 @@ Bone paper, ink lines, and four state colors. Secondary text is olive quiet, nev
 ## Typography
 
 **Display Font:** Silkscreen (with ui-sans-serif, sans-serif)
-**Body Font:** Silkscreen (with ui-sans-serif, sans-serif)
+**Reading Font:** Departure Mono (with ui-monospace, SF Mono, Menlo, monospace)
 
-Silkscreen is Jason Kottke’s bitmap face, SIL Open Font License, self-hosted at `/fonts/silkscreen-latin-400.woff2`. Weight is 400 throughout. Scale comes from size, not weight.
+Silkscreen is Jason Kottke’s bitmap face, SIL Open Font License, self-hosted at `/fonts/silkscreen-latin-400.woff2`. It is caps-only, so it carries titles, tabs, labels, buttons, and meters. Departure Mono is Helena Zhang’s pixel monospace, SIL OFL 1.1, self-hosted at `/fonts/departure-mono-400.woff2` with its license beside it. It carries everything read at length: chat bubbles, descriptions, ship-log lines, question legends, and form fields (the `--read` token). Weight is 400 throughout. Scale comes from size, not weight.
 
 ### Hierarchy
 
 - **Display** (400, 1.75rem, 1.2): the word Fleet. 1.35rem below 640px.
 - **Headline** (400, 1.35rem, 1.2): the open leaf’s name.
 - **Title** (400, 1rem, 1.2): sheet titles and section labels inside a leaf.
-- **Body** (400, 16px, 1.45): page copy.
+- **Body** (400, 16px, 1.45): page copy in Silkscreen (short labels and values).
+- **Read** (Departure Mono, 400, 0.875rem, 1.55, max 68ch in bubbles): chat, descriptions, log text, fields. Agent replies render as markdown (headings, lists, tables, code) through `public/md.js`, which escapes everything first.
 - **Label** (400, 0.8rem, or 0.72rem on detents and buttons): meters, timestamps, and controls.
 
 ### Named Rules
@@ -162,7 +169,7 @@ Silkscreen is Jason Kottke’s bitmap face, SIL Open Font License, self-hosted a
 
 ## Layout
 
-The page is centered at a max width of 72rem with 1rem of side padding, over the sea chart. Leaves stack their contents with 0.85rem gaps. Sheets sit in auto-fit grids: three-up from 14rem, two-up from 16rem. Below 640px both grids and the metric pair become one column, body padding tightens, and a four-item dock sits on the bottom edge. Alice’s panel is `100vw` by `100dvh` and, on a phone, leaves room for that dock.
+The page is centered at a max width of 72rem with 1rem of side padding, over the sea chart. Leaves stack their contents with 0.85rem gaps. Sheets sit in auto-fit grids: three-up from 14rem, two-up from 16rem. Below 640px both grids and the metric pair become one column, body padding tightens, and a three-item dock (Harbor, Health, Agents) sits on the bottom edge. The chat drawer is `100vw` by `100dvh`; on a phone it hides the dock and uses a one-line header, a one-row composer, and full-width messages without avatars.
 
 Space above a leaf heading is the tab bar’s 1.1rem margin. Space below that heading is 0.85rem.
 
@@ -204,23 +211,23 @@ Corners are square. Borders are 1px ink. The punch is a 10px square. A detent ma
 
 ### Navigation
 
-Desktop tabs: Health, Fleet, Agents, and an Alice control that opens the panel. Unselected tabs are sheet with an empty punch. The selected tab is ink with a punched hole. Hover on an unselected tab uses hover sheet. If something is waiting on the captain, the Agents punch grows a vermilion ring. Below 640px the tabs are replaced by a bottom dock with the same four destinations. The active dock item is ink. Alice’s item uses her portrait.
+Desktop tabs: Harbor, Health, Agents. Unselected tabs are sheet with an empty punch. The selected tab is ink with a punched hole. Hover on an unselected tab uses hover sheet. If anyone is waiting on the captain (a Firstmate hold or an agent's open question), the Harbor and Agents punches grow a vermilion ring. Below 640px the tabs are replaced by a bottom dock with the same three destinations, ringed the same way. The right-hand rail lists every agent's portrait, waiting agents first, with a name label on hover or focus.
 
 ### Meters and detents
 
 A meter is a square label whose border and text are teal, yellow, or vermilion. A detent is a word with a 6px square in quiet, teal, yellow, or vermilion. These are state marks, not pills.
 
-### Leaf hinge and Alice panel
+### Leaf hinge and chat drawer
 
-Opening a leaf sets a 90ms two-frame clip from the left. Opening Alice slides the full-viewport panel in from the right on the same 90ms, two-frame timing. `prefers-reduced-motion: reduce` disables both. The panel’s ground is the night crossing. Messages are square bubbles: Alice on the left with her portrait, the captain on the right in ink with the captain portrait. System lines sit in the center without a portrait.
+Opening a leaf sets a 90ms two-frame clip from the left. Opening the chat drawer slides it in from the right on the same 90ms, two-frame timing. `prefers-reduced-motion: reduce` disables both. The drawer’s ground is the night crossing. Messages are square bubbles: the agent on the left with its portrait, the captain on the right in ink with the captain portrait. System lines sit in the center without a portrait. Errors read as one sentence with the raw text in a Details fold.
 
 ## Do's and Don'ts
 
 ### Do:
 
-- **Do** keep one leaf open, and put Alice’s composer in the full-height panel.
+- **Do** keep one leaf open, and keep the composer in the full-height chat drawer.
 - **Do** use bone, ink, sheet, quiet, teal, yellow, ultramarine, and vermilion at the hex values above.
-- **Do** self-host Silkscreen and keep the license comment next to the `@font-face`.
+- **Do** self-host Silkscreen and Departure Mono and keep the license comments next to the `@font-face` rules.
 - **Do** stack sheets to one column below 640px.
 
 ### Don't:

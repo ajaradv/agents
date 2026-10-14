@@ -4,48 +4,48 @@
 
 ## Platform
 
-web
+web (installable on the phone as a PWA next; see Operating Context)
 
 ## Stack
 
-Existing Bun dashboard on localhost. This redesign’s client is htmx 4 and Alpine.js. Server routes and partials stay the source of live data.
+Bun server on `127.0.0.1:8787` (`just dashboard`), htmx 4 partials and Alpine.js on the client, no build step. The server is also the fleet's runtime today: it hosts live agent sessions (`pi --mode rpc`), the ship logs (SQLite per ship), the canvas, voice, and the crew API.
 
 ## Users
 
-The captain, alone. They open the dashboard on the laptop and on a phone as a view of the same local fleet. The job is to see fleet health and steer Firstmate, Alice, and Architect.
+The captain, alone. Laptop first, phone as the same fleet. The job is to watch and steer many agents like a game: who is working, who needs an answer, what each ship is doing, and what it costs.
 
 ## Product Purpose
 
-A local control surface for the agent fleet: usage, agent status, fleet tasks, and captain chat. Success means every current control still works, and the same screen is usable at phone width and on the laptop, without a second Firstmate.
+A harbor for the agent fleet. **Ships** are projects (`fleet/ships/*.yaml`); **crewmates** are agents aboard a ship (`<ship>-<role>`), with **flagship officers** (Alice, the Architect, the Shipwright, the Designer) on the rail. A ship sails **voyages** (vault notes) broken into **tasks**, runs **maneuvers** (SSSF ADWs), and keeps a **ship's log**. The captain talks to any agent in the chat drawer, by text or push-to-talk, answers their questions inline, reviews their work on the canvas, and sees spend and quotas on Health. Firstmate remains an optional orchestrator per ship.
 
 ## Positioning
 
-The dashboard talks to the one living Firstmate TUI and reads fleet state. It does not spawn another Pi and it does not replace attaching to Herdr.
+The fleet's own control surface, not a front end for one harness. It reads Firstmate's state when a ship uses Firstmate, and runs ship leads, crewmates, and officers itself.
 
 ## Operating Context
 
-`just dashboard` on the machine that runs the fleet. Captain messages, subscription usage, API-key balances, the fleet snapshot, and agent spaces. A phone-width layout is required. Opening the server beyond its current bind was not authorized.
+Local machine, bound to loopback; the server refuses requests from other web pages (same-origin guard) and foreign hosts. Remote use is planned through **Tailscale** (the dashboard stays on loopback; Tailscale Serve exposes it to the captain's devices), phone app first, then a hub with device nodes (see the vault: `fleet/plans/research/durable-remote-fleet.md`). Keys come from a 1Password-fed `fleet/home/.env`.
 
 ## Capabilities and Constraints
 
-Keep working: subscription usage, DeepSeek and OpenRouter balances, Hugging Face key presence, collapsed providers without an account, fleet overview, agent chat and TUI badges, Start/Stop TUI, agent-space chat, and Alice chat.
-
-Where those surfaces sit is open: a health landing page, tabs, or a status bar. Alice chat stays reachable and may move into an agent sidebar instead of a fixed footer.
-
-No new product constraint beyond the app as it exists. One Firstmate. Do not invent hosts, usage figures, or a public URL.
+- Sections: **Harbor** (ships, decks, shipyard), **Health** (Firstmate status, subscription and API lanes, model spend, registry fold), **Agents** (roster, TUI control, groups). The old Fleet tab was folded into Health on 2026-10-14.
+- Chat drawer for every agent and group: markdown replies, live streaming, ask_captain dialogs answered inline, canvas beside the thread, push-to-talk and spoken replies, Jev auto-routing. Sends are idempotent (requestId).
+- Rail and tabs show who is waiting on the captain.
+- Model lanes: Junie credits (while they last), OpenRouter, DeepSeek, Cursor included usage; `fallback_model` when a lane runs dry; per-ship crew budgets.
+- Do not invent hosts, usage figures, or a public URL. Do not bind beyond loopback without authentication.
 
 ## Brand Commitments
 
-The surface is the fleet dashboard. Pixel art is a binding visual constraint for this redesign. No logo file is on hand.
+Pixel art is binding: the sea chart, portraits, Silkscreen display type, square shapes. No logo file.
 
 ## Evidence on Hand
 
-The running UI is `dashboard/public/index.html` plus the usage, metrics, fleet, agents, and space partials. There are no testimonials, customers, or marketing claims to add.
+The running UI (`public/index.html`, `app.js`, `md.js`, `pixel.css`) and the server partials. Design critique of 2026-10-14 in the vault (`fleet/plans/research/fleet-ui-critique-2026-10-14.md`). No testimonials or marketing claims.
 
 ## Product Principles
 
-- The dashboard is a view of one Firstmate, not a second agent.
-- A layout change does not drop a current control.
-- Phone and laptop are the same fleet.
-- Health is scannable; chat stays reachable.
-- Show only numbers and states the fleet actually reports.
+- Who needs the captain is visible from anywhere.
+- Reading comes first: long replies render as formatted text in a readable face.
+- Phone and laptop are the same fleet; on the phone the conversation gets the screen.
+- Nothing on screen moves without a real signal behind it; Reduce Motion keeps every state legible.
+- Show only numbers and states the fleet actually reports; errors read as sentences, raw detail folded.

@@ -38,7 +38,7 @@ import {
   setChatTurnEmitter,
   startChatBridge,
 } from "./lib/chat-bridge.ts";
-import { abortHost, answerDialog, crewCaller, hostAlive, hostRunning, startHostReaper, stopHost, type HostEvent } from "./lib/agent-host.ts";
+import { abortHost, answerDialog, crewCaller, hostAlive, hostWaiting, hostRunning, startHostReaper, stopHost, type HostEvent } from "./lib/agent-host.ts";
 import { chatAllowed, chatTarget, listChatTargets, refreshAgentTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import { HOST, PORT, ROOT } from "./lib/paths.ts";
 import { requestRefusal } from "./lib/request-guard.ts";
@@ -318,13 +318,18 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
 
     if (path === "/api/chat-targets" && req.method === "GET") {
       const { agents, workers } = listChatTargets();
-      const withTurn = <T extends { id: string }>(t: T) => ({
-        ...t,
-        ...getHeadlessChatState(t.id),
-      });
+      // waiting: blocked on the captain (open dialog, or a question as its newest line).
+      const withTurn = async <T extends { id: string }>(t: T) => {
+        const last = hostWaiting(t.id) ? null : (await readCaptainChat(t.id, 1).catch(() => []))[0];
+        return {
+          ...t,
+          ...getHeadlessChatState(t.id),
+          waiting: hostWaiting(t.id) || last?.kind === "question",
+        };
+      };
       return Response.json({
-        agents: agents.map(withTurn),
-        workers: workers.map(withTurn),
+        agents: await Promise.all(agents.map(withTurn)),
+        workers: await Promise.all(workers.map(withTurn)),
       });
     }
 

@@ -57,9 +57,21 @@ function firstmateWaitHtml(wait: FirstmateWaitStatus | undefined): string {
   return `<div class="stack">${parts.join("")}</div>`;
 }
 
+/** "2m 52s" from milliseconds (public/md.js formatDuration, server side). */
+export function formatDuration(ms: number): string {
+  const n = Number(ms) || 0;
+  if (n < 1000) return `${Math.round(n)}ms`;
+  const s = Math.round(n / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 function lastTurnHtml(agentId: string, turn: { at: string; status: string; ms: number; error?: string } | null | undefined): string {
   if (!turn) return "";
-  const summary = `${turn.status} · ${turn.ms}ms · ${new Date(turn.at).toLocaleString()}`;
+  const when = new Date(turn.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const summary = `${turn.status === "ok" ? "replied" : turn.status} in ${formatDuration(turn.ms)}, ${when}`;
   const err = turn.error
     ? `<pre>${escapeHtml(turn.error.slice(0, 800))}</pre>`
     : "";
@@ -96,8 +108,11 @@ export async function agentsSidebarHtml(): Promise<string> {
       status?.tuiState === "starting" || status?.tuiState === "stopping";
     const tuiControls = isTuiAgent(a.id)
       ? `<div class="row">
-            <button type="button" class="btn btn-ink" ${pending ? "disabled" : ""} hx-post="/agents/${escapeHtml(a.id)}/start" hx-swap="none">Start TUI</button>
-            <button type="button" class="btn" ${pending ? "disabled" : ""} hx-post="/agents/${escapeHtml(a.id)}/stop" hx-swap="none">Stop TUI</button>
+            ${
+              status?.tuiState === "open"
+                ? `<button type="button" class="btn" hx-post="/agents/${escapeHtml(a.id)}/stop" hx-swap="none">Close TUI</button>`
+                : `<button type="button" class="btn" ${pending ? "disabled" : ""} hx-post="/agents/${escapeHtml(a.id)}/start" hx-swap="none">${pending ? escapeHtml(status?.tuiLabel ?? "Working…") : "Open TUI"}</button>`
+            }
           </div>
           ${status?.tuiMessage && status.tuiState === "error" ? `<p class="warn">${escapeHtml(status.tuiMessage.slice(0, 100))}</p>` : ""}
           ${a.id === "firstmate" ? firstmateWaitHtml(status?.firstmateWait) : ""}
@@ -112,7 +127,7 @@ export async function agentsSidebarHtml(): Promise<string> {
           <span class="row agent-head"><img class="avatar" src="${face}" alt="" width="48" height="48" /><span class="sheet-title">${escapeHtml(a.id)}</span></span>
           <span class="row">${chatBadge}${tuiBadge}</span>
         </div>
-        ${a.description ? `<p>${escapeHtml(a.description)}</p>` : ""}
+        ${a.description ? `<p class="agent-desc">${escapeHtml(a.description)}</p>` : ""}
         <p class="muted">${escapeHtml(a.model || a.type)}</p>
         <p class="muted" title="${escapeHtml(last ?? "")}">${escapeHtml(lastShort)}</p>
         ${tuiControls}

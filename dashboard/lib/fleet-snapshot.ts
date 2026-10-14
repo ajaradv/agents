@@ -382,9 +382,14 @@ export async function fleetStripHtml(): Promise<string> {
   if (!snap.ok) {
     return `<div class="stack">
       ${firstmateCard({ home, heartbeat, tui, holds })}
-      <p class="warn">${escapeHtml(snap.error ?? "snapshot unavailable")}</p>
-      ${shipsSectionHtml(ships, projectIds)}
-      ${initiativesSectionHtml(initiatives, () => 0)}
+      <p class="muted">Firstmate's queue is unavailable right now (${escapeHtml(snap.error ?? "no snapshot")}).</p>
+      <details class="fold registry">
+        <summary>Ships and initiatives</summary>
+        <div class="stack">
+          ${shipsSectionHtml(ships, projectIds)}
+          ${initiativesSectionHtml(initiatives, () => 0)}
+        </div>
+      </details>
     </div>`;
   }
 
@@ -481,14 +486,17 @@ export async function fleetStripHtml(): Promise<string> {
     ),
   );
 
+  // On Health: Firstmate's status up front; the registry (projects, ships,
+  // initiatives) folded, since the Harbor already shows the ships.
   return `<div class="stack">
     ${firstmateCard({ home, heartbeat, tui, holds })}
-    <div class="between">
-      <h3>Projects</h3>
-      <span class="muted">${projects.length} registered</span>
-    </div>
-    <div class="grid-2">${cards.join("")}</div>
-    ${shipsSectionHtml(ships, projectIds)}
-    ${initiativesSectionHtml(initiatives, (id) => activeByProject.get(id)?.length ?? 0)}
+    <details class="fold registry">
+      <summary>Firstmate projects, ships, and initiatives (${projects.length} registered)</summary>
+      <div class="stack">
+        <div class="grid-2">${cards.join("")}</div>
+        ${shipsSectionHtml(ships, projectIds)}
+        ${initiativesSectionHtml(initiatives, (id) => activeByProject.get(id)?.length ?? 0)}
+      </div>
+    </details>
   </div>`;
 }

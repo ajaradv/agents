@@ -85,6 +85,11 @@ export function hostRunning(agentId: string): boolean {
   return procs.get(agentId)?.running ?? false;
 }
 
+/** A live agent is blocked on the captain: an ask_captain (or other) dialog is open. */
+export function hostWaiting(agentId: string): boolean {
+  return (procs.get(agentId)?.dialogs.size ?? 0) > 0;
+}
+
 export function hostAlive(agentId: string): boolean {
   return procs.has(agentId);
 }

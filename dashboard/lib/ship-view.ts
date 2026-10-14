@@ -1,6 +1,7 @@
 import { hostRunning } from "./agent-host.ts";
 import { listChatTargets, type ChatTarget } from "./chat-targets.ts";
 import { readShips, type ShipRow } from "./fleet-layers.ts";
+import { humanizeError, plainSummary } from "./humanize.ts";
 import { escapeHtml } from "./quota.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
@@ -196,12 +197,21 @@ function logRowHtml(e: ShipEvent, labels: Map<string, string>): string {
   const cost = e.kind === "turn-end" && typeof e.payload?.cost === "number" && e.payload.cost > 0 ? ` · ${usd(e.payload.cost as number)}` : "";
   const cls = failed || (e.kind === "notice" && e.payload?.level === "error") ? " is-bad" : e.kind === "question" ? " is-ask" : "";
   const who = e.actor === "captain" ? "Captain" : labels.get(e.actor) ?? e.actor;
-  const text = e.kind === "turn-start" ? "" : e.summary;
+  const raw = e.kind === "turn-start" ? "" : e.summary;
+  // Errors as one sentence; markdown punctuation dropped; long text folded.
+  const bad = Boolean(cls.trim() === "is-bad");
+  const text = bad ? humanizeError(raw) : e.kind === "tool" ? raw : plainSummary(raw);
+  const SHORT = 180;
+  const body =
+    text.length > SHORT
+      ? `<details class="log-more"><summary>${escapeHtml(text.slice(0, SHORT))}…</summary>${escapeHtml(text.slice(SHORT, 1200))}</details>`
+      : escapeHtml(text);
+  const rawFold = bad && raw !== text ? `<details class="raw"><summary>Details</summary><pre>${escapeHtml(raw.slice(0, 2000))}</pre></details>` : "";
   return `<li class="log-row kind-${escapeHtml(e.kind)}${cls}">
     <time datetime="${escapeHtml(e.ts)}" title="${escapeHtml(e.ts)}">${escapeHtml(new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time>
     <span class="log-who">${escapeHtml(who)}</span>
     <span class="log-kind">${escapeHtml(KIND_LABEL[e.kind] ?? e.kind)}${cost}</span>
-    <span class="log-text">${escapeHtml(text.slice(0, 400))}</span>
+    <span class="log-text">${body}${rawFold}</span>
   </li>`;
 }
 

@@ -156,7 +156,11 @@ export function shipCard(ship: ShipRow, firstmateProjects: Set<string>): string 
     <p class="muted path">${escapeHtml(ship.path)}</p>
     ${factory}
     ${adws}
-    <p class="${registered ? "muted" : "warn"}">${registered ? "Registered with Firstmate" : "Not registered with Firstmate"}</p>
+    ${
+      ship.orchestrator === "lead"
+        ? `<p class="muted">Run by its lead (Firstmate not needed)</p>`
+        : `<p class="${registered ? "muted" : "warn"}">${registered ? "Registered with Firstmate" : "Not registered with Firstmate"}</p>`
+    }
   </article>`;
 }
 

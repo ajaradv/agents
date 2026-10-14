@@ -180,11 +180,26 @@ export function heartsMeterHtml(percentRemaining: number): string {
 }
 
 function providerCardHtml(card: ProviderCard): string {
-  const pct = Number.isFinite(card.headlinePercent) ? card.headlinePercent : 0;
+  // The headline is what is still usable, and the runway line names the pools
+  // that are empty: Cursor's separate API pool at 0% used to make the header
+  // read "0% · Exhausted" above included usage at 61%.
+  const pools = card.windows.filter((w) => Number.isFinite(w.percentRemaining));
+  const empty = pools.filter((w) => w.percentRemaining <= 0).map((w) => w.label || w.id);
+  const usable = pools.filter((w) => w.percentRemaining > 0);
+  const pct =
+    usable.length > 0 && empty.length > 0
+      ? Math.max(...usable.map((w) => w.percentRemaining))
+      : Number.isFinite(card.headlinePercent)
+        ? card.headlinePercent
+        : 0;
   const planBadge = card.plan ? `<span class="muted">${escapeHtml(card.plan)}</span>` : "";
-  const runwayLine = card.runway
-    ? `<p class="muted">${escapeHtml(runwayLabel(card.runway))}</p>`
-    : "";
+  const runwayText =
+    usable.length > 0 && empty.length > 0
+      ? `Out: ${empty.join(", ")} · the rest still has room`
+      : card.runway
+        ? runwayLabel(card.runway)
+        : "";
+  const runwayLine = runwayText ? `<p class="muted">${escapeHtml(runwayText)}</p>` : "";
 
   const windowRows = card.windows
     .map((w) => {

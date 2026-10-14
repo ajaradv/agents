@@ -173,18 +173,40 @@ function usd(n: number): string {
   return n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : "$0";
 }
 
+/** Rows grouped by who, the costliest agent first; a group lists its models by cost. */
+export function groupSpendRows(rows: SpendRow[]): SpendRow[] {
+  const byWho = new Map<string, SpendRow[]>();
+  for (const r of rows) byWho.set(r.who, [...(byWho.get(r.who) ?? []), r]);
+  const weight = (list: SpendRow[]) => list.reduce((n, r) => n + r.weekUsd, 0) * 1e9 + list.reduce((n, r) => n + r.weekTokens, 0);
+  return [...byWho.values()]
+    .sort((a, b) => weight(b) - weight(a))
+    .flatMap((list) => list.sort((a, b) => b.weekUsd - a.weekUsd || b.weekTokens - a.weekTokens));
+}
+
 export async function modelSpendHtml(): Promise<string> {
-  const rows = await modelSpend();
+  const rows = groupSpendRows(await modelSpend());
   if (!rows.length) return "";
-  const cell = (r: SpendRow, day: boolean) =>
-    r.estimated ? `~${tok(day ? r.todayTokens : r.weekTokens)} tok` : `${usd(day ? r.todayUsd : r.weekUsd)} <span class="muted">${tok(day ? r.todayTokens : r.weekTokens)}</span>`;
+  // Junie bills in subscription credits, which Pi records as $0.
+  const credits = (r: SpendRow) => r.lane.startsWith("junie/");
+  const cell = (r: SpendRow, day: boolean) => {
+    const t = tok(day ? r.todayTokens : r.weekTokens);
+    if (r.estimated) return `~${t} tok`;
+    if (credits(r)) return `credits <span class="muted">${t}</span>`;
+    return `${usd(day ? r.todayUsd : r.weekUsd)} <span class="muted">${t}</span>`;
+  };
+  const billed = rows.filter((r) => !r.estimated && !credits(r));
+  const sum = (day: boolean) => billed.reduce((n, r) => n + (day ? r.todayUsd : r.weekUsd), 0);
   return `<div class="stack">
       <h3>Model spend · last 7 days</h3>
       <table class="spend-table">
         <thead><tr><th>Who</th><th>Model</th><th>24h</th><th>7 days</th></tr></thead>
         <tbody>${rows
-          .map((r) => `<tr><td>${escapeHtml(r.who)}</td><td>${escapeHtml(r.lane)}</td><td>${cell(r, true)}</td><td>${cell(r, false)}</td></tr>`)
+          .map((r, i) => {
+            const first = i === 0 || rows[i - 1]!.who !== r.who;
+            return `<tr class="${first ? "spend-group" : ""}"><td>${first ? escapeHtml(r.who) : ""}</td><td>${escapeHtml(r.lane)}</td><td>${cell(r, true)}</td><td>${cell(r, false)}</td></tr>`;
+          })
           .join("")}</tbody>
+        <tfoot><tr><th colspan="2">Billed total (API keys)</th><th>${usd(sum(true))}</th><th>${usd(sum(false))}</th></tr></tfoot>
       </table>
       <p class="muted spend-note">API rows are billed cost from Pi's session logs. Cursor rows are estimated input tokens from Cursor's transcripts (upper bound, before caching); Cursor's dashboard has the billed figures. Headless turns without a saved session are not counted.</p>
     </div>`;

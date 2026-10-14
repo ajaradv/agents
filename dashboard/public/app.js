@@ -9,7 +9,7 @@ function readChatId() {
   }
 }
 
-const LEAVES = ["harbor", "health", "fleet", "agents"];
+const LEAVES = ["harbor", "health", "agents"];
 
 /** Float32 chunks at `rate` → 16 kHz mono 16-bit WAV (what the transcriber wants). */
 function encodeWav16k(chunks, rate) {
@@ -96,7 +96,6 @@ function dashboardApp() {
       const base = [
         { id: "harbor", label: "Go to Harbor", run: () => this.openLeaf("harbor") },
         { id: "health", label: "Go to Health", run: () => this.openLeaf("health") },
-        { id: "fleet", label: "Go to Fleet", run: () => this.openLeaf("fleet") },
         { id: "agents", label: "Go to Agents", run: () => this.openLeaf("agents") },
       ];
       const chats = this.rail.agents
@@ -200,12 +199,14 @@ function dashboardApp() {
       this.closePalette();
     },
 
-    /** /health, /fleet, /agents pick the section; ?chat=<id> or ?group=<id> opens the drawer. */
+    /** /health, /agents pick the section; ?chat=<id> or ?group=<id> opens the drawer. */
     applyUrl() {
       const leaf = location.pathname.replace(/^\/+|\/+$/g, "");
       const ship = leaf.match(/^ships\/([a-z][a-z0-9_-]{0,63})$/);
       this.shipSel = ship ? ship[1] : "";
-      this.leaf = ship ? "harbor" : LEAVES.includes(leaf) ? leaf : "harbor";
+      // /fleet was folded into Health (Firstmate status and the project registry).
+      this.leaf = ship ? "harbor" : leaf === "fleet" ? "health" : LEAVES.includes(leaf) ? leaf : "harbor";
+      if (leaf === "fleet") history.replaceState(history.state, "", "/health" + location.search);
       if (this.leaf === "harbor") this.loadHarbor();
       const q = new URLSearchParams(location.search);
       const chat = q.get("chat");
@@ -386,6 +387,32 @@ function dashboardApp() {
       }
     },
 
+    railTip: { text: "", x: 0, y: 0 },
+
+    /** Show a rail face's name beside it (hover or keyboard focus). */
+    showTip(ev) {
+      const el = ev.currentTarget;
+      const name = el && el.dataset.name;
+      if (!name || window.matchMedia("(hover: none)").matches) return;
+      const r = el.getBoundingClientRect();
+      this.railTip = { text: name, x: r.left, y: r.top + r.height / 2 };
+    },
+
+    hideTip() {
+      this.railTip = { text: "", x: 0, y: 0 };
+    },
+
+    /** Rail entries with anyone waiting on the captain first (order otherwise kept). */
+    railList(kind) {
+      const list = this.rail[kind] || [];
+      return list.filter((t) => t.waiting).concat(list.filter((t) => !t.waiting));
+    },
+
+    /** Someone needs the captain: a Firstmate wait/hold or an agent blocked on a question. */
+    anyWaiting() {
+      return this.waiting || this.rail.agents.some((t) => t.waiting) || this.rail.workers.some((t) => t.waiting);
+    },
+
     findTarget(id) {
       return this.rail.agents.find((t) => t.id === id) || this.rail.workers.find((t) => t.id === id);
     },
@@ -415,9 +442,10 @@ function dashboardApp() {
       }
       const t = this.current();
       if (t.kind === "task") return [t.state, t.project].filter(Boolean).join(" · ");
-      if (t.kind === "firstmate") return "fm-send → TUI";
-      const turn = t.lastTurn ? ` · last turn ${t.lastTurn.status} ${t.lastTurn.ms}ms` : "";
-      return (t.model || "") + turn;
+      if (t.kind === "firstmate") return "replies in its TUI";
+      const lt = t.lastTurn;
+      const turn = lt ? ` · ${lt.status === "ok" ? "last reply took" : `last turn ${lt.status} after`} ${formatDuration(lt.ms)}` : "";
+      return (t.model || "").replace(/^[a-z]+\//, "") + turn;
     },
 
     toggleChat() {
@@ -591,7 +619,7 @@ function dashboardApp() {
       const row = document.createElement("div");
       if (m.kind === "error") {
         row.className = "bubble-row is-system is-error";
-        row.innerHTML = `<div class="bubble"><span class="bubble-name">Not sent</span><p>${escapeHtml(m.text)}</p></div>`;
+        row.innerHTML = `<div class="bubble"><span class="bubble-name">Not sent</span>${errorHtml(m.text)}</div>`;
         const target = m.ref ? log.querySelector(`[data-ts="${CSS.escape(m.ref)}"][data-thread="${CSS.escape(tid)}"]`) : null;
         if (target) {
           target.classList.add("is-failed");
@@ -621,7 +649,7 @@ function dashboardApp() {
         const face = from.art
           ? `<img class="avatar" src="${from.art}" alt="" width="48" height="48" />`
           : `<span class="avatar portrait-initials">${escapeHtml(this.initials(from))}</span>`;
-        row.innerHTML = `${face}<div class="bubble"><span class="bubble-name">${escapeHtml(from.label)} → ${escapeHtml(t.label || tid)}</span><p>${escapeHtml(m.text)}</p></div>`;
+        row.innerHTML = `${face}<div class="bubble"><span class="bubble-name">${escapeHtml(from.label)} → ${escapeHtml(t.label || tid)}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
       } else if (m.role === "system" || m.role === "dashboard") {
         row.className = "bubble-row is-system";
         row.innerHTML = `<div class="bubble"><p>${escapeHtml(m.text)}</p></div>`;
@@ -636,7 +664,7 @@ function dashboardApp() {
         const avatar = face
           ? `<img class="avatar" src="${face}" alt="" width="48" height="48" />`
           : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
-        row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}</span><p>${escapeHtml(m.text)}</p></div>`;
+        row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
       }
       if (m.ts) row.dataset.at = m.ts;
       row.dataset.kind = kind;
@@ -771,11 +799,11 @@ function dashboardApp() {
           const face = t.art
             ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
             : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
-          row.innerHTML = `${face}<div class="bubble"><span class="bubble-name">${escapeHtml(t.label || tid)} · writing</span><p></p></div>`;
+          row.innerHTML = `${face}<div class="bubble"><span class="bubble-name">${escapeHtml(t.label || tid)} · writing</span><div class="md"></div></div>`;
           log.appendChild(row);
           this.chatEmpty = false;
         }
-        row.querySelector("p").textContent = ev.text;
+        row.querySelector(".md").innerHTML = renderMarkdown(ev.text);
         log.appendChild(row); // stay last
         log.scrollTop = log.scrollHeight;
         return;
@@ -784,7 +812,7 @@ function dashboardApp() {
         const row = document.createElement("div");
         row.className = `bubble-row is-system${ev.level === "error" ? " is-error" : ""}`;
         row.dataset.thread = tid;
-        row.innerHTML = `<div class="bubble"><p>${escapeHtml(ev.text)}</p></div>`;
+        row.innerHTML = `<div class="bubble">${ev.level === "error" ? errorHtml(ev.text) : `<p>${escapeHtml(ev.text)}</p>`}</div>`;
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
       }
@@ -1137,6 +1165,12 @@ function dashboardApp() {
       post(0);
     },
   };
+}
+
+/** An error bubble's body: one readable sentence, the raw text folded away. */
+function errorHtml(text) {
+  const e = humanizeError(text);
+  return `<p>${escapeHtml(e.summary)}</p>${e.folded ? `<details class="raw"><summary>Details</summary><pre>${escapeHtml(e.raw)}</pre></details>` : ""}`;
 }
 
 function escapeHtml(s) {
