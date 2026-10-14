@@ -510,6 +510,9 @@ def prepare_pi_launch(
     if isinstance(model, str) and model.startswith("junie/"):
         # Junie buffers tool-call arguments; long single writes stall and drop.
         extra_prompt_files.append(ROOT / "prompts" / "system" / "junie-tool-calls.md")
+        # Keep the bridge's CRLF fix in place after `pi update` (output captured:
+        # in RPC mode stdout belongs to Pi's protocol).
+        subprocess.run([str(ROOT / "bin" / "patch-junie-bridge")], capture_output=True, check=False)
     prompt_file = build_role_prompt(role_file, path_block, extra_prompt_files)
     args = ["pi", "--approve", "--append-system-prompt", str(prompt_file)]
 

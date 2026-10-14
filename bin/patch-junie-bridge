@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Re-apply the fleet's fix to pi-jetbrains-junie-bridge (idempotent).
+
+JetBrains' backend streams SSE with CRLF line endings. When a network chunk
+ends between the CR and the LF, Pi's stream parser reads the CR as a line end
+and the LF as a blank line, dispatching an event before its data line:
+"Could not parse Anthropic SSE event content_block_delta: Unexpected end of
+JSON input; data=". The bridge relays chunks untouched, so agents on Junie
+models stopped mid-turn (most often during tool calls, which stream many
+small events). The fix normalizes CRLF to LF and holds a trailing CR until
+the next chunk. Run again after `pi update` reinstalls the package.
+"""
+from pathlib import Path
+import sys
+
+P = Path.home() / ".pi/agent/npm/node_modules/pi-jetbrains-junie-bridge/lib/server.mjs"
+MARK = "fleet: CRLF split fix"
+OLD = """  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(decoder.decode(value, { stream: true }));
+    }
+  } catch {
+    // stream closed
+  }
+  res.end();"""
+NEW = """  const decoder = new TextDecoder();
+  // fleet: CRLF split fix. Upstream uses CRLF; a chunk ending between CR and LF
+  // makes Pi's parser see a blank line and dispatch an event without its data.
+  let heldCR = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let text = (heldCR ? "\\r" : "") + decoder.decode(value, { stream: true });
+      heldCR = text.endsWith("\\r");
+      if (heldCR) text = text.slice(0, -1);
+      res.write(text.replace(/\\r\\n?/g, "\\n"));
+    }
+  } catch {
+    // stream closed
+  }
+  if (heldCR) res.write("\\n");
+  res.end();"""
+
+def main() -> int:
+    if not P.is_file():
+        print(f"not installed: {P}", file=sys.stderr)
+        return 1
+    s = P.read_text()
+    if MARK in s:
+        print("junie bridge: fix already applied")
+        return 0
+    if OLD not in s:
+        print("junie bridge: pipeSSE changed upstream; check whether the fix is still needed", file=sys.stderr)
+        return 2
+    P.write_text(s.replace(OLD, NEW, 1))
+    print("junie bridge: CRLF split fix applied")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
