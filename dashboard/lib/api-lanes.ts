@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ROOT } from "./paths.ts";
-import type { ApiLaneUsage } from "./api-lane-usage.ts";
+import { junieSignedIn, type ApiLaneUsage } from "./api-lane-usage.ts";
 import { huggingFaceKeyPresent, loadFleetDotenv, envKeyPresent } from "./fleet-env.ts";
 
 function escapeHtml(s: string): string {
@@ -38,6 +38,11 @@ const LANE_META: Record<
   openrouter: {
     label: "OpenRouter",
     keyEnv: "OPENROUTER_API_KEY",
+  },
+  // Signed in through Pi (/login → JetBrains Junie), not a key in fleet/home/.env.
+  junie: {
+    label: "JetBrains Junie",
+    keyEnv: "pi /login",
   },
 };
 
@@ -90,17 +95,20 @@ export async function readConfiguredApiLanes(
   }
 
   const lanes: ApiLane[] = [];
-  for (const provider of ["deepseek", "huggingface", "openrouter"] as const) {
+  const junie = await junieSignedIn();
+  for (const provider of ["deepseek", "huggingface", "openrouter", "junie"] as const) {
     if (quotaProviderIds.has(provider)) continue;
     const meta = LANE_META[provider]!;
     const inDispatch = dispatchProviders.has(provider);
     const inCatalog =
-      provider === "openrouter" ? inDispatch : await providerInPiCatalog(provider);
+      provider === "openrouter" ? inDispatch : provider === "junie" ? junie : await providerInPiCatalog(provider);
     if (!inDispatch && !inCatalog) continue;
     const keySet =
       provider === "huggingface"
         ? huggingFaceKeyPresent(dotenv)
-        : envKeyPresent(meta.keyEnv, dotenv);
+        : provider === "junie"
+          ? junie
+          : envKeyPresent(meta.keyEnv, dotenv);
     const usage = usageByProvider[provider];
     const note =
       provider === "huggingface"
@@ -123,9 +131,10 @@ export async function readConfiguredApiLanes(
 }
 
 export function apiLaneCardHtml(lane: ApiLane): string {
+  const [on, off] = lane.provider === "junie" ? ["signed in", "not signed in"] : ["key set", "key not set"];
   const keyBadge = lane.keySet
-    ? `<span class="detent detent-ok">key set</span>`
-    : `<span class="detent detent-warn">key not set</span>`;
+    ? `<span class="detent detent-ok">${on}</span>`
+    : `<span class="detent detent-warn">${off}</span>`;
   const usage = lane.usage;
   const headline = usage?.ok && usage.headline ? `<p>${escapeHtml(usage.headline)}</p>` : "";
   const detail = usage?.ok && usage.detail ? `<p class="muted">${escapeHtml(usage.detail)}</p>` : "";

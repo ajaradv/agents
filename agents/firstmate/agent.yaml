@@ -2,10 +2,11 @@ id: firstmate
 type: orchestrator
 role: firstmate
 harness: pi
-# Direct DeepSeek API: native prompt caching makes Firstmate's many wakes
-# cheap (cached input $0.044/M). Cursor replayed the whole session as
-# uncached text on every turn.
-model: deepseek/deepseek-v4-pro
+# JetBrains Junie credits until that account expires: Claude Sonnet 5.
+# Afterwards back to the direct DeepSeek API, whose prompt caching makes
+# Firstmate's many wakes cheap (Cursor replays the session uncached):
+#   model: deepseek/deepseek-v4-pro
+model: junie/claude-sonnet-5
 extensions:
   - fleet-dashboard-heartbeat
 # Fewer, larger supervision wakes (vendor/firstmate/docs/configuration.md):
