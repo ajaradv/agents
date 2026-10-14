@@ -252,7 +252,8 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
         setTimeout(() => {
           void send(p, {
             type: "prompt",
-            message: "Your last reply was cut off by a dropped connection to the model provider. Continue exactly where you left off; do not redo finished steps.",
+            message:
+              "Your last reply was cut off by a dropped connection to the model provider. Continue exactly where you left off; do not redo finished steps. If you were writing a large file, write it in parts: a skeleton first, then one section per edit, each under about 120 lines.",
           });
         }, 2000);
         return;

@@ -507,6 +507,9 @@ def prepare_pi_launch(
     for rel in agent.get("extra_prompts") or []:
         extra_prompt_files.append((ROOT / str(rel)).resolve())
 
+    if isinstance(model, str) and model.startswith("junie/"):
+        # Junie buffers tool-call arguments; long single writes stall and drop.
+        extra_prompt_files.append(ROOT / "prompts" / "system" / "junie-tool-calls.md")
     prompt_file = build_role_prompt(role_file, path_block, extra_prompt_files)
     args = ["pi", "--approve", "--append-system-prompt", str(prompt_file)]
 
