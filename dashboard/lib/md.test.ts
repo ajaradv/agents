@@ -5,6 +5,7 @@ const g = globalThis as unknown as {
   renderMarkdown: (s: string) => string;
   formatDuration: (ms: number) => string;
   humanizeError: (s: string) => { summary: string; raw: string; folded: boolean };
+  speechChunk: (text: string, from: number, min?: number, final?: boolean) => { chunk: string; next: number } | null;
 };
 
 describe("renderMarkdown", () => {
@@ -78,5 +79,27 @@ describe("server humanize", () => {
   });
   test("summaries drop markdown punctuation", () => {
     expect(plainSummary("## What changed\n\n- **Hero:** `home.html` updated")).toBe("What changed · Hero: home.html updated");
+  });
+});
+
+describe("speechChunk", () => {
+  test("waits for a finished sentence of reasonable length", () => {
+    expect(g.speechChunk("Kinwork is docked and the designer", 0)).toBeNull();
+    expect(g.speechChunk("Short. ", 0)).toBeNull();
+    const a = g.speechChunk("Kinwork is docked and the designer is idle. The lead has", 0)!;
+    expect(a.chunk).toBe("Kinwork is docked and the designer is idle.");
+    expect(g.speechChunk("Kinwork is docked and the designer is idle. The lead has", a.next)).toBeNull();
+  });
+  test("takes several sentences at once and lines without periods", () => {
+    const t = "One thing is waiting on you right now.\n- pochteca-scout failed on a 503\n- the rest";
+    expect(g.speechChunk(t, 0)!.chunk).toBe("One thing is waiting on you right now.\n- pochteca-scout failed on a 503\n");
+  });
+  test("never cuts inside an open code fence", () => {
+    const t = "Here is the exact command you asked me for:\n```\nbun test lib/one.test.ts. Then more\n";
+    expect(g.speechChunk(t, 0)!.chunk).toBe("Here is the exact command you asked me for:\n");
+  });
+  test("final sends the rest", () => {
+    expect(g.speechChunk("Done. ok", 6, 40, true)).toEqual({ chunk: "ok", next: 8 });
+    expect(g.speechChunk("Done.", 5, 40, true)).toBeNull();
   });
 });

@@ -77,6 +77,8 @@ function dashboardApp() {
     voiceReplies: false,
     voiceSpeaking: false,
     voiceNote: "",
+    /** The reply being spoken as it streams: {tid, raw, next (chars spoken), muted (barged in)}. */
+    liveSpeech: null,
     chatConn: "",
     chatThinking: false,
     chatActivity: "",
@@ -1015,6 +1017,7 @@ function dashboardApp() {
 
     /** Ephemeral events from live (rpc) agents: streaming text, tool steps, running state, notices. */
     onAgentEvent(ev, tid) {
+      if (ev.kind === "stream") this.speakStream(tid, ev.text || "");
       const log = this.$refs.chatLog;
       const isCurrent = !this.chatGroup ? tid === this.chatId : true;
       if (ev.kind === "running") {
@@ -1120,7 +1123,9 @@ function dashboardApp() {
     },
 
     async startListening() {
+      // Barge-in: the captain talks over the agent. Stop now, and drop the rest of the reply that was being spoken.
       this.stopSpeaking();
+      if (this.liveSpeech) this.liveSpeech.muted = true;
       this.voiceNote = "";
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
@@ -1201,13 +1206,46 @@ function dashboardApp() {
       }
     },
 
+    /**
+     * Speak a live agent's reply sentence by sentence while it streams, so the
+     * voice starts within a sentence instead of after the whole message.
+     */
+    speakStream(tid, text) {
+      if (!this.voiceReplies || this.chatGroup || tid !== this.chatId || !text) return;
+      const ls = this.liveSpeech;
+      if (!ls || ls.tid !== tid || !text.startsWith(ls.raw.slice(0, ls.next))) {
+        // A new message (the previous one ended or this is the first).
+        this.liveSpeech = { tid, raw: text, next: 0, muted: this.voiceState !== "idle" };
+      }
+      const cur = this.liveSpeech;
+      cur.raw = text;
+      for (let c = speechChunk(text, cur.next); c; c = speechChunk(text, cur.next)) {
+        cur.next = c.next;
+        if (!cur.muted && this.voiceState === "idle") this.queueSpeech(tid, c.chunk);
+      }
+    },
+
+    queueSpeech(agent, text) {
+      (this.speechQueue ||= []).push({ agent, text });
+      if (!this.voiceSpeaking) this.speakNext();
+    },
+
     /** Speak an agent's chat line when voice replies are on and it arrived live. */
     maybeSpeak(m, threadId) {
       if (!this.voiceReplies || this.chatGroup || threadId !== this.chatId) return;
       if (m.role === "captain" || m.role === "system" || m.role === "dashboard" || (m.kind !== "chat" && m.kind !== "question")) return;
       if (!m.ts || Date.parse(m.ts) < this.voiceSince) return;
-      (this.speechQueue ||= []).push({ agent: threadId, text: m.text });
-      if (!this.voiceSpeaking) this.speakNext();
+      const ls = this.liveSpeech;
+      if (ls && ls.tid === threadId && ls.next > 0 && m.kind === "chat" && m.text.startsWith(ls.raw.slice(0, ls.next))) {
+        // Most of this line was spoken while it streamed: say only the rest (nothing if the captain cut in).
+        this.liveSpeech = null;
+        if (ls.muted || this.voiceState !== "idle") return;
+        const c = speechChunk(m.text, ls.next, 40, true);
+        if (c) this.queueSpeech(threadId, c.chunk);
+        return;
+      }
+      if (this.voiceState !== "idle") return; // the captain is talking; don't start a reply over them
+      this.queueSpeech(threadId, m.text);
     },
 
     async speakNext() {

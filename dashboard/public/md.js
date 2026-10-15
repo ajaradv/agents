@@ -163,7 +163,30 @@
     return { summary, raw, folded: raw !== summary };
   }
 
+  /**
+   * The next speakable piece of a reply that is still streaming: everything
+   * from `from` up to the last finished sentence (or line), when that is at
+   * least `min` characters and not inside an open code fence. Returns
+   * {chunk, next} or null to wait for more text. With `final`, the rest of the
+   * text goes out whatever its length.
+   */
+  function speechChunk(text, from, min = 40, final = false) {
+    const rest = String(text).slice(from);
+    if (final) return rest.trim() ? { chunk: rest, next: text.length } : null;
+    const fences = (s) => (s.match(/```/g) || []).length;
+    let end = -1;
+    const re = /[.!?:;](?=\s)|\n/g;
+    let m;
+    while ((m = re.exec(rest))) {
+      const cut = m.index + m[0].length;
+      if (fences(text.slice(0, from + cut)) % 2 === 0) end = cut;
+    }
+    if (end < 0 || rest.slice(0, end).trim().length < min) return null;
+    return { chunk: rest.slice(0, end), next: from + end };
+  }
+
   root.renderMarkdown = renderMarkdown;
+  root.speechChunk = speechChunk;
   root.formatDuration = formatDuration;
   root.humanizeError = humanizeError;
 })(typeof window !== "undefined" ? window : globalThis);
