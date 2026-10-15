@@ -9,7 +9,7 @@
   <script defer src="https://unpkg.com/alpinejs@3.14.3/dist/cdn.min.js"></script>
   <style>[x-cloak] { display: none !important; }</style>
 </head>
-<body x-data="dashboardApp()" x-cloak :class="{ 'chat-open': chatOpen }">
+<body x-data="dashboardApp()" x-cloak :class="{ 'chat-open': chatOpen, 'chat-canvas': chatOpen && canvasShown() }">
   <header class="mast">
     <div class="mast-captain">
       <img class="portrait mast-face" src="/art/captain.png" width="56" height="56" alt="" />
@@ -65,8 +65,8 @@
     <section id="leaf-agents" class="leaf" role="tabpanel" aria-labelledby="tab-agents"
              :class="{ 'is-open': leaf === 'agents', 'is-hinge': hinge === 'agents' }">
       <h2>Agents</h2>
-      <div class="grid-2">
-        <div id="agents" hx-get="/partials/agents" hx-trigger="load" hx-swap="innerHTML"></div>
+      <div class="stack">
+        <div id="agents" class="stack" hx-get="/partials/agents" hx-trigger="load" hx-swap="innerHTML"></div>
         <div id="groups" hx-get="/partials/groups" hx-trigger="load" hx-swap="innerHTML"></div>
       </div>
     </section>
@@ -109,8 +109,8 @@
     <span class="fab-label">Chat</span>
   </button>
 
-  <aside id="chat-drawer" class="chat-drawer" role="dialog" aria-modal="true" aria-labelledby="chat-title"
-         :class="{ 'is-open': chatOpen }" :aria-hidden="chatOpen ? 'false' : 'true'" :inert="!chatOpen">
+  <aside id="chat-drawer" class="chat-drawer" role="dialog" :aria-modal="wide ? 'false' : 'true'" aria-labelledby="chat-title"
+         :class="{ 'is-open': chatOpen, 'with-canvas': canvasShown() }" :aria-hidden="chatOpen ? 'false' : 'true'" :inert="!chatOpen">
     <header class="chat-bar">
       <div class="chat-who">
         <img class="portrait" x-show="current().art" :src="current().art" width="64" height="64" alt="" />
@@ -131,7 +131,7 @@
         <button type="button" class="btn" x-show="!chatGroup && !chatThinking && current().persistentSession" x-cloak
                 title="Start this agent on an empty history. Long sessions make every turn re-send everything." @click="newAgentSession()">New session</button>
         <button type="button" class="btn" :class="{ 'btn-ink': canvasOpen }" x-show="!chatGroup && canvasItems.length" x-cloak
-                :aria-pressed="canvasOpen" @click="toggleCanvas()" x-text="'Canvas · ' + canvasItems.length"></button>
+                :aria-pressed="canvasOpen" :data-fresh="canvasFresh ? '' : null" @click="toggleCanvas()" x-text="'Canvas · ' + canvasItems.length + (canvasFresh ? ' · new' : '')"></button>
         <button type="button" class="btn" @click="closeChat()">Close</button>
       </div>
     </header>
@@ -159,8 +159,8 @@
                 x-text="id + (chatGroup && chatGroup.lead === id ? ' (lead)' : '')"></button>
       </template>
     </div>
-    <div class="chat-body" :class="{ 'has-canvas': canvasOpen && !chatGroup && canvasItems.length }">
-    <section class="canvas-pane" aria-label="Canvas" x-show="canvasOpen && !chatGroup && canvasItems.length" x-cloak>
+    <div class="chat-body" :class="{ 'has-canvas': canvasShown() }">
+    <section class="canvas-pane" aria-label="Canvas" x-show="canvasShown()" x-cloak>
       <div class="canvas-tabs" role="tablist">
         <template x-for="it in canvasItems" :key="it.id">
           <button type="button" role="tab" class="chip" :aria-selected="canvasSel === it.id" :aria-pressed="canvasSel === it.id"

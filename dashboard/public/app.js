@@ -83,6 +83,10 @@ function dashboardApp() {
     canvasItems: [],
     canvasSel: "",
     canvasOpen: false,
+    /** A canvas item landed that the captain has not looked at (shown on the button where the canvas does not auto-open). */
+    canvasFresh: false,
+    /** At 1200px and up chat is a side column beside the page, not a full-screen drawer. */
+    wide: false,
     chatWs: null,
     chatSockets: {},
     chatGen: 0,
@@ -115,6 +119,9 @@ function dashboardApp() {
         /* private window */
       }
       this.voiceSince = Date.now();
+      const wideQuery = window.matchMedia("(min-width: 1200px)");
+      this.wide = wideQuery.matches;
+      wideQuery.addEventListener("change", (e) => (this.wide = e.matches));
       this.refreshRail();
       this.refreshAgentStatus();
       this.refreshNeeds();
@@ -245,6 +252,7 @@ function dashboardApp() {
 
     openShip(id) {
       this.closePalette();
+      this.logFailedOnly = false;
       this.chatOpen = false;
       this.leaf = "harbor";
       this.shipSel = id;
@@ -422,6 +430,14 @@ function dashboardApp() {
     /** Someone needs the captain: a Firstmate wait/hold or an agent blocked on a question. */
     anyWaiting() {
       return this.waiting || this.rail.agents.some((t) => t.waiting) || this.rail.workers.some((t) => t.waiting);
+    },
+
+    /** Ship deck: show only failed turns in the log (kept across deck refreshes). */
+    logFailedOnly: false,
+
+    showFailedLog() {
+      this.logFailedOnly = true;
+      this.$nextTick(() => document.getElementById("ship-log")?.scrollIntoView({ block: "start" }));
     },
 
     needsBusy: false,
@@ -620,6 +636,7 @@ function dashboardApp() {
         this.connectThreads([id]);
         this.canvasItems = [];
         this.canvasOpen = false;
+        this.canvasFresh = false;
         this.loadCanvas(false);
       }
       this.focusComposer();
@@ -643,7 +660,9 @@ function dashboardApp() {
         const newest = items[0];
         if (focus && newest && newest.updated > seen) {
           this.canvasSel = newest.id;
-          this.canvasOpen = true;
+          // Wide screens show the canvas beside the chat; narrower ones would hide the thread, so flag the button instead.
+          if (this.wide) this.canvasOpen = true;
+          else this.canvasFresh = true;
         }
         if (!items.length) this.canvasOpen = false;
         if (this.canvasOpen && newest) this.markCanvasSeen();
@@ -658,8 +677,13 @@ function dashboardApp() {
       try { localStorage.setItem(this.canvasSeenKey(this.chatId), newest.updated); } catch { /* private mode */ }
     },
 
+    canvasShown() {
+      return this.canvasOpen && !this.chatGroup && this.canvasItems.length > 0;
+    },
+
     toggleCanvas() {
       this.canvasOpen = !this.canvasOpen;
+      this.canvasFresh = false;
       if (this.canvasOpen) this.markCanvasSeen();
     },
 

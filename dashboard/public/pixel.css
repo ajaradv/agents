@@ -773,6 +773,34 @@ body.chat-open { overflow: hidden; }
 .canvas-frame-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0.35rem; }
 .canvas-frame { flex: 1; min-height: 0; width: 100%; border: 2px solid var(--ink); background: #fff; }
 .canvas-open { font-size: 0.7rem; align-self: flex-end; color: var(--ink); }
+.officer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr)); gap: 0.65rem; }
+.table-wrap { overflow-x: auto; }
+.crew-table td { vertical-align: middle; }
+.crew-table th, .crew-table td { white-space: nowrap; }
+.crew-table td.crew-last { white-space: normal; width: 100%; }
+.crew-table .avatar { width: 28px; height: 28px; }
+.crew-ship { color: var(--ink); }
+.crew-table .crew-who { gap: 0.4rem; white-space: nowrap; }
+.crew-table .crew-last { overflow-wrap: anywhere; min-width: 12rem; }
+.crew-table tr.is-waiting .crew-status { color: var(--vermilion); }
+.crew-table tr.is-working .crew-status { color: var(--yellow); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ship-log-wrap.only-failed .log-row:not(.is-bad) { display: none; }
+.log-none-failed { display: none; }
+.ship-log-wrap.only-failed .ship-log:not(:has(.is-bad)) + .log-none-failed { display: block; }
+.log-filter { font-size: 0.72rem; gap: 0.35rem; }
+.btn[data-fresh] { border-color: var(--vermilion); color: var(--vermilion); }
+
+/* Wide screens: chat is a column beside the page (watch the harbor and talk);
+   with a canvas open, the canvas takes the rest of the width. */
+@media (min-width: 1200px) {
+  .chat-drawer { left: auto; width: calc(560px + 4.25rem); border-left: 2px solid var(--ink); }
+  .chat-drawer.with-canvas { left: 0; width: auto; border-left: 0; }
+  .chat-body.has-canvas > .thread { flex: 0 0 560px; }
+  body.chat-open { overflow: auto; padding-right: calc(560px + 4.25rem + 1.5rem); max-width: calc(72rem + 560px + 4.25rem); }
+  body.chat-open.chat-canvas { overflow: hidden; }
+}
+
 @media (max-width: 900px) {
   .chat-body.has-canvas > .thread { display: none; }
   .canvas-pane { border-right: 0; }

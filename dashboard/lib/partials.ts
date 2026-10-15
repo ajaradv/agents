@@ -5,6 +5,9 @@ import { escapeHtml } from "./quota.ts";
 import { resolveAgentStatus } from "./agent-status.ts";
 import { HERDR_ATTACH_HINT, isTuiAgent } from "./herdr.ts";
 import { chatAllowed } from "./chat.ts";
+import { recentShipEvents } from "./ship-log.ts";
+import { crewStatus, crewStatusLabel, timeAgo } from "./ship-view.ts";
+import type { AgentMeta } from "./agents.ts";
 import type { FirstmateWaitStatus } from "./firstmate-status.ts";
 
 function chatBadgeClass(state: string): string {
@@ -81,9 +84,41 @@ function lastTurnHtml(agentId: string, turn: { at: string; status: string; ms: n
   </details>`;
 }
 
+/** Crewmates as one compact table per ship: who, model, status, last activity, Chat. */
+function crewTablesHtml(crew: AgentMeta[]): string {
+  const ships = [...new Set(crew.map((a) => a.ship!))].sort();
+  if (!ships.length) return "";
+  const tables = ships.map((ship) => {
+    const events = recentShipEvents(ship, 200);
+    const rows = crew
+      .filter((a) => a.ship === ship)
+      .map((a) => {
+        const role = a.id.slice(ship.length + 1);
+        const s = crewStatus(a.id, events);
+        return `<tr class="is-${s.status}">
+          <td><span class="row crew-who"><img class="avatar avatar-sm" src="${agentArtPath(role)}" alt="" width="28" height="28" />${escapeHtml(role)}</span></td>
+          <td class="muted">${escapeHtml((a.model || "").replace(/^[a-z]+\//, ""))}</td>
+          <td><span class="crew-status">${escapeHtml(crewStatusLabel(s.status))}</span></td>
+          <td class="crew-last">${s.lastAt ? `<span class="muted">${escapeHtml(timeAgo(s.lastAt))}</span> ` : ""}${escapeHtml(s.activity.replace(/[*_`#>]+/g, "").slice(0, 90))}</td>
+          <td><button type="button" class="btn" @click="openChat('${escapeHtml(a.id)}')">Chat</button></td>
+        </tr>`;
+      })
+      .join("");
+    return `<div class="stack-tight">
+      <h4><a class="crew-ship" href="/ships/${encodeURIComponent(ship)}" @click.prevent="openShip('${escapeHtml(ship)}')">${escapeHtml(ship)}</a></h4>
+      <div class="table-wrap"><table class="spend-table crew-table">
+        <thead><tr><th>Crewmate</th><th>Model</th><th>Status</th><th>Last</th><th><span class="sr-only">Chat</span></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  });
+  return `<section class="stack"><h3>Crew by ship</h3>${tables.join("")}</section>`;
+}
+
 export async function agentsSidebarHtml(): Promise<string> {
   // Crew-only templates (scout) exist only aboard ships, as <ship>-<role>.
-  const agents = (await loadAgents()).filter((a) => !a.crewOnly);
+  const all = (await loadAgents()).filter((a) => !a.crewOnly);
+  const agents = all.filter((a) => !a.ship);
   const rows: string[] = [];
   for (const a of agents) {
     const status = chatAllowed(a.id) ? await resolveAgentStatus(a.id) : null;
@@ -134,5 +169,9 @@ export async function agentsSidebarHtml(): Promise<string> {
         ${chatBtn}
     </li>`);
   }
-  return `<p class="muted">Herdr session fleet. Attach: ${escapeHtml(HERDR_ATTACH_HINT)}</p><ul class="agent-list">${rows.join("")}</ul>`;
+  return `<section class="stack">
+    <div class="between"><h3>Officers</h3><span class="muted">Herdr session fleet · attach: ${escapeHtml(HERDR_ATTACH_HINT)}</span></div>
+    <ul class="agent-list officer-grid">${rows.join("")}</ul>
+  </section>
+  ${crewTablesHtml(all.filter((a) => a.ship))}`;
 }

@@ -68,6 +68,14 @@ function firstmateCrews(ship: ShipRow): ChatTarget[] {
   return listChatTargets().workers.filter((w) => (w.project ?? "").toLowerCase() === ship.id.toLowerCase());
 }
 
+export function timeAgo(iso: string | null): string {
+  return ago(iso);
+}
+
+export function crewStatusLabel(s: CrewStatus): string {
+  return STATUS_LABEL[s];
+}
+
 function ago(iso: string | null): string {
   if (!iso) return "";
   const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
@@ -86,7 +94,7 @@ function usd(n: number): string {
   return n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : "$0";
 }
 
-const STATUS_LABEL: Record<CrewStatus, string> = { working: "Working", waiting: "Needs you", idle: "Idle", asleep: "Not aboard yet" };
+const STATUS_LABEL: Record<CrewStatus, string> = { working: "Working", waiting: "Needs you", idle: "Idle", asleep: "Not started" };
 
 function portrait(t: ChatTarget, size = 56): string {
   return t.art
@@ -158,7 +166,7 @@ function crewCardHtml(c: CrewCard): string {
         <span class="crew-status">${STATUS_LABEL[c.status]}</span>
       </div>
       <p class="crew-activity">${escapeHtml(plain(c.activity).slice(0, 220))}</p>
-      <p class="muted crew-meta">${escapeHtml(t.model ?? "")}${c.lastAt ? ` · ${ago(c.lastAt)}` : ""} · 7d ${usd(c.cost7d)} over ${c.turns7d} turn${c.turns7d === 1 ? "" : "s"}${c.errors7d ? ` · <span class="warn">${c.errors7d} failed</span>` : ""}</p>
+      <p class="muted crew-meta">${escapeHtml(t.model ?? "")}${c.lastAt ? ` · ${ago(c.lastAt)}` : ""} · 7d ${usd(c.cost7d)} over ${c.turns7d} turn${c.turns7d === 1 ? "" : "s"}${c.errors7d ? ` · <a class="warn" href="#ship-log" @click.prevent="showFailedLog()">${c.errors7d} failed</a>` : ""}</p>
       <div class="row"><a class="btn btn-ink" href="?chat=${encodeURIComponent(t.id)}" data-chat="${escapeHtml(t.id)}">Chat</a></div>
     </div>
   </article>`;
@@ -192,10 +200,9 @@ const KIND_LABEL: Record<string, string> = {
   shipyard: "Shipyard",
 };
 
-function logRowHtml(e: ShipEvent, labels: Map<string, string>): string {
-  const failed = e.kind === "turn-end" && e.payload?.error;
+function logRowHtml(e: ShipEvent, labels: Map<string, string>, repeats = 1): string {
   const cost = e.kind === "turn-end" && typeof e.payload?.cost === "number" && e.payload.cost > 0 ? ` · ${usd(e.payload.cost as number)}` : "";
-  const cls = failed || (e.kind === "notice" && e.payload?.level === "error") ? " is-bad" : e.kind === "question" ? " is-ask" : "";
+  const cls = isBad(e) ? " is-bad" : e.kind === "question" ? " is-ask" : "";
   const who = e.actor === "captain" ? "Captain" : labels.get(e.actor) ?? e.actor;
   const raw = e.kind === "turn-start" ? "" : e.summary;
   // Errors as one sentence; markdown punctuation dropped; long text folded.
@@ -210,7 +217,7 @@ function logRowHtml(e: ShipEvent, labels: Map<string, string>): string {
   return `<li class="log-row kind-${escapeHtml(e.kind)}${cls}">
     <time datetime="${escapeHtml(e.ts)}" title="${escapeHtml(e.ts)}">${escapeHtml(new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time>
     <span class="log-who">${escapeHtml(who)}</span>
-    <span class="log-kind">${escapeHtml(KIND_LABEL[e.kind] ?? e.kind)}${cost}</span>
+    <span class="log-kind">${escapeHtml(e.kind === "turn-end" && cls ? "Failed" : KIND_LABEL[e.kind] ?? e.kind)}${cost}${repeats > 1 ? ` · ×${repeats}` : ""}</span>
     <span class="log-text">${body}${rawFold}</span>
   </li>`;
 }
@@ -248,6 +255,12 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
   const labels = new Map(cards.map((c) => [c.target.id, c.target.label]));
   const maneuvers = recentManeuvers(ship.path);
   const cost7d = cards.reduce((n, c) => n + c.cost7d, 0);
+  const factory = ship.adws.length > 0 || maneuvers.length > 0;
+  const rows = collapseLog(events);
+  const failedRows = rows.slice(0, 80).filter((r) => isBad(r.event)).length;
+  // A ship still in the yard needs the shipyard first; once it can sail, the shipyard folds away below the log.
+  const yardFirst = !voyage && !ready;
+  const yard = shipyardHtml(ship, checklist, roles.map((r) => ({ id: r.id, model: r.model, description: r.description })), budgets, yardFirst, factory);
 
   return `<div class="ship-deck stack">
     <div class="ship-head between">
@@ -274,19 +287,57 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
       ${fm.length ? `<h4>Firstmate crews on this ship</h4><div class="crew-grid">${fm.map(fmCrewHtml).join("")}</div>` : ""}
     </section>
 
-    ${shipyardHtml(ship, checklist, roles.map((r) => ({ id: r.id, model: r.model, description: r.description })), budgets, !voyage && !ready)}
+    ${yardFirst ? yard : ""}
 
-    <div class="deck-cols">
-      <section class="stack">
-        <h3>Ship's log</h3>
-        ${events.length ? `<ol class="ship-log">${events.slice(0, 80).map((e) => logRowHtml(e, labels)).join("")}</ol>` : `<p class="muted">Nothing logged yet. Crewmate turns, tools, questions, and costs land here as they happen.</p>`}
+    <div class="${factory ? "deck-cols" : "stack"}">
+      <section class="stack ship-log-wrap" :class="{ 'only-failed': logFailedOnly }">
+        <div class="between">
+          <h3 id="ship-log">Ship's log</h3>
+          ${failedRows ? `<label class="row log-filter"><input type="checkbox" x-model="logFailedOnly" /> Only failures (${failedRows})</label>` : ""}
+        </div>
+        ${rows.length ? `<ol class="ship-log">${rows.slice(0, 80).map((r) => logRowHtml(r.event, labels, r.repeats)).join("")}</ol>` : `<p class="muted">Nothing logged yet. Crewmate turns, tools, questions, and costs land here as they happen.</p>`}
+        <p class="muted log-none-failed">No failures in the newest rows.</p>
       </section>
-      <section class="stack">
+      ${
+        factory
+          ? `<section class="stack">
         <h3>Maneuvers</h3>
-        ${maneuvers.length ? maneuvers.map(maneuverHtml).join("") : ship.adws.length ? `<p class="muted">No ADW runs yet. Chains on board: ${ship.adws.map(escapeHtml).join(", ")}.</p>` : `<p class="muted">No factory on this ship.</p>`}
-      </section>
+        ${maneuvers.length ? maneuvers.map(maneuverHtml).join("") : `<p class="muted">No ADW runs yet. Chains on board: ${ship.adws.map(escapeHtml).join(", ")}.</p>`}
+      </section>`
+          : ""
+      }
     </div>
+
+    ${yardFirst ? "" : yard}
   </div>`;
+}
+
+/**
+ * Log rows newest first, with a failure the turn reported twice (an error
+ * notice, then the failed turn-end carrying the same message) shown once.
+ */
+export function collapseLog(events: ShipEvent[]): { event: ShipEvent; repeats: number }[] {
+  const out: { event: ShipEvent; repeats: number }[] = [];
+  // "Turn failed after 3m 8s: 503: Service is too busy. We advise…" and the
+  // notice "503: Service is too busy." are the same failure.
+  const badText = (e: ShipEvent) => (isBad(e) ? humanizeError(e.summary).replace(/^Turn failed after [^:]+:\s*/, "") : null);
+  const same = (a: string | null, b: string | null) => Boolean(a && b && (a.startsWith(b) || b.startsWith(a)));
+  for (const e of events) {
+    const prev = out[out.length - 1];
+    const text = badText(e);
+    if (prev && text && prev.event.actor === e.actor && same(badText(prev.event), text) && Math.abs(Date.parse(prev.event.ts) - Date.parse(e.ts)) < 5 * 60_000) {
+      prev.repeats += 1;
+      // Keep the turn-end row: it carries the cost.
+      if (e.kind === "turn-end" && prev.event.kind !== "turn-end") prev.event = e;
+      continue;
+    }
+    out.push({ event: e, repeats: 1 });
+  }
+  return out;
+}
+
+function isBad(e: ShipEvent): boolean {
+  return Boolean((e.kind === "turn-end" && e.payload?.error) || (e.kind === "notice" && e.payload?.level === "error"));
 }
 
 // ---------------------------------------------------------------- shipyard + voyage
@@ -342,6 +393,7 @@ function shipyardHtml(
   roles: { id: string; model: string; description: string }[],
   budgets: Record<string, number | null>,
   open: boolean,
+  factory: boolean,
 ): string {
   const api = `/api/ships/${encodeURIComponent(ship.id)}`;
   const aboard = ship.crew.map((r) => {
@@ -371,6 +423,7 @@ function shipyardHtml(
       <div class="stack">
         <h4>Checklist</h4>
         <ul class="checklist">${checklist.map(checkRow).join("")}</ul>
+        ${factory ? "" : `<p class="muted">No factory (SSSF) on this ship, so it runs no maneuvers.</p>`}
         <form class="row shipyard-form" data-api="${api}/orchestrator">
           <label class="row">Voyages run by <select class="field" name="orchestrator">
             <option value="firstmate"${ship.orchestrator === "firstmate" ? " selected" : ""}>Firstmate</option>

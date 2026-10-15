@@ -28,8 +28,8 @@ Local machine, bound to loopback; the server refuses requests from other web pag
 
 ## Capabilities and Constraints
 
-- Sections: **Needs you** (`/needs`: every question an agent is waiting on, Firstmate holds, and messages that did not go through, each answerable in place; the count sits in the mast and is the phone dock's first item), **Harbor** (ships, decks, shipyard), **Health** (Firstmate status, subscription and API lanes, model spend, registry fold), **Agents** (roster, TUI control, groups). The old Fleet tab was folded into Health on 2026-10-14.
-- Chat drawer for every agent and group: markdown replies, live streaming, ask_captain dialogs answered inline, canvas beside the thread, push-to-talk and spoken replies, Jev auto-routing. Sends are idempotent (requestId).
+- Sections: **Needs you** (`/needs`: every question an agent is waiting on, Firstmate holds, and messages that did not go through, each answerable in place; the count sits in the mast and is the phone dock's first item), **Harbor** (ships, decks, shipyard), **Health** (Firstmate status, subscription and API lanes, model spend, registry fold), **Agents** (officer cards, crew tables grouped by ship, TUI control, groups). The old Fleet tab was folded into Health on 2026-10-14.
+- Chat for every agent and group, as a column beside the page at 1200px and up (the canvas takes the rest of the width when open, and opens by itself when a new item lands) and a full-screen drawer below that: markdown replies, live streaming, ask_captain dialogs answered inline, canvas beside the thread, push-to-talk and spoken replies, Jev auto-routing. Sends are idempotent (requestId).
 - Rail and tabs show who is waiting on the captain; the tab title carries the Needs-you count.
 - Model lanes: Junie credits (while they last), OpenRouter, DeepSeek, Cursor included usage; `fallback_model` when a lane runs dry; per-ship crew budgets.
 - Do not invent hosts, usage figures, or a public URL. Do not bind beyond loopback without authentication.
