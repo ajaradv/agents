@@ -552,10 +552,8 @@ function dashboardApp() {
       const card = document.createElement("article");
       card.className = `need is-${item.kind}`;
       card.dataset.id = item.id;
-      const t = item.agentId ? this.findTarget(item.agentId) || { id: item.agentId, label: item.label, art: item.art } : { id: "firstmate", label: "Firstmate", art: (this.findTarget("firstmate") || {}).art };
-      const face = t.art
-        ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
-        : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
+      const t = item.agentId ? this.findTarget(item.agentId) || { id: item.agentId, label: item.label, art: item.art, ship: item.ship } : { id: "firstmate", label: "Firstmate", art: (this.findTarget("firstmate") || {}).art };
+      const face = this.faceHtml(t);
       const when = item.ts ? `<time class="muted need-when" datetime="${escapeHtml(item.ts)}">${escapeHtml(agoText(item.ts))}</time>` : "";
       const openChat = item.agentId ? `<button type="button" class="btn" data-open>Open chat</button>` : "";
       if (item.kind === "question") {
@@ -1649,6 +1647,24 @@ function dashboardApp() {
         });
         row.querySelector(".bubble").appendChild(retry);
       }, 12_000);
+    },
+
+    badgeText(ship) {
+      return (shipBadge(ship) || {}).text || "";
+    },
+
+    badgeStyle(ship) {
+      const b = shipBadge(ship);
+      return b ? `--badge:${b.color}` : "";
+    },
+
+    /** A face with its ship badge (crewmates), for cards built in JS. */
+    faceHtml(t, size = 48) {
+      const img = t.art
+        ? `<img class="avatar" src="${t.art}" alt="" width="${size}" height="${size}" />`
+        : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
+      const b = shipBadge(t.ship);
+      return b ? `<span class="face-wrap">${img}<span class="ship-badge" style="--badge:${b.color}" aria-hidden="true">${escapeHtml(b.text)}</span></span>` : img;
     },
 
     activityIcon() {

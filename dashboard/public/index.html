@@ -81,6 +81,7 @@
               @mouseenter="showTip($event)" @mouseleave="hideTip()" @focus="showTip($event)" @blur="hideTip()">
         <img x-show="t.art" :src="t.art" width="44" height="44" alt="" />
         <span x-show="!t.art" x-text="initials(t)"></span>
+        <span class="ship-badge" x-show="t.ship" :style="badgeStyle(t.ship)" x-text="badgeText(t.ship)" aria-hidden="true"></span>
       </button>
     </template>
     <p class="rail-label" x-show="groups.length" x-cloak>Groups</p>
@@ -114,8 +115,11 @@
          :class="{ 'is-open': chatOpen, 'with-canvas': canvasShown() }" :aria-hidden="chatOpen ? 'false' : 'true'" :inert="!chatOpen">
     <header class="chat-bar">
       <div class="chat-who">
-        <img class="portrait" x-show="current().art" :src="current().art" width="64" height="64" alt="" />
-        <span class="portrait portrait-initials" x-show="!current().art" x-text="initials(current())"></span>
+        <span class="face-wrap">
+          <img class="portrait" x-show="current().art" :src="current().art" width="64" height="64" alt="" />
+          <span class="portrait portrait-initials" x-show="!current().art" x-text="initials(current())"></span>
+          <span class="ship-badge" x-show="!chatGroup && current().ship" :style="badgeStyle(current().ship)" x-text="badgeText(current().ship)" aria-hidden="true"></span>
+        </span>
         <div>
           <h2 id="chat-title" x-text="title()"></h2>
           <p class="chat-desc" x-show="!chatGroup && current().description" x-text="current().description"></p>
@@ -150,6 +154,7 @@
                 :aria-label="'Chat with ' + t.label" @click="openChat(t.id)">
           <img x-show="t.art" :src="t.art" width="36" height="36" alt="" />
           <span x-show="!t.art" x-text="initials(t)"></span>
+          <span class="ship-badge" x-show="t.ship" :style="badgeStyle(t.ship)" x-text="badgeText(t.ship)" aria-hidden="true"></span>
         </button>
       </template>
     </div>

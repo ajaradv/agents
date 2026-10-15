@@ -206,7 +206,22 @@
     return { limit, cut: t.slice(limit).trim().length > 0 };
   }
 
+  // Ship badges: crewmates of different ships share role portraits, so each face
+  // carries its ship's initials in that ship's colour (stable per ship id; never
+  // vermilion, which means "waiting").
+  const BADGE_COLORS = ["#0f6e68", "#2436a8", "#8a6200", "#6b3fa0", "#8a4b14", "#2f6f3e", "#1f5f8b", "#5c5470"];
+  function shipBadge(ship) {
+    const id = String(ship || "");
+    if (!id) return null;
+    const words = id.split(/[_-]+/).filter(Boolean);
+    const text = (words.length > 1 ? words[0][0] + words[1][0] : id.slice(0, 2)).toUpperCase();
+    let h = 0;
+    for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return { text, color: BADGE_COLORS[h % BADGE_COLORS.length] };
+  }
+
   root.renderMarkdown = renderMarkdown;
+  root.shipBadge = shipBadge;
   root.spokenLimit = spokenLimit;
   root.speechChunk = speechChunk;
   root.formatDuration = formatDuration;

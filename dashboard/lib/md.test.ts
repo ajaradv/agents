@@ -7,6 +7,7 @@ const g = globalThis as unknown as {
   humanizeError: (s: string) => { summary: string; raw: string; folded: boolean };
   speechChunk: (text: string, from: number, min?: number, final?: boolean) => { chunk: string; next: number } | null;
   spokenLimit: (text: string, budget?: number) => { limit: number; cut: boolean };
+  shipBadge: (ship: string) => { text: string; color: string } | null;
 };
 
 describe("renderMarkdown", () => {
@@ -127,5 +128,15 @@ describe("spokenLimit", () => {
   test("a first sentence longer than the budget is still said whole", () => {
     const t = "A".repeat(500) + ". Then more.";
     expect(g.spokenLimit(t, 350).limit).toBe(501);
+  });
+});
+
+describe("shipBadge", () => {
+  test("initials from the ship id, a stable colour per ship, never the waiting red", () => {
+    expect(g.shipBadge("kinwork")!.text).toBe("KI");
+    expect(g.shipBadge("lineage_atria")!.text).toBe("LA");
+    expect(g.shipBadge("kinwork")!.color).toBe(g.shipBadge("kinwork")!.color);
+    expect(g.shipBadge("pochteca")!.color).not.toBe("#9c1230");
+    expect(g.shipBadge("")).toBeNull();
   });
 });

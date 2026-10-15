@@ -1076,3 +1076,14 @@ body.chat-open { overflow: hidden; }
 @keyframes settle { from { transform: translateY(2px); } to { transform: none; } }
 @keyframes new-row { from { transform: translateY(-4px); background: #ffe58a; } to { transform: none; background: #fff3c4; } }
 @keyframes pulse-once { 0% { transform: none; } 100% { transform: scale(1.06); } }
+
+/* Ship badge (B7): crewmates of different ships share role portraits; the badge tells them apart. */
+.rail-face .ship-badge, .face-wrap .ship-badge {
+  position: absolute; right: 0; bottom: 0; z-index: 1;
+  font-family: "Silkscreen", ui-sans-serif, sans-serif; font-size: 0.5rem; line-height: 1; letter-spacing: 0;
+  padding: 2px 2px 1px; background: var(--badge, var(--ink)); color: var(--bone); border: 1px solid var(--bone);
+}
+.face-wrap { position: relative; display: inline-block; flex: none; line-height: 0; }
+.chat-who .face-wrap .ship-badge { font-size: 0.6rem; padding: 3px 3px 2px; }
+.need > .face-wrap { width: 48px; height: 48px; }
+@media (max-width: 640px) { .need > .face-wrap { display: none; } }
