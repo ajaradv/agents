@@ -705,7 +705,7 @@ body.chat-open { overflow: hidden; }
   .between { flex-wrap: wrap; }
   .dock {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     position: fixed;
     z-index: 40;
     left: 0;
@@ -948,3 +948,47 @@ body.chat-open { overflow: hidden; }
 .log-more summary::-webkit-details-marker { display: none; }
 .log-more[open] summary { color: var(--quiet); }
 .log-text details.raw pre { font-size: 0.68rem; }
+
+/* ---------- Needs you ---------- */
+.mast-end { display: flex; align-items: center; gap: 0.9rem; }
+.needs-btn {
+  appearance: none; font: inherit; font-size: 0.75rem; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  border: 2px solid var(--quiet); background: var(--sheet); color: var(--quiet); padding: 0.3rem 0.5rem;
+}
+.needs-btn.has-items { border-color: var(--vermilion); color: var(--vermilion); box-shadow: 3px 3px 0 var(--vermilion); }
+.needs-btn.is-open { background: var(--ink); color: var(--bone); border-color: var(--ink); box-shadow: none; }
+.needs-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.needs-count { min-width: 1.4rem; padding: 0.05rem 0.3rem; text-align: center; background: var(--quiet); color: var(--sheet); }
+.needs-btn.has-items .needs-count { background: var(--vermilion); }
+.dock-count { min-width: 22px; height: 22px; display: grid; place-items: center; font-size: 0.8rem; border: 1px solid currentColor; }
+.dock-btn.is-ring .dock-count { background: var(--vermilion); color: var(--sheet); border-color: var(--vermilion); }
+
+.needs-list { display: grid; gap: 0.9rem; max-width: 52rem; }
+.need {
+  display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 0.75rem;
+  border: 2px solid var(--ink); background: var(--sheet); padding: 0.75rem; box-shadow: 4px 4px 0 var(--ink); min-width: 0;
+}
+.need.is-question { border-color: var(--vermilion); box-shadow: 4px 4px 0 var(--vermilion); }
+.need.is-done { opacity: 0.55; box-shadow: none; }
+.need > .avatar { width: 48px; height: 48px; }
+.need-body { display: grid; gap: 0.5rem; min-width: 0; }
+.need-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.25rem 0.75rem; }
+.need-head h3 { margin: 0; font-size: 0.85rem; overflow-wrap: anywhere; }
+.need-when { font-size: 0.7rem; }
+.need-sent {
+  margin: 0; padding: 0.4rem 0.6rem; border-left: 3px solid var(--quiet); background: var(--bone);
+  font-family: var(--read); font-size: 0.8rem; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.need-reason { font-family: var(--read); font-size: 0.85rem; overflow-wrap: anywhere; margin: 0; }
+.need textarea.field { width: 100%; min-height: 4.5rem; font-family: var(--read); }
+.need .question legend, .need .question-block p { font-family: var(--read); }
+.need-error p { font-family: var(--read); font-size: 0.85rem; overflow-wrap: anywhere; color: var(--vermilion); }
+@media (max-width: 640px) {
+  /* The dock's first item carries the count on phones. */
+  .needs-btn { display: none; }
+  .needs-list { padding-bottom: 4rem; }
+  .need { grid-template-columns: minmax(0, 1fr); padding: 0.65rem; }
+  .need > .avatar { display: none; }
+}

@@ -16,7 +16,8 @@ import {
   type ChatLine,
 } from "./lib/chat.ts";
 import { metricsStripHtml } from "./lib/bus.ts";
-import { fleetStripHtml } from "./lib/fleet-snapshot.ts";
+import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fleet-snapshot.ts";
+import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
 import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
@@ -85,6 +86,7 @@ function broadcastChatEvent(agentId: string, ev: HostEvent) {
 }
 
 function broadcastChat(agentId: string, line: ChatLine) {
+  needsChanged();
   const set = chatSockets.get(agentId);
   if (!set) return;
   const payload = JSON.stringify(chatPayload(line));
@@ -107,6 +109,29 @@ export function sseBroadcast(event: string, data = "") {
     }
   }
 }
+
+// Needs you: any new chat line may open or close an item (a question, an
+// answer, a failed send); holds change with Firstmate's snapshot.
+let needsTimer: ReturnType<typeof setTimeout> | null = null;
+function needsChanged() {
+  if (needsTimer) return;
+  needsTimer = setTimeout(() => {
+    needsTimer = null;
+    sseBroadcast("needs");
+  }, 300);
+}
+function currentHolds() {
+  const snap = lastFleetSnapshot();
+  return snap ? collectCaptainHolds(snap) : [];
+}
+let holdSig = "";
+setInterval(() => {
+  const sig = currentHolds().map((h) => h.id).join(",");
+  if (sig !== holdSig) {
+    holdSig = sig;
+    needsChanged();
+  }
+}, 5000);
 
 // Ship's log writes come in bursts (tool steps); tell pages at most every 1.5s per ship.
 const shipPending = new Map<string, ReturnType<typeof setTimeout>>();
@@ -348,6 +373,17 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       });
     }
 
+    if (path === "/api/needs-you" && req.method === "GET") {
+      return Response.json({ items: await collectNeedsYou({ waiting: hostWaiting, holds: currentHolds() }) });
+    }
+
+    if (path === "/api/needs-you/dismiss" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { id?: unknown };
+      const ok = await dismissNeed(String(b.id ?? ""));
+      if (ok) needsChanged();
+      return Response.json({ ok }, { status: ok ? 200 : 400 });
+    }
+
     if (path === "/api/chat-turns" && req.method === "GET") {
       return Response.json({ turns: getAllLastChatTurns() });
     }
@@ -384,7 +420,10 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
         });
       }
       const result = await answerCaptainHold(taskId, text);
-      if (result.ok) sseBroadcast("agents");
+      if (result.ok) {
+        sseBroadcast("agents");
+        needsChanged();
+      }
       return new Response(result.html, {
         status: result.status,
         headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -691,8 +730,8 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return Response.json({ lines });
     }
 
-    // Section routes (/health, /fleet, /agents) are the same page; app.js reads the path.
-    if (path === "/" || path === "/index.html" || /^\/(harbor|health|fleet|agents)\/?$/.test(path) || /^\/ships\/[a-z][a-z0-9_-]{0,63}\/?$/.test(path)) {
+    // Section routes (/needs, /health, /fleet, /agents) are the same page; app.js reads the path.
+    if (path === "/" || path === "/index.html" || /^\/(harbor|health|fleet|agents|needs)\/?$/.test(path) || /^\/ships\/[a-z][a-z0-9_-]{0,63}\/?$/.test(path)) {
       const html = await readFile(join(publicDir, "index.html"), "utf8");
       return new Response(html, {
         headers: { "Content-Type": "text/html; charset=utf-8" },

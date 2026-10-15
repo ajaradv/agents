@@ -32,6 +32,7 @@ export function humanizeError(text: string): string {
       /* not JSON */
     }
   }
+  if (/Could not parse .*SSE event|Unexpected end of JSON input/i.test(raw)) return "The model's connection dropped mid-reply.";
   return summary;
 }
 

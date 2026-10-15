@@ -111,7 +111,20 @@ export type FleetSnapshot = {
 const TERMINAL = new Set(["done", "failed"]);
 const SNAPSHOT_TIMEOUT_MS = 15_000;
 
+let lastGood: FleetSnapshot | null = null;
+
+/** The newest successful snapshot (the rail refresh takes one every 20s); null before the first. */
+export function lastFleetSnapshot(): FleetSnapshot | null {
+  return lastGood;
+}
+
 export async function runFleetSnapshotJson(): Promise<FleetSnapshot> {
+  const snap = await takeFleetSnapshot();
+  if (snap.ok) lastGood = snap;
+  return snap;
+}
+
+async function takeFleetSnapshot(): Promise<FleetSnapshot> {
   const snapshotPath = join(FM_HOME, "bin", "fm-fleet-snapshot.sh");
   try {
     const res = Bun.spawn(["bash", snapshotPath, "--json"], {

@@ -58,6 +58,11 @@ describe("humanizeError", () => {
     const e = g.humanizeError('477 {"error":{"message":"Exception during request with code 477: {\\"message\\":\\"Out of quota\\"}","type":"upstream_error"}}');
     expect(e.summary).toBe("477: Out of quota");
   });
+  test("a dropped model stream reads as one sentence", () => {
+    const e = g.humanizeError("Could not parse Anthropic SSE event content_block_delta: Unexpected end of JSON input; data=; raw=event: content_block_delta");
+    expect(e.summary).toBe("The model's connection dropped mid-reply.");
+    expect(e.folded).toBe(true);
+  });
   test("keeps the first line of multi-line errors", () => {
     expect(g.humanizeError("No API key found for openrouter.\n\nUse /login …").summary).toBe("No API key found for openrouter.");
   });

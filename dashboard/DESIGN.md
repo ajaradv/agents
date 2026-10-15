@@ -132,7 +132,7 @@ Bone paper, ink lines, and four state colors. Secondary text is olive quiet, nev
 - **Teal** (#0f6e68): healthy meters and detents.
 - **Yellow** (#8a6200): mid meters and in-progress detents.
 - **Ultramarine** (#2436a8): focus rings, the text caret, and text selection.
-- **Vermilion** (#9c1230): exhausted meters, errors, the waiting slip, and the ring on a tab that needs the captain.
+- **Vermilion** (#9c1230): exhausted meters, errors, the waiting slip, the ring on a tab that needs the captain, the Needs-you count, and the border of a question card (an agent is blocked). Holds and failed sends use ink borders: they wait, but nothing is stuck.
 
 ### Neutral
 

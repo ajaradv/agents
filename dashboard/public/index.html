@@ -15,7 +15,12 @@
       <img class="portrait mast-face" src="/art/captain.png" width="56" height="56" alt="" />
       <h1>Fleet</h1>
     </div>
-    <p class="muted mast-hint"><kbd>⌘K</kbd> command</p>
+    <div class="mast-end">
+      <button type="button" class="needs-btn" :class="{ 'has-items': needs.length, 'is-open': leaf === 'needs' && !chatOpen }"
+              :aria-label="needs.length ? needs.length + (needs.length === 1 ? ' thing needs' : ' things need') + ' you' : 'Nothing needs you'"
+              @click="openLeaf('needs')">Needs you <span class="needs-count" x-text="needs.length"></span></button>
+      <p class="muted mast-hint"><kbd>⌘K</kbd> command</p>
+    </div>
   </header>
 
   <nav class="leaf-tabs" role="tablist" aria-label="Fleet sections">
@@ -31,6 +36,13 @@
   </nav>
 
   <main>
+    <section id="leaf-needs" class="leaf" role="region" aria-labelledby="needs-title"
+             :class="{ 'is-open': leaf === 'needs', 'is-hinge': hinge === 'needs' }">
+      <h2 id="needs-title">Needs you</h2>
+      <p class="muted needs-empty" x-show="!needs.length" x-cloak>Nobody needs you right now. Questions, holds, and messages that did not go through show up here.</p>
+      <div id="needs-list" class="needs-list" aria-live="polite"></div>
+    </section>
+
     <section id="leaf-harbor" class="leaf" role="tabpanel" aria-labelledby="tab-harbor"
              :class="{ 'is-open': leaf === 'harbor', 'is-hinge': hinge === 'harbor' }">
       <h2 x-text="shipSel ? 'Ship' : 'Harbor'">Harbor</h2>
@@ -241,6 +253,10 @@
   </div>
 
   <nav class="dock" aria-label="Fleet sections">
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'needs' && !chatOpen, 'is-ring': needs.length }" @click="openLeaf('needs')">
+      <span class="dock-count" x-text="needs.length || '✓'" aria-hidden="true"></span>
+      Needs you
+    </button>
     <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'harbor' && !chatOpen, 'is-ring': anyWaiting() }" @click="openLeaf('harbor')">
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M10 2h2v9h6l-2 4H6l-2-4h6zM2 17h18v2H2z"/></svg>
       Harbor

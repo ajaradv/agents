@@ -9,7 +9,7 @@ function readChatId() {
   }
 }
 
-const LEAVES = ["harbor", "health", "agents"];
+const LEAVES = ["needs", "harbor", "health", "agents"];
 
 /** Float32 chunks at `rate` → 16 kHz mono 16-bit WAV (what the transcriber wants). */
 function encodeWav16k(chunks, rate) {
@@ -63,6 +63,8 @@ function dashboardApp() {
     paletteIndex: 0,
     waiting: false,
     waitSummary: "",
+    /** Everything waiting on the captain (/api/needs-you): questions, holds, failed sends. */
+    needs: [],
     bus: null,
 
     rail: { agents: [], workers: [] },
@@ -94,6 +96,7 @@ function dashboardApp() {
 
     paletteItems() {
       const base = [
+        { id: "needs", label: `Go to Needs you (${this.needs.length})`, run: () => this.openLeaf("needs") },
         { id: "harbor", label: "Go to Harbor", run: () => this.openLeaf("harbor") },
         { id: "health", label: "Go to Health", run: () => this.openLeaf("health") },
         { id: "agents", label: "Go to Agents", run: () => this.openLeaf("agents") },
@@ -114,6 +117,7 @@ function dashboardApp() {
       this.voiceSince = Date.now();
       this.refreshRail();
       this.refreshAgentStatus();
+      this.refreshNeeds();
       this.connectBus();
       this.applyUrl();
       // Old hash links (#chat/<id>, #group/<id>, #alice) still open their drawer.
@@ -323,7 +327,14 @@ function dashboardApp() {
         this.refreshAgentStatus();
         this.refreshRail();
       });
-      es.addEventListener("rail", () => this.refreshRail());
+      es.addEventListener("rail", () => {
+        this.refreshRail();
+        this.refreshNeeds();
+      });
+      es.addEventListener("needs", () => this.refreshNeeds());
+      es.addEventListener("agents", () => this.refreshNeeds());
+      // After a dashboard restart the stream reconnects; catch up on what changed meanwhile.
+      es.addEventListener("open", () => this.refreshNeeds());
       // The ship's log moved, or crew came and went: refresh what the harbor shows.
       const harborRefresh = (ship) => {
         if (this.leaf !== "harbor" || document.hidden) return;
@@ -411,6 +422,150 @@ function dashboardApp() {
     /** Someone needs the captain: a Firstmate wait/hold or an agent blocked on a question. */
     anyWaiting() {
       return this.waiting || this.rail.agents.some((t) => t.waiting) || this.rail.workers.some((t) => t.waiting);
+    },
+
+    needsBusy: false,
+    needsAgain: false,
+
+    async refreshNeeds() {
+      // One fetch at a time; a change during it triggers one more.
+      if (this.needsBusy) {
+        this.needsAgain = true;
+        return;
+      }
+      this.needsBusy = true;
+      try {
+        const r = await fetch("/api/needs-you");
+        this.needs = (await r.json()).items || [];
+        this.renderNeeds();
+        document.title = this.needs.length ? `(${this.needs.length}) Fleet` : "Fleet";
+      } catch {
+        /* keep last */
+      } finally {
+        this.needsBusy = false;
+        if (this.needsAgain) {
+          this.needsAgain = false;
+          this.refreshNeeds();
+        }
+      }
+    },
+
+    /** Keyed render: cards that stay keep their DOM, so a half-typed answer survives a refresh. */
+    renderNeeds() {
+      const list = document.getElementById("needs-list");
+      if (!list) return;
+      const keep = new Map([...list.children].map((el) => [el.dataset.id, el]));
+      const ids = new Set(this.needs.map((i) => i.id));
+      for (const [id, el] of keep) if (!ids.has(id)) el.remove();
+      for (const item of this.needs) {
+        const el = keep.get(item.id) || this.needCard(item);
+        list.appendChild(el);
+      }
+    },
+
+    needCard(item) {
+      const card = document.createElement("article");
+      card.className = `need is-${item.kind}`;
+      card.dataset.id = item.id;
+      const t = item.agentId ? this.findTarget(item.agentId) || { id: item.agentId, label: item.label, art: item.art } : { id: "firstmate", label: "Firstmate", art: (this.findTarget("firstmate") || {}).art };
+      const face = t.art
+        ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
+        : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
+      const when = item.ts ? `<time class="muted need-when" datetime="${escapeHtml(item.ts)}">${escapeHtml(agoText(item.ts))}</time>` : "";
+      const openChat = item.agentId ? `<button type="button" class="btn" data-open>Open chat</button>` : "";
+      if (item.kind === "question") {
+        card.innerHTML = `${face}<div class="need-body question-block">
+          <div class="need-head"><h3>${escapeHtml(item.label)} asks${item.live ? "" : " (its turn has ended; your answer goes as a message)"}</h3>${when}</div>
+          ${this.questionsHtml(item)}
+          <div class="row question-actions"><button type="button" class="btn btn-ink" data-send>Send answer</button>${item.live ? '<button type="button" class="btn" data-skip>Skip</button>' : '<button type="button" class="btn" data-dismiss>Dismiss</button>'}${openChat}<span class="muted" data-note></span></div>
+        </div>`;
+        this.wireQuestion(card, item.agentId, item.live ? item.dialog : null, (text) => this.postCaptain(item.agentId, text, card));
+      } else if (item.kind === "hold") {
+        card.innerHTML = `${face}<div class="need-body">
+          <div class="need-head"><h3>Firstmate holds “${escapeHtml(item.title)}”</h3><span class="detent detent-hot">before it ships</span></div>
+          ${item.reason ? `<p class="need-reason">${escapeHtml(item.reason)}</p>` : ""}
+          <textarea class="field" maxlength="8000" aria-label="Your decision on ${escapeHtml(item.title)}" placeholder="Your decision"></textarea>
+          <div class="row question-actions"><button type="button" class="btn btn-ink" data-hold>Record answer</button><span class="muted" data-note></span></div>
+        </div>`;
+        card.querySelector("[data-hold]").addEventListener("click", () => this.answerHold(item.taskId, card));
+      } else {
+        card.innerHTML = `${face}<div class="need-body">
+          <div class="need-head"><h3>Your message to ${escapeHtml(item.label)} did not go through</h3>${when}</div>
+          <blockquote class="need-sent">${escapeHtml(item.sentText)}</blockquote>
+          <div class="need-error">${errorHtml(item.error)}</div>
+          <div class="row question-actions"><button type="button" class="btn btn-ink" data-resend>Send again</button>${openChat}<button type="button" class="btn" data-dismiss>Dismiss</button><span class="muted" data-note></span></div>
+        </div>`;
+        card.querySelector("[data-resend]").addEventListener("click", () => this.postCaptain(item.agentId, item.sentText, card));
+      }
+      const open = card.querySelector("[data-open]");
+      if (open) open.addEventListener("click", () => this.openChat(item.agentId));
+      const dismiss = card.querySelector("[data-dismiss]");
+      if (dismiss) dismiss.addEventListener("click", () => this.dismissNeed(item.id, card));
+      return card;
+    },
+
+    /** A captain message from a Needs-you card: POSTed (no drawer involved), retried with one id. */
+    async postCaptain(to, text, card) {
+      const note = card.querySelector("[data-note]");
+      const requestId = crypto.randomUUID();
+      card.querySelectorAll("button, input, textarea").forEach((el) => (el.disabled = true));
+      if (note) note.textContent = "Sending…";
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          const r = await fetch("/chat/" + encodeURIComponent(to), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, requestId }),
+          });
+          const j = await r.json();
+          if (j.ok) {
+            card.classList.add("is-done");
+            if (note) note.textContent = "Sent";
+            return;
+          }
+          break;
+        } catch {
+          await new Promise((res) => setTimeout(res, 800 * 2 ** attempt));
+        }
+      }
+      card.querySelectorAll("button, input, textarea").forEach((el) => (el.disabled = false));
+      if (note) note.textContent = "Not sent; try again.";
+    },
+
+    async answerHold(taskId, card) {
+      const field = card.querySelector("textarea");
+      const note = card.querySelector("[data-note]");
+      const text = field.value.trim();
+      if (!text) {
+        note.textContent = "Write your decision first.";
+        return;
+      }
+      note.textContent = "Recording…";
+      try {
+        const r = await fetch(`/api/holds/${encodeURIComponent(taskId)}/answer`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const reply = new DOMParser().parseFromString(await r.text(), "text/html").body.textContent.trim();
+        note.textContent = reply || (r.ok ? "Recorded." : "Not recorded.");
+        if (r.ok) {
+          card.classList.add("is-done");
+          card.querySelectorAll("button, textarea").forEach((el) => (el.disabled = true));
+        }
+      } catch {
+        note.textContent = "Not recorded; try again.";
+      }
+    },
+
+    async dismissNeed(id, card) {
+      try {
+        const r = await fetch("/api/needs-you/dismiss", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+        if ((await r.json()).ok) card.remove();
+      } catch {
+        /* stays */
+      }
+      this.refreshNeeds();
     },
 
     findTarget(id) {
@@ -687,7 +842,7 @@ function dashboardApp() {
             .filter((o) => !/^Other \(type an answer\)$/.test(o))
             .map(
               (o) =>
-                `<button type="button" class="chip" data-q="${qi}" data-opt="${escapeHtml(o)}" aria-pressed="false">${escapeHtml(o)}${o === q.recommended ? ' <span class="detent">recommended</span>' : ""}</button>`,
+                `<button type="button" class="chip" data-q="${qi}" data-opt="${escapeHtml(o)}" aria-pressed="false">${escapeHtml(o)}${o === q.recommended && !/recommended\)?$/i.test(o) ? ' <span class="detent">recommended</span>' : ""}</button>`,
             )
             .join("");
           return `<fieldset class="question" data-qi="${qi}">
@@ -700,7 +855,7 @@ function dashboardApp() {
       return `${intro ? `<p>${escapeHtml(intro)}</p>` : ""}${qs}`;
     },
 
-    wireQuestion(row, tid, dialog) {
+    wireQuestion(row, tid, dialog, send = (text) => this.sendText(tid, text)) {
       const picks = {};
       row.querySelectorAll(".chip[data-q]").forEach((b) =>
         b.addEventListener("click", () => {
@@ -731,7 +886,7 @@ function dashboardApp() {
           this.answerDialog(tid, dialog.id, typed || picks["0"], row);
           return;
         }
-        this.sendText(tid, `Answers:\n${answers.join("\n")}`);
+        send(`Answers:\n${answers.join("\n")}`);
       });
       const skip = row.querySelector("[data-skip]");
       if (skip && dialog) skip.addEventListener("click", () => this.answerDialog(tid, dialog.id, null, row));
@@ -747,7 +902,8 @@ function dashboardApp() {
           body: JSON.stringify(value === null ? { cancelled: true } : { value }),
         });
         const j = await r.json();
-        if (!j.ok) {
+        if (j.ok) this.lockQuestion(row, "Sent");
+        else {
           note.textContent = j.error || "Not sent.";
           if (r.status === 409) this.lockQuestion(row, "No longer waiting");
         }
@@ -1165,6 +1321,15 @@ function dashboardApp() {
       post(0);
     },
   };
+}
+
+/** "just now", "4m ago", "3h ago", "2d ago". */
+function agoText(ts) {
+  const s = Math.max(0, (Date.now() - new Date(ts).getTime()) / 1000);
+  if (s < 45) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
 }
 
 /** An error bubble's body: one readable sentence, the raw text folded away. */

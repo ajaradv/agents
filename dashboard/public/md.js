@@ -124,6 +124,9 @@
     return `${Math.floor(m / 60)}h ${m % 60}m`;
   }
 
+  // A provider stream cut off mid-event (the agent host retries these twice).
+  const STREAM_DROPPED = /Could not parse .*SSE event|Unexpected end of JSON input/i;
+
   /**
    * Provider and harness errors → one readable sentence plus the raw text.
    * Handles JSON error bodies ({"error":{"message":…}}), "402 {…}" prefixes,
@@ -155,6 +158,7 @@
         /* not JSON; keep the first line */
       }
     }
+    if (STREAM_DROPPED.test(raw)) summary = "The model's connection dropped mid-reply.";
     if (summary.length > 220) summary = summary.slice(0, 217) + "…";
     return { summary, raw, folded: raw !== summary };
   }
