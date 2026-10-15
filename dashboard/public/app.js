@@ -1,6 +1,11 @@
 const LOG_MAX = 80;
 /** Said after the spoken gist of a long or structured reply. */
 const REST_ON_SCREEN = "The rest is on screen.";
+/** Spoken the moment a voice message goes out, so the agent answers at once (rotated, never twice in a row). */
+const ACK_LINES = {
+  alice: ["Aye, Captain.", "One sec.", "On it.", "Right away, Captain.", "Let me look.", "Aye aye."],
+  default: ["On it.", "One moment.", "Got it.", "Looking now."],
+};
 const CHAT_KEY = "fleet.chatId";
 
 function readChatId() {
@@ -737,6 +742,7 @@ function dashboardApp() {
       this.chatId = id;
       saveChatId(id);
       this.chatOpen = true;
+      if (this.voiceReplies) this.preloadAcks(id);
       if (switching) {
         this.connectThreads([id]);
         this.canvasItems = [];
@@ -1238,10 +1244,12 @@ function dashboardApp() {
           this.voiceNote = "Didn't catch that.";
         } else if (this.voiceAnswer(text)) {
           this.voiceNote = `Answered by voice: “${text}”`;
+          this.playAck(this.chatId);
         } else {
           this.voiceNote = "";
           this.chatDraft = text;
           this.sendChat();
+          this.playAck(this.chatGroup ? this.groupTo : this.chatId);
         }
       } catch (e) {
         this.voiceNote = e.message || "Transcription failed.";
@@ -1306,9 +1314,51 @@ function dashboardApp() {
       return true;
     },
 
+    /** Render this agent's acknowledgement lines ahead of time (Kokoro, cached as audio in the page). */
+    async preloadAcks(agent) {
+      if (!this.voiceReplies || !agent) return;
+      this.ackCache ||= new Map();
+      for (const line of ACK_LINES[agent] || ACK_LINES.default) {
+        const key = `${agent}|${line}`;
+        if (this.ackCache.has(key)) continue;
+        this.ackCache.set(key, null); // in flight
+        try {
+          const r = await fetch("/api/voice/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent, text: line, part: 0 }) });
+          if (r.status === 200) this.ackCache.set(key, await r.blob());
+          else this.ackCache.delete(key);
+        } catch {
+          this.ackCache.delete(key);
+        }
+      }
+    },
+
+    /** A quick spoken acknowledgement, only when it is ready to play instantly (never delays anything). */
+    playAck(agent) {
+      if (!this.voiceReplies || !agent) return;
+      const lines = ACK_LINES[agent] || ACK_LINES.default;
+      const ready = lines.filter((l) => this.ackCache && this.ackCache.get(`${agent}|${l}`) && l !== this.lastAck);
+      if (!ready.length) return void this.preloadAcks(agent);
+      const line = ready[Math.floor(Math.random() * ready.length)];
+      this.lastAck = line;
+      const url = URL.createObjectURL(this.ackCache.get(`${agent}|${line}`));
+      const audio = new Audio(url);
+      this.ackAudio = audio;
+      this.ackDone = new Promise((resolve) => {
+        const done = () => {
+          URL.revokeObjectURL(url);
+          if (this.ackAudio === audio) this.ackAudio = null;
+          resolve();
+        };
+        audio.onended = done;
+        audio.onerror = done;
+        audio.play().catch(done);
+      });
+    },
+
     toggleVoiceReplies() {
       this.voiceReplies = !this.voiceReplies;
       this.voiceSince = Date.now();
+      if (this.voiceReplies) this.preloadAcks(this.chatId);
       if (!this.voiceReplies) this.stopSpeaking();
       try {
         localStorage.setItem("fleet.voiceReplies", this.voiceReplies ? "1" : "0");
@@ -1401,7 +1451,9 @@ function dashboardApp() {
       if (gen === this.speechGen) this.speakNext();
     },
 
-    playBlob(blob, gen) {
+    async playBlob(blob, gen) {
+      // Let a playing acknowledgement finish first (it is about a second).
+      if (this.ackDone) await this.ackDone;
       return new Promise((resolve) => {
         if (gen !== this.speechGen) return resolve();
         const url = URL.createObjectURL(blob);
@@ -1431,6 +1483,11 @@ function dashboardApp() {
     stopSpeaking() {
       this.speechGen = (this.speechGen || 0) + 1;
       this.speechQueue = [];
+      if (this.ackAudio) {
+        this.ackAudio.pause();
+        this.ackAudio = null;
+      }
+      this.ackDone = null;
       if (this.speechAudio) {
         this.speechAudio.pause();
         this.speechAudio = null;

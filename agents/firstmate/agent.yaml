@@ -9,6 +9,9 @@ model: deepseek/deepseek-v4-pro
 fallback_model: openrouter/deepseek/deepseek-v4-pro
 extensions:
   - fleet-dashboard-heartbeat
+  # Compact between tasks once context passes 65%, after running /stow
+  # (extensions/context-guard.ts), instead of at the edge of the window.
+  - context-guard
 # Fewer, larger supervision wakes (vendor/firstmate/docs/configuration.md):
 # escalation digests buffer 10 min (default 90s), a working-but-idle pane
 # escalates after 15 min (default 240s), nearby signals coalesce for 2 min (30s).
@@ -16,4 +19,6 @@ env:
   FM_ESCALATE_BATCH_SECS: 600
   FM_STALE_ESCALATE_SECS: 900
   FM_SIGNAL_GRACE: 120
+  FLEET_STOW_BEFORE_COMPACT: 1
+  FLEET_COMPACT_FOCUS: "Keep every open task and its state, captain holds and their questions, workers in flight with their task ids and branches, promised replies, and the captain's latest instructions verbatim."
 cwd: fleet/home

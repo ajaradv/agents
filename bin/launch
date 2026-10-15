@@ -526,11 +526,12 @@ def prepare_pi_launch(
         ext_refs.append(ref if ref.startswith("npm:") else ref)
 
     # Every assistant can ask the captain structured questions (ask-captain.ts),
-    # show work on the dashboard canvas (canvas.ts), and sends only its newest
-    # screenshots to the model (image-window.ts).
+    # show work on the dashboard canvas (canvas.ts), sends only its newest
+    # screenshots to the model (image-window.ts), and compacts between tasks
+    # once context passes 65% (context-guard.ts).
     if agent_type == "assistant":
         # Crewmates also work as a crew: tasks, crew messages, maneuvers (crew.ts).
-        for name in ("ask-captain", "canvas", "image-window") + (("crew",) if aboard else ()):
+        for name in ("ask-captain", "canvas", "image-window", "context-guard") + (("crew",) if aboard else ()):
             ref = str(ROOT / "extensions" / f"{name}.ts")
             if ref not in ext_refs:
                 ext_refs.append(ref)
