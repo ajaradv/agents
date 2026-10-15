@@ -217,7 +217,7 @@ function logRowHtml(e: ShipEvent, labels: Map<string, string>, repeats = 1): str
       ? `<details class="log-more"><summary>${escapeHtml(text.slice(0, SHORT))}…</summary>${escapeHtml(text.slice(SHORT, 1200))}</details>`
       : escapeHtml(text);
   const rawFold = bad && raw !== text ? `<details class="raw"><summary>Details</summary><pre>${escapeHtml(raw.slice(0, 2000))}</pre></details>` : "";
-  return `<li class="log-row kind-${escapeHtml(e.kind)}${cls}">
+  return `<li class="log-row kind-${escapeHtml(e.kind)}${cls}" data-id="${e.id}">
     <time datetime="${escapeHtml(e.ts)}" title="${escapeHtml(e.ts)}">${escapeHtml(new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time>
     <span class="log-who">${escapeHtml(who)}</span>
     <span class="log-kind">${escapeHtml(e.kind === "turn-end" && cls ? "Failed" : KIND_LABEL[e.kind] ?? e.kind)}${cost}${repeats > 1 ? ` · ×${repeats}` : ""}</span>

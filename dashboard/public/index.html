@@ -57,9 +57,9 @@
         <p x-text="waitSummary"></p>
       </aside>
       <div class="stack">
-        <div id="fleet" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerHTML"></div>
-        <div id="usage" hx-get="/partials/usage" hx-trigger="load" hx-swap="innerHTML"></div>
-        <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerHTML"></div>
+        <div id="fleet" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerMorph"></div>
+        <div id="usage" hx-get="/partials/usage" hx-trigger="load" hx-swap="innerMorph"></div>
+        <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerMorph"></div>
       </div>
     </section>
 
@@ -67,8 +67,8 @@
              :class="{ 'is-open': leaf === 'agents', 'is-hinge': hinge === 'agents' }">
       <h2>Agents</h2>
       <div class="stack">
-        <div id="agents" class="stack" hx-get="/partials/agents" hx-trigger="load" hx-swap="innerHTML"></div>
-        <div id="groups" hx-get="/partials/groups" hx-trigger="load" hx-swap="innerHTML"></div>
+        <div id="agents" class="stack" hx-get="/partials/agents" hx-trigger="load" hx-swap="innerMorph"></div>
+        <div id="groups" hx-get="/partials/groups" hx-trigger="load" hx-swap="innerMorph"></div>
       </div>
     </section>
 
@@ -76,7 +76,7 @@
 
   <nav class="rail" aria-label="Chat" @scroll.passive="hideTip()" @click="hideTip()">
     <template x-for="t in railList('agents')" :key="t.id">
-      <button type="button" class="rail-face" :class="{ 'is-open': chatOpen && !chatGroup && chatId === t.id, 'is-busy': t.thinking, 'is-waiting': t.waiting }"
+      <button type="button" class="rail-face" :class="{ 'is-open': chatOpen && !chatGroup && chatId === t.id, 'is-busy': t.thinking && !(voiceSpeaking && chatId === t.id), 'is-waiting': t.waiting, 'is-speaking': voiceSpeaking && chatId === t.id }"
               :aria-label="(t.waiting ? t.label + ' is waiting on you. ' : '') + 'Chat with ' + t.label" :data-name="t.label + (t.waiting ? ' · needs you' : t.thinking ? ' · working' : '')" @click="openChat(t.id)"
               @mouseenter="showTip($event)" @mouseleave="hideTip()" @focus="showTip($event)" @blur="hideTip()">
         <img x-show="t.art" :src="t.art" width="44" height="44" alt="" />
@@ -124,7 +124,7 @@
             <span x-text="chatMeta()"></span>
             <span class="warn" x-show="chatThinking">thinking…</span>
           </p>
-          <p class="chat-activity muted" x-show="chatThinking && chatActivity" x-text="chatActivity"></p>
+          <p class="chat-activity muted" x-show="chatThinking && chatActivity"><span class="activity-icon" aria-hidden="true" x-text="activityIcon()"></span><span x-text="chatActivity"></span></p>
         </div>
       </div>
       <div class="row">

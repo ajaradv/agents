@@ -1029,3 +1029,50 @@ body.chat-open { overflow: hidden; }
   .need { grid-template-columns: minmax(0, 1fr); padding: 0.65rem; }
   .need > .avatar { display: none; }
 }
+
+/* ---------- Motion (B3): steps() only, 2-4 frames, a static form under Reduce Motion ---------- */
+/* Rail: a working pip (blinks), a speaking sound bar, a one-time nudge when someone starts waiting. */
+.rail-face.is-busy::before {
+  content: ""; position: absolute; left: 2px; bottom: 2px; width: 7px; height: 7px;
+  background: var(--yellow); border: 1px solid var(--bone);
+}
+.rail-face.is-speaking::before {
+  content: ""; position: absolute; left: 2px; bottom: 2px; width: 12px; height: 9px;
+  background: linear-gradient(90deg, var(--teal) 0 3px, transparent 3px 4px, var(--teal) 4px 7px, transparent 7px 8px, var(--teal) 8px 11px);
+  border: 1px solid var(--bone);
+}
+/* Streaming reply: a block caret at the end. */
+.bubble-row.is-streaming .bubble p::after, .bubble-row.is-streaming .bubble .md > :last-child::after { content: "▌"; margin-left: 1px; }
+/* Your message before the server confirms it. */
+.bubble-row.is-sending .bubble { opacity: 0.7; border-style: dashed; }
+.bubble-row.is-sending .bubble-name::after { content: " · sending…"; }
+.bubble-row.is-unsent .bubble { border: 2px solid var(--vermilion); opacity: 1; }
+.bubble-row.is-unsent .bubble-name::after { content: " · not sent"; color: var(--vermilion); }
+/* Answered questions fold to their answer. */
+.bubble-row.is-question.is-answered fieldset.question, .bubble-row.is-question.is-answered .go-summary + .row [data-go] { display: none; }
+.bubble-row.is-question.is-answered .bubble { opacity: 0.8; }
+/* Ship's log: rows that just arrived. */
+.log-row.is-new { background: #fff3c4; }
+/* Progress fills in steps. */
+.voyage-progress span { transition: width 360ms steps(4, end); }
+/* Activity line icon. */
+.activity-icon { display: inline-block; min-width: 1.4em; font-family: var(--read); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .rail-face.is-busy::before { animation: pip-blink 1s steps(2, jump-none) infinite; }
+  .rail-face.is-speaking::before { animation: sound-bar 0.6s steps(3) infinite; }
+  .rail-face.is-waiting { animation: nudge 240ms steps(4) 1; }
+  .bubble-row.is-streaming .bubble p::after, .bubble-row.is-streaming .bubble .md > :last-child::after { animation: pip-blink 1s steps(2, jump-none) infinite; }
+  .bubble-row.is-sent-settle .bubble { animation: settle 120ms steps(2) 1; }
+  .log-row.is-new { animation: new-row 900ms steps(3, end) 1 forwards; }
+  .btn[data-fresh] { animation: pulse-once 480ms steps(2) 2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voyage-progress span { transition: none; }
+}
+@keyframes pip-blink { 0% { opacity: 1; } 100% { opacity: 0.25; } }
+@keyframes sound-bar { 0% { clip-path: inset(40% 0 0 0); } 50% { clip-path: inset(0 0 0 0); } 100% { clip-path: inset(65% 0 0 0); } }
+@keyframes nudge { 0% { transform: translateX(0); } 33% { transform: translateX(-3px); } 66% { transform: translateX(3px); } 100% { transform: translateX(0); } }
+@keyframes settle { from { transform: translateY(2px); } to { transform: none; } }
+@keyframes new-row { from { transform: translateY(-4px); background: #ffe58a; } to { transform: none; background: #fff3c4; } }
+@keyframes pulse-once { 0% { transform: none; } 100% { transform: scale(1.06); } }

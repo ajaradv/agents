@@ -146,12 +146,24 @@ function dashboardApp() {
       this.$watch("chatId", () => this.syncUrl());
       this.$watch("chatGroup", () => this.syncUrl());
       window.addEventListener("popstate", () => this.applyUrl());
-      document.body.addEventListener("htmx:afterSettle", (ev) => {
+      // htmx 4 names it htmx:after:settle. Alpine binds swapped-in content itself (its mutation
+      // observer), so this only restores deck state: open folds and new log rows.
+      document.body.addEventListener("htmx:after:settle", (ev) => {
         const elt = ev.detail?.elt || ev.target;
-        if (window.Alpine && elt) Alpine.initTree(elt);
         const view = document.getElementById("harbor-view");
         if (view && this.harborOpenFolds && this.harborOpenFolds.length && (elt === view || view.contains(elt))) {
           for (const sum of view.querySelectorAll("details > summary")) if (this.harborOpenFolds.includes(this.harborFoldKey(sum))) sum.parentElement.open = true;
+        }
+        // Ship's log rows that arrived since the last look get a short highlight.
+        if (view && (elt === view || view.contains(elt))) {
+          const key = this.shipSel || "";
+          const ids = [...view.querySelectorAll(".log-row[data-id]")].map((r) => r.dataset.id);
+          const seen = (this.logSeen ||= {})[key];
+          if (seen) for (const r of view.querySelectorAll(".log-row[data-id]")) if (!seen.has(r.dataset.id)) {
+            r.classList.add("is-new");
+            setTimeout(() => r.classList.remove("is-new"), 4000);
+          }
+          this.logSeen[key] = new Set(ids);
         }
       });
       window.addEventListener("keydown", (ev) => this.onKeydown(ev));
@@ -431,7 +443,7 @@ function dashboardApp() {
 
     pull(url, target) {
       if (window.htmx) {
-        htmx.ajax("GET", url, { target, swap: "innerHTML" });
+        htmx.ajax("GET", url, { target, swap: "innerMorph" });
       }
     },
 
@@ -904,6 +916,15 @@ function dashboardApp() {
       // Replays and live events repeat lines; ts + kind identifies one (an answer and
       // the follow-up dialog it opens can share a millisecond).
       const kind = m.kind || "chat";
+      // The server's copy of a message shown as "sending…": settle it in place.
+      let settled = false;
+      if (m.requestId && m.role === "captain") {
+        const pending = log.querySelector(`.bubble-row[data-request="${CSS.escape(m.requestId)}"]`);
+        if (pending) {
+          pending.remove();
+          settled = true;
+        }
+      }
       if (m.ts && log.querySelector(`[data-at="${CSS.escape(m.ts)}"][data-kind="${CSS.escape(kind)}"][data-thread="${CSS.escape(tid)}"]`)) return;
       const t = this.findTarget(tid) || { id: tid, label: tid, art: null };
       const row = document.createElement("div");
@@ -971,6 +992,7 @@ function dashboardApp() {
         row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
       }
       if (m.ts) row.dataset.at = m.ts;
+      if (settled) row.classList.add("is-sent-settle");
       row.dataset.kind = kind;
       row.dataset.thread = tid;
       if (m.role === "captain" && m.ts) this.markAnswered(log, tid, m.ts);
@@ -1601,11 +1623,50 @@ function dashboardApp() {
       });
     },
 
-    sendText(to, text) {
+    /** Your message, shown at once as "sending…" until the server's copy replaces it. */
+    showSending(to, text, requestId) {
+      const log = this.$refs.chatLog;
+      if (!log || (this.chatGroup ? !this.chatGroup.members.includes(to) : to !== this.chatId)) return;
+      this.chatEmpty = false;
+      const row = document.createElement("div");
+      row.className = "bubble-row is-captain is-sending";
+      row.dataset.request = requestId;
+      row.dataset.thread = to;
+      row.innerHTML = `<img class="avatar" src="/art/captain.png" alt="" width="48" height="48" /><div class="bubble"><span class="bubble-name">You</span><div class="md">${renderMarkdown(text)}</div></div>`;
+      log.appendChild(row);
+      log.scrollTop = log.scrollHeight;
+      // No echo in 12s: say so, with Retry (the same id, so it can never send twice).
+      setTimeout(() => {
+        if (!row.isConnected || !row.classList.contains("is-sending")) return;
+        row.classList.replace("is-sending", "is-unsent");
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "btn";
+        retry.textContent = "Retry";
+        retry.addEventListener("click", () => {
+          row.remove();
+          this.sendText(to, text, requestId);
+        });
+        row.querySelector(".bubble").appendChild(retry);
+      }, 12_000);
+    },
+
+    activityIcon() {
+      const a = String(this.chatActivity || "").toLowerCase();
+      if (/^(read|grep|find|ls|glob)\b/.test(a)) return "▤";
+      if (/^(edit|write|apply)/.test(a)) return "✎";
+      if (/^bash\b/.test(a)) return "›_";
+      if (/browser|screenshot|playwright|chrome|canvas/.test(a)) return "◎";
+      if (/^(fleet_|ship_|voyage_|crew_|order_|agent_)/.test(a)) return "⚓";
+      return "⚙";
+    },
+
+    sendText(to, text, reuseId) {
       const t = this.findTarget(to) || { id: to, kind: "headless" };
       if (t.kind !== "firstmate" && t.kind !== "task") this.chatThinking = true;
       // One id per message: the server sends it at most once, so retries are safe.
-      const requestId = crypto.randomUUID();
+      const requestId = reuseId || crypto.randomUUID();
+      this.showSending(to, text, requestId);
       const ws = this.chatSockets[to];
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ text, requestId }));
@@ -1619,7 +1680,7 @@ function dashboardApp() {
         })
           .then((r) => r.json())
           .then((j) => {
-            if (j.line) this.appendChatLine({ role: "captain", kind: "chat", text: j.line.text, ts: j.line.ts }, to);
+            if (j.line) this.appendChatLine({ role: "captain", kind: "chat", text: j.line.text, ts: j.line.ts, requestId: j.line.requestId || requestId }, to);
             if (!j.ok) this.chatThinking = false;
           })
           .catch(() => {
