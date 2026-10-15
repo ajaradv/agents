@@ -1,4 +1,6 @@
 const LOG_MAX = 80;
+/** Said after the spoken gist of a long or structured reply. */
+const REST_ON_SCREEN = "The rest is on screen.";
 const CHAT_KEY = "fleet.chatId";
 
 function readChatId() {
@@ -142,6 +144,10 @@ function dashboardApp() {
       document.body.addEventListener("htmx:afterSettle", (ev) => {
         const elt = ev.detail?.elt || ev.target;
         if (window.Alpine && elt) Alpine.initTree(elt);
+        const view = document.getElementById("harbor-view");
+        if (view && this.harborOpenFolds && this.harborOpenFolds.length && (elt === view || view.contains(elt))) {
+          for (const sum of view.querySelectorAll("details > summary")) if (this.harborOpenFolds.includes(this.harborFoldKey(sum))) sum.parentElement.open = true;
+        }
       });
       window.addEventListener("keydown", (ev) => this.onKeydown(ev));
     },
@@ -249,7 +255,31 @@ function dashboardApp() {
 
     /** Harbor or one ship's deck into #harbor-view. */
     loadHarbor() {
+      this.harborPending = false;
+      // Folds the captain opened stay open across the refresh (matched by their summary, numbers ignored).
+      const view = document.getElementById("harbor-view");
+      const foldKey = (sum) => sum.textContent.replace(/\d+/g, "#").replace(/\s+/g, " ").trim();
+      this.harborOpenFolds = view ? [...view.querySelectorAll("details[open] > summary")].map(foldKey) : [];
+      this.harborFoldKey = foldKey;
       this.$nextTick(() => this.pull(this.shipSel ? `/partials/ship/${encodeURIComponent(this.shipSel)}` : "/partials/harbor", "#harbor-view"));
+    },
+
+    /**
+     * Live updates must not wipe what the captain is typing: while a form on
+     * the deck has unsent edits and they are in it (or typed in the last two
+     * minutes), refreshes wait and run once they leave it.
+     */
+    harborBusy() {
+      const view = document.getElementById("harbor-view");
+      if (!view) return false;
+      const dirty = view.querySelector("form[data-dirty]");
+      if (!dirty) return false;
+      return dirty.contains(document.activeElement) || Date.now() - (this.harborTypedAt || 0) < 120_000;
+    },
+
+    refreshHarborSoon() {
+      if (this.harborBusy()) this.harborPending = true;
+      else this.loadHarbor();
     },
 
     openShip(id) {
@@ -292,7 +322,9 @@ function dashboardApp() {
       if (note) note.textContent = "…";
       let j = { ok: false, message: "Could not reach the dashboard." };
       try {
-        const r = await fetch(form.dataset.api, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        // A button can send the form elsewhere (data-api on the button), e.g. Check vs Submit.
+        const api = (ev.submitter && ev.submitter.dataset.api) || form.dataset.api;
+        const r = await fetch(api, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         j = await r.json();
       } catch {
         /* keep the fallback */
@@ -301,6 +333,11 @@ function dashboardApp() {
       if (!j.ok) {
         if (note) note.textContent = j.message || "Failed.";
         else alert(j.message || "Failed.");
+        return;
+      }
+      // "note": show the answer in place and keep the form (a check, not a change).
+      if ((ev.submitter && ev.submitter.dataset.then) === "note") {
+        if (note) note.textContent = j.message || "OK.";
         return;
       }
       if (form.dataset.then === "ship" && body.id) return this.openShip(String(body.id));
@@ -348,8 +385,21 @@ function dashboardApp() {
       // The ship's log moved, or crew came and went: refresh what the harbor shows.
       const harborRefresh = (ship) => {
         if (this.leaf !== "harbor" || document.hidden) return;
-        if (!this.shipSel || !ship || ship === this.shipSel) this.loadHarbor();
+        if (!this.shipSel || !ship || ship === this.shipSel) this.refreshHarborSoon();
       };
+      const view = document.getElementById("harbor-view");
+      if (view) {
+        view.addEventListener("input", (ev) => {
+          const form = ev.target.closest && ev.target.closest("form");
+          if (form) form.dataset.dirty = "1";
+          this.harborTypedAt = Date.now();
+        });
+        view.addEventListener("focusout", () =>
+          setTimeout(() => {
+            if (this.harborPending && !this.harborBusy()) this.loadHarbor();
+          }, 300),
+        );
+      }
       es.addEventListener("ship", (ev) => harborRefresh(ev.data));
       es.addEventListener("agents", () => harborRefresh(""));
       es.addEventListener("canvas", (ev) => {
@@ -670,7 +720,8 @@ function dashboardApp() {
       if (t.kind === "firstmate") return "replies in its TUI";
       const lt = t.lastTurn;
       const turn = lt ? ` · ${lt.status === "ok" ? "last reply took" : `last turn ${lt.status} after`} ${formatDuration(lt.ms)}` : "";
-      return (t.model || "").replace(/^[a-z]+\//, "") + turn;
+      const model = t.backupModel ? `on backup ${t.backupModel.replace(/^[a-z]+\//, "")}` : (t.model || "").replace(/^[a-z]+\//, "");
+      return model + turn;
     },
 
     toggleChat() {
@@ -1279,9 +1330,19 @@ function dashboardApp() {
       }
       const cur = this.liveSpeech;
       cur.raw = text;
-      for (let c = speechChunk(text, cur.next); c; c = speechChunk(text, cur.next)) {
+      if (cur.done) return;
+      const speak = (t) => !cur.muted && this.voiceState === "idle" && t.trim() && this.queueSpeech(tid, t);
+      const { limit, cut } = spokenLimit(text, 350, false);
+      for (let c = speechChunk(text, cur.next); c && c.next <= limit; c = speechChunk(text, cur.next)) {
         cur.next = c.next;
-        if (!cur.muted && this.voiceState === "idle") this.queueSpeech(tid, c.chunk);
+        speak(c.chunk);
+      }
+      if (cut) {
+        // A list, table, or code block started, or the opening ran past the budget: say the gist, not the whole reply.
+        speak(text.slice(cur.next, limit));
+        cur.next = limit;
+        cur.done = true;
+        speak(REST_ON_SCREEN);
       }
     },
 
@@ -1295,17 +1356,21 @@ function dashboardApp() {
       if (!this.voiceReplies || this.chatGroup || threadId !== this.chatId) return;
       if (m.role === "captain" || m.role === "system" || m.role === "dashboard" || (m.kind !== "chat" && m.kind !== "question")) return;
       if (!m.ts || Date.parse(m.ts) < this.voiceSince) return;
+      // Questions are read whole (the captain answers them); replies give the gist (spokenLimit).
+      const { limit, cut } = m.kind === "question" ? { limit: m.text.length, cut: false } : spokenLimit(m.text);
       const ls = this.liveSpeech;
       if (ls && ls.tid === threadId && ls.next > 0 && m.kind === "chat" && m.text.startsWith(ls.raw.slice(0, ls.next))) {
-        // Most of this line was spoken while it streamed: say only the rest (nothing if the captain cut in).
+        // Part of this line was spoken while it streamed: say only what is left of the gist (nothing if the captain cut in).
         this.liveSpeech = null;
-        if (ls.muted || this.voiceState !== "idle") return;
-        const c = speechChunk(m.text, ls.next, 40, true);
-        if (c) this.queueSpeech(threadId, c.chunk);
+        if (ls.muted || ls.done || this.voiceState !== "idle") return;
+        const rest = m.text.slice(ls.next, Math.max(ls.next, limit));
+        if (rest.trim()) this.queueSpeech(threadId, rest);
+        if (cut) this.queueSpeech(threadId, REST_ON_SCREEN);
         return;
       }
       if (this.voiceState !== "idle") return; // the captain is talking; don't start a reply over them
-      this.queueSpeech(threadId, m.text);
+      this.queueSpeech(threadId, m.text.slice(0, limit));
+      if (cut) this.queueSpeech(threadId, REST_ON_SCREEN);
     },
 
     async speakNext() {

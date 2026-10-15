@@ -17,6 +17,7 @@ import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, on
 import { dashLog } from "./lib/log.ts";
 import { checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
 import { nodeToken, tokenMatches } from "./lib/node-auth.ts";
+import { NODE_CODE_VERSION } from "./lib/node-version.ts";
 import type { NodeAgentState, NodeState } from "./lib/node-client.ts";
 import { HOST, NODE_PORT, nodeStateDir, ROOT } from "./lib/paths.ts";
 import { requestRefusal } from "./lib/request-guard.ts";
@@ -70,7 +71,7 @@ function snapshot(): NodeState {
     const h = getHeadlessChatState(id);
     agents[id] = { running: hostRunning(id), waiting: hostWaiting(id), alive: hostAlive(id), thinking: h.thinking, lastTurn: turns[id] ?? h.lastTurn };
   }
-  return { api: NODE_API, pid: process.pid, startedAt, agents };
+  return { api: NODE_API, pid: process.pid, startedAt, version: NODE_CODE_VERSION, agents };
 }
 
 // State goes out whenever it changes: right after host activity, and on a 1s
@@ -258,7 +259,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const auth = req.headers.get("authorization") ?? "";
   if (!tokenMatches(auth.replace(/^Bearer\s+/i, ""), token)) return new Response("unauthorized", { status: 401 });
 
-  if (path === "/v1/health") return Response.json({ api: NODE_API, pid: process.pid, startedAt, root: ROOT });
+  if (path === "/v1/health") return Response.json({ api: NODE_API, pid: process.pid, startedAt, version: NODE_CODE_VERSION, root: ROOT });
   if (path === "/v1/state") return Response.json(snapshot());
   if (path === "/v1/events" && req.method === "GET") return events(server, req);
   if (req.method !== "POST") return new Response("method not allowed", { status: 405 });

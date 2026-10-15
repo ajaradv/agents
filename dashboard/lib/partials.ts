@@ -5,6 +5,7 @@ import { escapeHtml } from "./quota.ts";
 import { resolveAgentStatus } from "./agent-status.ts";
 import { HERDR_ATTACH_HINT, isTuiAgent } from "./herdr.ts";
 import { chatAllowed } from "./chat.ts";
+import { chatTarget } from "./chat-targets.ts";
 import { recentShipEvents } from "./ship-log.ts";
 import { crewStatus, crewStatusLabel, timeAgo } from "./ship-view.ts";
 import type { AgentMeta } from "./agents.ts";
@@ -84,6 +85,15 @@ function lastTurnHtml(agentId: string, turn: { at: string; status: string; ms: n
   </details>`;
 }
 
+/** The model, or "on backup <model>" when the last launch fell back (hover for why). */
+function modelCell(id: string, model: string): string {
+  const t = chatTarget(id);
+  const short = (m: string) => m.replace(/^[a-z]+\//, "");
+  return t?.backupModel
+    ? `<span class="warn" title="${escapeHtml(`Configured: ${model}. ${t.backupReason ?? ""}`)}">on backup ${escapeHtml(short(t.backupModel))}</span>`
+    : escapeHtml(short(model || ""));
+}
+
 /** Crewmates as one compact table per ship: who, model, status, last activity, Chat. */
 function crewTablesHtml(crew: AgentMeta[]): string {
   const ships = [...new Set(crew.map((a) => a.ship!))].sort();
@@ -97,7 +107,7 @@ function crewTablesHtml(crew: AgentMeta[]): string {
         const s = crewStatus(a.id, events);
         return `<tr class="is-${s.status}">
           <td><span class="row crew-who"><img class="avatar avatar-sm" src="${agentArtPath(role)}" alt="" width="28" height="28" />${escapeHtml(role)}</span></td>
-          <td class="muted">${escapeHtml((a.model || "").replace(/^[a-z]+\//, ""))}</td>
+          <td class="muted">${modelCell(a.id, a.model)}</td>
           <td><span class="crew-status">${escapeHtml(crewStatusLabel(s.status))}</span></td>
           <td class="crew-last">${s.lastAt ? `<span class="muted">${escapeHtml(timeAgo(s.lastAt))}</span> ` : ""}${escapeHtml(s.activity.replace(/[*_`#>]+/g, "").slice(0, 90))}</td>
           <td><button type="button" class="btn" @click="openChat('${escapeHtml(a.id)}')">Chat</button></td>
@@ -163,7 +173,7 @@ export async function agentsSidebarHtml(): Promise<string> {
           <span class="row">${chatBadge}${tuiBadge}</span>
         </div>
         ${a.description ? `<p class="agent-desc">${escapeHtml(a.description)}</p>` : ""}
-        <p class="muted">${escapeHtml(a.model || a.type)}</p>
+        <p class="muted">${a.model ? modelCell(a.id, a.model) : escapeHtml(a.type)}</p>
         <p class="muted" title="${escapeHtml(last ?? "")}">${escapeHtml(lastShort)}</p>
         ${tuiControls}
         ${chatBtn}

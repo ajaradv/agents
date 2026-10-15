@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { agentArtOrNull, pickPoolArt, poolArt, poolFor } from "./agent-art.ts";
 import { loadAgents } from "./agents.ts";
@@ -31,6 +31,9 @@ export type ChatTarget = {
   ship?: string;
   /** Officers: daily spend cap in USD (agent.yaml daily_budget_usd), checked against the fleet ship log. */
   dailyBudgetUsd?: number;
+  /** Set when the last launch used fallback_model instead of `model` (bin/launch model-running.json). */
+  backupModel?: string;
+  backupReason?: string;
   /** Task role on the rail: crew or secondmate. */
   role?: "crew" | "secondmate";
   state?: string;
@@ -67,8 +70,21 @@ export function allChatTargetIds(): string[] {
   return [...agents, ...tasks].map((t) => t.id);
 }
 
+/** The model the agent's last launch actually used, when it was the backup. */
+async function backupFor(id: string, configured: string): Promise<{ backupModel?: string; backupReason?: string }> {
+  try {
+    const j = JSON.parse(await readFile(join(fleetInboxRoot(), id, "model-running.json"), "utf8")) as { model?: string; configured?: string; backup?: boolean; reason?: string };
+    // Only while the config still names the same primary (a config change makes the record stale).
+    if (j.backup && j.model && j.configured === configured) return { backupModel: j.model, backupReason: j.reason ?? "" };
+  } catch {
+    /* never launched, or launched before this was recorded */
+  }
+  return {};
+}
+
 async function refreshAgents(): Promise<void> {
   const rows = await loadAgents();
+  const backups = new Map(await Promise.all(rows.map(async (a) => [a.id, await backupFor(a.id, a.model)] as const)));
   agents = rows
     .filter((a) => CHAT_ID_RE.test(a.id))
     .filter((a) => (a.type === "assistant" && !a.crewOnly) || a.id === "firstmate")
@@ -84,6 +100,7 @@ async function refreshAgents(): Promise<void> {
       persistentSession: a.persistentSession || undefined,
       ship: a.ship,
       dailyBudgetUsd: a.ship ? undefined : a.dailyBudgetUsd || undefined,
+      ...backups.get(a.id),
     }));
 }
 

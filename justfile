@@ -64,8 +64,9 @@ dashboard:
 node:
     cd "{{root}}" && bun run dashboard/node.ts
 
-# Restart the node after changing agent-running code (agent-host, chat-bridge,
-# crew-api). This stops live agents; their sessions resume on the next message.
+# The dashboard restarts a node running older code by itself once no agent is
+# busy (dashboard/lib/node-version.ts). This forces it now; it stops live
+# agents, and their sessions resume on the next message.
 node-restart:
     #!/usr/bin/env bash
     pid=$(lsof -tiTCP:"${FLEET_NODE_PORT:-8786}" -sTCP:LISTEN) && kill "$pid" && echo "stopped fleet node $pid; the dashboard starts a new one" || echo "no fleet node running"

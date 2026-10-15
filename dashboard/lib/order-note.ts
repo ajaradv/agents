@@ -282,6 +282,16 @@ export function callMismatch(step: OrderStep, tool: string, args: Record<string,
   return null;
 }
 
+/** Check a body (## Intent / ## Steps / ## Acceptance) as if submitted; one line for the captain. */
+export function checkOrderBody(body: string): { ok: boolean; message: string } {
+  const meta: OrderMeta = { title: "check", order: "2026-01-01-check", status: "queued", ship: "fleet", submitted_by: "captain", created: "" };
+  const { order, errors } = parseOrder(withMeta(`\n${body.trim()}\n`, meta));
+  if (errors.length) return { ok: false, message: errors.join(" · ") };
+  const steps = order!.steps.filter((s) => s.phase === "step").length;
+  const checks = order!.steps.length - steps;
+  return { ok: true, message: `Looks right: ${steps} step(s), ${checks} check(s). Submit when ready.` };
+}
+
 /** The captain's Go: a queued order becomes approved (the watcher starts it when Alice is free). */
 export async function approveOrder(slug: string): Promise<{ ok: boolean; message: string }> {
   const r = await readOrder(slug);

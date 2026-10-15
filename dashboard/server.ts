@@ -18,7 +18,7 @@ import {
 import { metricsStripHtml } from "./lib/bus.ts";
 import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fleet-snapshot.ts";
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
-import { approveOrder, cancelOrder, retryOrder } from "./lib/order-note.ts";
+import { approveOrder, cancelOrder, checkOrderBody, createOrder, retryOrder } from "./lib/order-note.ts";
 import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
@@ -402,6 +402,21 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       const res = await decideGo(goAnswer[1]!, b.decision === "go");
       needsChanged();
       return Response.json(res, { status: res.ok ? 200 : 409 });
+    }
+
+    // The captain's own orders, from the fleet deck: check, or submit (approved at once; they are the captain's).
+    if ((path === "/api/orders" || path === "/api/orders/check") && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { title?: string; ship?: string; body?: string };
+      const body = String(b.body ?? "");
+      if (path === "/api/orders/check") return Response.json(checkOrderBody(body));
+      const title = String(b.title ?? "").trim();
+      const ship = String(b.ship ?? "fleet");
+      if (title.length < 3) return Response.json({ ok: false, message: "Give the order a title." }, { status: 400 });
+      const r = await createOrder({ title, ship, by: "captain", body, status: "approved" });
+      if (r.errors.length) return Response.json({ ok: false, message: r.errors.join(" · ") }, { status: 400 });
+      await kickNodeOrders();
+      sseBroadcast("ship", "fleet");
+      return Response.json({ ok: true, message: `Submitted ${r.slug}; Alice starts it when she is free.` });
     }
 
     const orderAction = path.match(/^\/api\/orders\/(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]{0,63})\/(go|cancel|retry)$/);

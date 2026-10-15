@@ -5,6 +5,7 @@ import type { LastChatTurn } from "./chat-bridge.ts";
 import type { ChatLine } from "./chat.ts";
 import { dashLog } from "./log.ts";
 import { nodeToken } from "./node-auth.ts";
+import { NODE_CODE_VERSION } from "./node-version.ts";
 import { NODE_PORT, nodeStateDir } from "./paths.ts";
 
 /**
@@ -18,7 +19,7 @@ import { NODE_PORT, nodeStateDir } from "./paths.ts";
  */
 
 export type NodeAgentState = { running: boolean; waiting: boolean; alive: boolean; thinking: boolean; lastTurn: LastChatTurn | null };
-export type NodeState = { api: number; pid: number; startedAt: string; agents: Record<string, NodeAgentState> };
+export type NodeState = { api: number; pid: number; startedAt: string; version?: string; agents: Record<string, NodeAgentState> };
 
 export type NodeHandlers = {
   line: (agentId: string, line: ChatLine) => void;
@@ -43,8 +44,33 @@ export function nodeOnline(): boolean {
   return online;
 }
 
-export function nodeInfo(): { online: boolean; pid?: number; startedAt?: string; port: number } {
-  return { online, port: NODE_PORT, ...(state ? { pid: state.pid, startedAt: state.startedAt } : {}) };
+export function nodeInfo(): { online: boolean; pid?: number; startedAt?: string; port: number; stale: boolean } {
+  return { online, port: NODE_PORT, stale: nodeStale(), ...(state ? { pid: state.pid, startedAt: state.startedAt } : {}) };
+}
+
+/** The node runs older code than this dashboard (it was started before the last code change). */
+export function nodeStale(): boolean {
+  return Boolean(state && state.version !== NODE_CODE_VERSION);
+}
+
+let lastRestart = 0;
+
+/**
+ * Restart a stale node once nothing is in flight: no agent working, thinking,
+ * or waiting on a dialog. Idle agents lose nothing (their sessions are on disk
+ * and resume on the next message); the link loop starts the new node.
+ */
+async function restartStaleNode(): Promise<void> {
+  if (!state || !nodeStale() || Date.now() - lastRestart < 60_000) return;
+  const busy = Object.entries(state.agents).filter(([, a]) => a.running || a.thinking || a.waiting).map(([id]) => id);
+  if (busy.length) return;
+  lastRestart = Date.now();
+  await dashLog("node", `fleet node ${state.pid} runs older code (${state.version ?? "unversioned"}, dashboard ${NODE_CODE_VERSION}); restarting it while idle`);
+  try {
+    process.kill(state.pid, "SIGTERM");
+  } catch {
+    /* already gone */
+  }
 }
 
 const agent = (id: string): NodeAgentState | undefined => state?.agents[id];
@@ -207,6 +233,7 @@ function dispatch(h: NodeHandlers, event: string, data: string): void {
   if (event === "state") {
     state = j as unknown as NodeState;
     h.state();
+    void restartStaleNode();
   } else if (event === "line") h.line(String(j.agentId), j.line as ChatLine);
   else if (event === "host") h.host(String(j.agentId), j.ev as HostEvent);
   else if (event === "turn") h.state();
@@ -218,6 +245,8 @@ function dispatch(h: NodeHandlers, event: string, data: string): void {
 
 /** Follow the node's event stream for the dashboard's life, restarting the node when it is gone. */
 export function startNodeLink(h: NodeHandlers): void {
+  // A stale node waiting for its agents to go idle: look again every 30s.
+  setInterval(() => void restartStaleNode(), 30_000);
   const loop = async () => {
     for (let backoff = 500; ; backoff = Math.min(backoff * 2, 5000)) {
       if (await ensureNode()) {

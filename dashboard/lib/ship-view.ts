@@ -2,7 +2,7 @@ import { hostRunning } from "./node-client.ts";
 import { listChatTargets, type ChatTarget } from "./chat-targets.ts";
 import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { humanizeError, plainSummary } from "./humanize.ts";
-import { listOrders, type OrderMeta } from "./order-note.ts";
+import { listOrders, ORDER_TOOLS, type OrderMeta } from "./order-note.ts";
 import { escapeHtml } from "./quota.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
@@ -169,7 +169,7 @@ function crewCardHtml(c: CrewCard): string {
         <span class="crew-status">${STATUS_LABEL[c.status]}</span>
       </div>
       <p class="crew-activity">${escapeHtml(plain(c.activity).slice(0, 220))}</p>
-      <p class="muted crew-meta">${escapeHtml(t.model ?? "")}${c.lastAt ? ` · ${ago(c.lastAt)}` : ""} · 7d ${usd(c.cost7d)} over ${c.turns7d} turn${c.turns7d === 1 ? "" : "s"}${c.errors7d ? ` · <a class="warn" href="#ship-log" @click.prevent="showFailedLog()">${c.errors7d} failed</a>` : ""}</p>
+      <p class="muted crew-meta">${t.backupModel ? `<span class="warn" title="${escapeHtml(`Configured: ${t.model ?? ""}. ${t.backupReason ?? ""}`)}">on backup ${escapeHtml(t.backupModel)}</span>` : escapeHtml(t.model ?? "")}${c.lastAt ? ` · ${ago(c.lastAt)}` : ""} · 7d ${usd(c.cost7d)} over ${c.turns7d} turn${c.turns7d === 1 ? "" : "s"}${c.errors7d ? ` · <a class="warn" href="#ship-log" @click.prevent="showFailedLog()">${c.errors7d} failed</a>` : ""}</p>
       <div class="row"><a class="btn btn-ink" href="?chat=${encodeURIComponent(t.id)}" data-chat="${escapeHtml(t.id)}">Chat</a></div>
     </div>
   </article>`;
@@ -390,9 +390,43 @@ async function ordersPanelHtml(): Promise<string> {
       ${buttons ? `<div class="row">${buttons}</div>` : ""}
     </li>`;
   };
+  const ships = (await readShips()).map((s) => s.id);
+  const template = [
+    "## Intent",
+    "",
+    "Why this order exists (context for Alice; she does not act on it).",
+    "",
+    "## Steps",
+    "",
+    "1. `ship_tasks` ship=kinwork",
+    "   expect: the open voyage and its tasks",
+    '2. `fleet_chat` to=kinwork-designer text="Status for the captain, please."',
+    "   expect: the message lands in the designer's thread",
+    "",
+    "## Acceptance",
+    "",
+    "- `agent_chat_read` agent=kinwork-designer n=3",
+    "  expect: the message is in the thread",
+  ].join("\n");
+  const tools = Object.entries(ORDER_TOOLS)
+    .map(([name, t]) => `<code>${escapeHtml(name)}</code>${t.params.length ? ` ${escapeHtml(t.params.join(", "))}` : ""}`)
+    .join(" · ");
+  const writeForm = `<details class="fold order-write">
+      <summary>Write an order</summary>
+      <form class="stack shipyard-form" data-api="/api/orders">
+        <div class="form-grid">
+          <label class="stack-tight">Title <input class="field" name="title" required placeholder="Kinwork status round" /></label>
+          <label class="stack-tight">Ship <select class="field" name="ship">${ships.map((s) => `<option${s === "fleet" ? " selected" : ""}>${escapeHtml(s)}</option>`).join("")}</select></label>
+        </div>
+        <label class="stack-tight">Steps <textarea class="field order-body" name="body" rows="14" spellcheck="false">${escapeHtml(template)}</textarea></label>
+        <p class="muted">One fleet tool call per step with literal <code>key=value</code> arguments (quote values with spaces) and an indented <code>expect:</code> line. Tools: ${tools}. Your orders are approved when submitted.</p>
+        <div class="row"><button class="btn" type="submit" formnovalidate data-api="/api/orders/check" data-then="note">Check</button><button class="btn btn-ink" type="submit">Submit</button><span class="muted" data-note></span></div>
+      </form>
+    </details>`;
   return `<section class="voyage stack orders-panel">
     <div class="between"><h3>Orders</h3><span class="muted">Alice runs each exactly as written, after your Go</span></div>
-    ${open.length ? `<ul class="order-list">${open.map(row).join("")}</ul>` : `<p class="muted">No open orders. Planners queue them with <code>bin/order new</code>; they show here for your Go.</p>`}
+    ${open.length ? `<ul class="order-list">${open.map(row).join("")}</ul>` : `<p class="muted">No open orders. Planners queue them with <code>bin/order new</code>, or write one below; they show here for your Go.</p>`}
+    ${writeForm}
     ${closed.length ? `<details class="fold"><summary>${closed.length} recent order${closed.length === 1 ? "" : "s"}</summary><ul class="order-list">${closed.map(row).join("")}</ul><p class="muted">Each order's report (steps, evidence, planned vs actual) is at the end of its note in the vault: fleet/orders/.</p></details>` : ""}
   </section>`;
 }

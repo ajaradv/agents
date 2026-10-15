@@ -266,7 +266,10 @@ DASHBOARD_RPC_BLOCK = (
     "check yourself instead of asking.\n\n"
     "**Show, don't paste paths.** When the captain should look at something (images, comps, screenshots, a page, a "
     "table, a local URL such as a decision board or the dev server), call **`canvas_show`**. It appears on the canvas "
-    "next to this chat.\n"
+    "next to this chat.\n\n"
+    "**Your first line may be spoken aloud.** With voice on, the dashboard reads the opening of each reply and stops at "
+    "the first list, table, or code block. Make the first line the answer or a short acknowledgement a person would say, "
+    "and keep the details below it.\n"
 )
 
 # Set by rpc_main before prepare_pi_launch so the prompt matches the runtime.
@@ -321,6 +324,26 @@ def load_agent(agent_id: str) -> tuple[dict, dict | None] | None:
 PROVIDER_KEYS = {"cursor": "CURSOR_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
 
 
+def record_running_model(agent_id: str, configured: object, chosen: object) -> None:
+    """fleet/inbox/<id>/model-running.json: the model this launch uses, so the
+    dashboard can show when an agent is on its backup."""
+    try:
+        d = fleet_inbox_root() / agent_id
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "model-running.json").write_text(json.dumps({
+            "model": chosen,
+            "configured": configured,
+            "backup": bool(chosen and configured and chosen != configured),
+            "reason": LAST_FALLBACK_REASON if chosen != configured else "",
+            "at": datetime.now(timezone.utc).isoformat(),
+        }) + "\n")
+    except OSError:
+        pass
+
+
+LAST_FALLBACK_REASON = ""
+
+
 def model_with_fallback(model: object, fallback: object, agent_id: str) -> object:
     """The agent's model, or its fallback_model when the model cannot work today:
     its provider key is missing, or the fleet node recorded a billing or auth
@@ -328,9 +351,11 @@ def model_with_fallback(model: object, fallback: object, agent_id: str) -> objec
     agent host; it lapses at midnight)."""
     if not (isinstance(model, str) and isinstance(fallback, str) and fallback):
         return model
+    global LAST_FALLBACK_REASON
     key = PROVIDER_KEYS.get(model.split("/", 1)[0])
     if key and not os.environ.get(key):
         print(f"launch: {key} is not set; {agent_id} runs on {fallback}", file=sys.stderr)
+        LAST_FALLBACK_REASON = f"{key} is not set"
         return fallback
     try:
         marker = json.loads((fleet_inbox_root() / agent_id / "model-fallback.json").read_text())
@@ -338,6 +363,7 @@ def model_with_fallback(model: object, fallback: object, agent_id: str) -> objec
         return model
     if marker.get("model") == model and marker.get("day") == datetime.now().date().isoformat():
         print(f"launch: {model} failed today ({str(marker.get('reason', ''))[:120]}); {agent_id} runs on {fallback}", file=sys.stderr)
+        LAST_FALLBACK_REASON = f"{model} failed today: {str(marker.get('reason', ''))[:160]}"
         return fallback
     return model
 
@@ -370,7 +396,9 @@ def prepare_pi_launch(
         subprocess.run([str(ROOT / "bin" / "seed-fleet-home")], check=False)
 
     apply_fleet_home_env()
+    configured = model
     model = model_with_fallback(model, agent.get("fallback_model"), agent_id)
+    record_running_model(agent_id, configured, model)
 
     inbox = fleet_inbox_root()
     os.environ.setdefault("FLEET_INBOX", str(inbox))

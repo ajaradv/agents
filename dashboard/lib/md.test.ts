@@ -6,6 +6,7 @@ const g = globalThis as unknown as {
   formatDuration: (ms: number) => string;
   humanizeError: (s: string) => { summary: string; raw: string; folded: boolean };
   speechChunk: (text: string, from: number, min?: number, final?: boolean) => { chunk: string; next: number } | null;
+  spokenLimit: (text: string, budget?: number) => { limit: number; cut: boolean };
 };
 
 describe("renderMarkdown", () => {
@@ -101,5 +102,30 @@ describe("speechChunk", () => {
   test("final sends the rest", () => {
     expect(g.speechChunk("Done. ok", 6, 40, true)).toEqual({ chunk: "ok", next: 8 });
     expect(g.speechChunk("Done.", 5, 40, true)).toBeNull();
+  });
+});
+
+describe("spokenLimit", () => {
+  test("a short prose reply is spoken whole", () => {
+    expect(g.spokenLimit("Kinwork is docked. The designer is idle.")).toEqual({ limit: 40, cut: false });
+  });
+  test("speech stops where a table, list, or heading starts", () => {
+    const t = "Here you go, Captain: four ships, and Kinwork is the busiest.\n\n| Ship | State |\n|---|---|\n| kinwork | docked |";
+    const r = g.spokenLimit(t);
+    expect(t.slice(0, r.limit)).toBe("Here you go, Captain: four ships, and Kinwork is the busiest.\n");
+    expect(r.cut).toBe(true);
+    const d = "Done.\n- one\n- two";
+    expect(d.slice(0, g.spokenLimit(d).limit)).toBe("Done.");
+  });
+  test("long prose is cut at a sentence end within the budget, never mid-sentence", () => {
+    const s = "This sentence is exactly fifty characters long ok. ";
+    const t = s.repeat(12);
+    const r = g.spokenLimit(t, 350);
+    expect(r.limit).toBe(s.length * 6 - 1); // six 51-char sentences fit in 350; a seventh would not
+    expect(r.cut).toBe(true);
+  });
+  test("a first sentence longer than the budget is still said whole", () => {
+    const t = "A".repeat(500) + ". Then more.";
+    expect(g.spokenLimit(t, 350).limit).toBe(501);
   });
 });

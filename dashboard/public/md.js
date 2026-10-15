@@ -185,7 +185,29 @@
     return { chunk: rest.slice(0, end), next: from + end };
   }
 
+  /**
+   * How much of a reply to say out loud: the opening, up to the first list,
+   * table, heading, or code block, and at most about `budget` characters
+   * (cut at a sentence end, always at least the first sentence). Long or
+   * structured replies are read on screen; voice gives the gist.
+   * Returns {limit, cut}: speak text.slice(0, limit); cut means more follows.
+   */
+  function spokenLimit(text, budget = 350, final = true) {
+    const t = String(text);
+    const structure = t.search(/\n[ \t]*([-*+][ \t]|\d+[.)][ \t]|\||#{1,6}[ \t]|```)/);
+    let limit = structure < 0 ? t.length : structure;
+    if (limit > budget) {
+      const ends = [...t.slice(0, limit).matchAll(/[.!?](?=\s|$)/g)].map((m) => m.index + 1);
+      // Still streaming and no sentence has ended yet: wait rather than cut mid-sentence.
+      if (!final && !ends.length) return { limit: t.length, cut: false };
+      const within = ends.filter((e) => e <= budget);
+      limit = within.length ? within[within.length - 1] : ends.length ? ends[0] : Math.min(limit, budget);
+    }
+    return { limit, cut: t.slice(limit).trim().length > 0 };
+  }
+
   root.renderMarkdown = renderMarkdown;
+  root.spokenLimit = spokenLimit;
   root.speechChunk = speechChunk;
   root.formatDuration = formatDuration;
   root.humanizeError = humanizeError;
