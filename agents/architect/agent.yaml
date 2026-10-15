@@ -2,12 +2,11 @@ id: architect
 type: assistant
 role: architect
 harness: pi
-# JetBrains Junie credits (until 2026-10-26): Claude Fable 5.1 for design
-# work (Alice omni agent, game mechanics, voice). bin/launch checks the Junie
-# balance at each start and uses fallback_model once credits run out: Grok on
-# Cursor, which bills against the normal included usage.
-model: junie/claude-fable-5-1
-fallback_model: cursor/grok-4.7@256k
+# Grok on Cursor for design work, billed with the normal Cursor charges.
+# Backup: DeepSeek V4 Pro, used when Cursor refuses the request that day
+# (for example its API usage pool and spend limit are both used up).
+model: cursor/grok-4.7@256k
+fallback_model: deepseek/deepseek-v4-pro
 # Design conversations span days: keep one session across dashboard turns,
 # idle stops, and the TUI (New session on the dashboard starts over).
 dashboard_session: persistent

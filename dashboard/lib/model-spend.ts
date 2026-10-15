@@ -186,7 +186,7 @@ export function groupSpendRows(rows: SpendRow[]): SpendRow[] {
 export async function modelSpendHtml(): Promise<string> {
   const rows = groupSpendRows(await modelSpend());
   if (!rows.length) return "";
-  // Junie bills in subscription credits, which Pi records as $0.
+  // Past Junie rows (until 2026-10-14) billed in subscription credits, which Pi records as $0.
   const credits = (r: SpendRow) => r.lane.startsWith("junie/");
   const cell = (r: SpendRow, day: boolean) => {
     const t = tok(day ? r.todayTokens : r.weekTokens);

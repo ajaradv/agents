@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { envKeyValue, loadFleetDotenv } from "./fleet-env.ts";
 
@@ -152,61 +151,6 @@ async function fetchOpenRouter(apiKey: string): Promise<ApiLaneUsage> {
   };
 }
 
-/** Pi's Junie sign-in (pi-jetbrains-junie-bridge); Pi refreshes it while a Junie model runs. */
-async function junieToken(): Promise<{ access: string; expires: number } | null> {
-  try {
-    const auth = JSON.parse(await readFile(join(homedir(), ".pi", "agent", "auth.json"), "utf8")) as {
-      junie?: { access?: string; expires?: number };
-    };
-    return auth.junie?.access ? { access: auth.junie.access, expires: Number(auth.junie.expires ?? 0) } : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function junieSignedIn(): Promise<boolean> {
-  return Boolean(envKeyValue("JUNIE_API_KEY", await loadFleetDotenv()) || (await junieToken()));
-}
-
-/** When the Junie account ends (subscription quota first, then top-up credits). */
-const JUNIE_UNTIL = "2026-10-26T23:59:59";
-
-/** Grazie reports credits, 100,000 to the dollar (as the bridge shows them). */
-const JUNIE_CREDITS_PER_USD = 100_000;
-
-async function fetchJunie(apiKey: string): Promise<ApiLaneUsage> {
-  const at = new Date().toISOString();
-  const prev = usageCache.junie;
-  // The API key (JUNIE_API_KEY) never expires mid-day; Pi's sign-in lasts an hour.
-  const tok = apiKey ? { access: apiKey, expires: 0 } : await junieToken();
-  if (!tok) return { provider: "junie", ok: false, error: "not signed in (pi /login → JetBrains Junie)", at };
-  if (tok.expires && tok.expires < Date.now()) {
-    if (prev?.ok) return { ...prev, stale: true, error: "sign-in refreshes when a Junie agent runs", at };
-    return { provider: "junie", ok: false, error: "sign-in expired; it refreshes when a Junie agent runs", at };
-  }
-  const { status, body, timedOut } = await fetchJson("https://ingrazzio-cloud-prod.labs.jb.gg/auth/test", tok.access);
-  if (timedOut) return prev?.ok ? { ...prev, stale: true, at } : { provider: "junie", ok: false, error: "timed out", at };
-  const auth = authError(status);
-  if (auth) return { provider: "junie", ok: false, error: auth, at };
-  const o = (body ?? {}) as { balanceLeft?: number; balanceUnit?: string; licenseType?: string; active?: boolean };
-  if (typeof o.balanceLeft !== "number") return { provider: "junie", ok: false, error: `HTTP ${status || "error"}`, at };
-  const usd = o.balanceUnit === "CREDITS" ? o.balanceLeft / JUNIE_CREDITS_PER_USD : o.balanceLeft;
-  const days = Math.ceil((Date.parse(JUNIE_UNTIL) - Date.now()) / 86_400_000);
-  const pace =
-    usd < 0.5
-      ? " · used up; Junie agents run on their fallback models"
-      : days > 0
-        ? ` · ${formatUsd(usd / days)}/day uses it all by ${JUNIE_UNTIL.slice(5, 10)}`
-        : "";
-  return {
-    provider: "junie",
-    ok: true,
-    at,
-    headline: `${formatUsd(usd)} credits left`,
-    detail: `${o.licenseType ?? "Junie"} licence${o.active === false ? " (inactive)" : ""}${pace}`,
-  };
-}
-
 export async function refreshApiLaneUsage(): Promise<Record<string, ApiLaneUsage>> {
   if (usageRunning) return usageCache;
   usageRunning = true;
@@ -244,11 +188,6 @@ export async function refreshApiLaneUsage(): Promise<Record<string, ApiLaneUsage
         at: new Date().toISOString(),
       };
     }
-    jobs.push(
-      fetchJunie(envKeyValue("JUNIE_API_KEY", dotenv)).then((u) => {
-        next.junie = u;
-      }),
-    );
     await Promise.all(jobs);
     usageCache = next;
   } finally {

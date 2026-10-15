@@ -2,7 +2,9 @@ id: shipwright
 type: assistant
 role: shipwright
 harness: pi
+# Composer on Cursor's included usage; DeepSeek V4 Pro when Cursor refuses that day.
 model: cursor/composer-2.5
+fallback_model: deepseek/deepseek-v4-pro
 workspace: repo
 extensions:
   - cursor-sdk

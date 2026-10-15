@@ -2,12 +2,11 @@ id: firstmate
 type: orchestrator
 role: firstmate
 harness: pi
-# JetBrains Junie credits (until 2026-10-26): Claude Sonnet 5. bin/launch
-# checks the Junie balance at each start and uses fallback_model once credits
-# run out: the direct DeepSeek API, whose prompt caching keeps Firstmate's
-# many wakes cheap (Cursor replays the session uncached).
-model: junie/claude-sonnet-5
-fallback_model: deepseek/deepseek-v4-pro
+# The direct DeepSeek API, whose prompt caching keeps Firstmate's many wakes
+# cheap (Cursor replays the session uncached). Backup: the same model through
+# OpenRouter, used when the DeepSeek key is missing or out of balance that day.
+model: deepseek/deepseek-v4-pro
+fallback_model: openrouter/deepseek/deepseek-v4-pro
 extensions:
   - fleet-dashboard-heartbeat
 # Fewer, larger supervision wakes (vendor/firstmate/docs/configuration.md):

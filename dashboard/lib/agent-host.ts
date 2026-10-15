@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   appendAgentChat,
@@ -7,9 +8,10 @@ import {
   type ChatLine,
   type ChatQuestion,
 } from "./chat.ts";
+import { chatTarget } from "./chat-targets.ts";
 import { agentKeyEnv } from "./fleet-env.ts";
 import { dashLog } from "./log.ts";
-import { NODE_PORT, ROOT } from "./paths.ts";
+import { fleetInboxRoot, NODE_PORT, ROOT } from "./paths.ts";
 
 /**
  * Agent host: one long-lived `pi --mode rpc` process per agent with
@@ -46,11 +48,28 @@ const IDLE_MS = 20 * 60_000;
 const STREAM_THROTTLE_MS = 120;
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 // A provider stream cut off mid-response. Pi only retries errors it recognises
-// as network failures; a proxy (e.g. the Junie bridge) that ends the response
+// as network failures; a proxy that ends the response
 // mid-event surfaces as a parse error instead.
 const STREAM_DROPPED = /Could not parse .*SSE event|Unexpected end of JSON input|stream (ended|closed|terminated)|terminated|ECONNRESET|socket hang up/i;
 const STREAM_RETRIES = 2;
 const BILLING_ERROR = /\b402\b|billing|insufficient|quota|out of credits|requires more credits|balance/i;
+const AUTH_ERROR = /\b401\b|unauthori[sz]ed|invalid (api )?key|authentication failed/i;
+
+/**
+ * The agent's model cannot work today (out of credits, key rejected): record it
+ * so bin/launch starts the next session on fallback_model until midnight.
+ */
+async function recordModelFailure(agentId: string, reason: string): Promise<void> {
+  const model = chatTarget(agentId)?.model;
+  if (!model) return;
+  const day = new Date().toLocaleDateString("sv"); // YYYY-MM-DD, local, like Python's date.today()
+  try {
+    await mkdir(join(fleetInboxRoot(), agentId), { recursive: true });
+    await writeFile(join(fleetInboxRoot(), agentId, "model-fallback.json"), JSON.stringify({ day, model, reason: reason.slice(0, 300) }) + "\n", "utf8");
+  } catch {
+    /* the launcher just tries the primary again */
+  }
+}
 
 type Dialog = { method: string; lineTs: string; timer?: ReturnType<typeof setTimeout> };
 
@@ -272,10 +291,12 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       if (p.turnError && p.lastCaptainTs) {
         hooks.line(p.id, await appendChatError(p.id, p.turnError, p.lastCaptainTs));
         hooks.settled(p.id, { ok: false, ms, error: p.turnError, cost: p.turnCost, tokens: p.turnTokens });
-        if (BILLING_ERROR.test(p.turnError)) {
-          // Out of credits: the next message relaunches through bin/launch, which
-          // moves a Junie agent to its fallback_model once Junie credits are gone.
-          void dashLog("agent-host", `${p.id} hit a billing error; stopped so the next message relaunches`);
+        if (BILLING_ERROR.test(p.turnError) || AUTH_ERROR.test(p.turnError)) {
+          // Out of credits or key rejected: the next message relaunches through
+          // bin/launch, which reads this marker and uses fallback_model today.
+          void dashLog("agent-host", `${p.id} hit a billing or auth error; stopped so the next message relaunches on its fallback model`);
+          void recordModelFailure(p.id, p.turnError);
+          hooks.event(p.id, { kind: "notice", text: "Its model is out of credits or refused the key; the next message starts it on its backup model.", level: "warning" });
           setTimeout(() => void stopHost(p.id), 0);
         }
       } else {

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ROOT } from "./paths.ts";
-import { junieSignedIn, type ApiLaneUsage } from "./api-lane-usage.ts";
+import type { ApiLaneUsage } from "./api-lane-usage.ts";
 import { huggingFaceKeyPresent, loadFleetDotenv, envKeyPresent } from "./fleet-env.ts";
 
 function escapeHtml(s: string): string {
@@ -38,11 +38,6 @@ const LANE_META: Record<
   openrouter: {
     label: "OpenRouter",
     keyEnv: "OPENROUTER_API_KEY",
-  },
-  // Signed in through Pi (/login → JetBrains Junie), not a key in fleet/home/.env.
-  junie: {
-    label: "JetBrains Junie",
-    keyEnv: "pi /login",
   },
 };
 
@@ -95,20 +90,15 @@ export async function readConfiguredApiLanes(
   }
 
   const lanes: ApiLane[] = [];
-  const junie = await junieSignedIn();
-  for (const provider of ["deepseek", "huggingface", "openrouter", "junie"] as const) {
+  for (const provider of ["deepseek", "huggingface", "openrouter"] as const) {
     if (quotaProviderIds.has(provider)) continue;
     const meta = LANE_META[provider]!;
     const inDispatch = dispatchProviders.has(provider);
     const inCatalog =
-      provider === "openrouter" ? inDispatch : provider === "junie" ? junie : await providerInPiCatalog(provider);
+      provider === "openrouter" ? inDispatch : await providerInPiCatalog(provider);
     if (!inDispatch && !inCatalog) continue;
     const keySet =
-      provider === "huggingface"
-        ? huggingFaceKeyPresent(dotenv)
-        : provider === "junie"
-          ? junie
-          : envKeyPresent(meta.keyEnv, dotenv);
+      provider === "huggingface" ? huggingFaceKeyPresent(dotenv) : envKeyPresent(meta.keyEnv, dotenv);
     const usage = usageByProvider[provider];
     const note =
       provider === "huggingface"
@@ -131,7 +121,7 @@ export async function readConfiguredApiLanes(
 }
 
 export function apiLaneCardHtml(lane: ApiLane): string {
-  const [on, off] = lane.provider === "junie" ? ["signed in", "not signed in"] : ["key set", "key not set"];
+  const [on, off] = ["key set", "key not set"];
   const keyBadge = lane.keySet
     ? `<span class="detent detent-ok">${on}</span>`
     : `<span class="detent detent-warn">${off}</span>`;

@@ -32,7 +32,7 @@ Local machine, bound to loopback; the server refuses requests from other web pag
 - Chat for every agent and group, as a column beside the page at 1200px and up (the canvas takes the rest of the width when open, and opens by itself when a new item lands) and a full-screen drawer below that: markdown replies, live streaming, ask_captain dialogs answered inline, canvas beside the thread, push-to-talk and spoken replies, Jev auto-routing. Sends are idempotent (requestId).
 - Rail and tabs show who is waiting on the captain; the tab title carries the Needs-you count.
 - Alice is the omni agent (live session): she reads the whole fleet (`fleet_status`, ship logs, tasks, maneuvers, any agent's thread) and messages any agent (`fleet_chat`) through the node's fleet API; fleet actions that change state come later behind a captain Go. Officers' turns and spend are logged on the `fleet` ship, whose deck lists them as its crew; officers can carry a `daily_budget_usd`.
-- Model lanes: Junie credits (while they last), OpenRouter, DeepSeek, Cursor included usage; `fallback_model` when a lane runs dry; per-ship crew budgets.
+- Model lanes: Cursor included usage, DeepSeek, OpenRouter (Junie was dropped on 2026-10-14). Every agent has a `fallback_model` on another provider, used when its model's key is missing or the model hit a billing or auth failure that day; per-ship crew budgets and officer daily budgets.
 - Do not invent hosts, usage figures, or a public URL. Do not bind beyond loopback without authentication.
 
 ## Brand Commitments

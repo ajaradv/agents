@@ -28,7 +28,6 @@ ENV_ALLOWLIST = frozenset(
         "HF_TOKEN",
         "CURSOR_API_KEY",
         "ANTHROPIC_API_KEY",
-        "JUNIE_API_KEY",
     }
 )
 
@@ -318,52 +317,29 @@ def load_agent(agent_id: str) -> tuple[dict, dict | None] | None:
     return None
 
 
-JUNIE_MIN_CREDITS = 50_000  # $0.50 at Grazie's 100,000 credits to the dollar
-
-
-def junie_usable() -> bool:
-    """Whether the JetBrains Junie account can still take work: an active licence
-    with credits left (subscription quota first, then top-up credits). A network
-    blip counts as usable, so a slow check never flips an agent's model."""
-    token = os.environ.get("JUNIE_API_KEY", "").strip()
-    if not token:
-        try:
-            cred = json.loads((Path.home() / ".pi" / "agent" / "auth.json").read_text()).get("junie") or {}
-            token = str(cred.get("access") or "")
-        except (OSError, ValueError):
-            token = ""
-    if not token:
-        return False
-    import urllib.error
-    import urllib.request
-
-    req = urllib.request.Request(
-        "https://ingrazzio-cloud-prod.labs.jb.gg/auth/test",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=4) as res:
-            info = json.loads(res.read().decode() or "{}")
-    except urllib.error.HTTPError as e:
-        if e.code == 402:
-            return False
-        # A rejected API key is final (Grazie answers a bad key with 407); an
-        # expired sign-in token is one Pi refreshes itself.
-        return not (e.code in (401, 403, 407) and os.environ.get("JUNIE_API_KEY"))
-    except (OSError, ValueError):
-        return True
-    left = info.get("balanceLeft")
-    return info.get("active") is not False and (not isinstance(left, (int, float)) or left > JUNIE_MIN_CREDITS)
+# A model's provider and the key it needs from fleet/home/.env.
+PROVIDER_KEYS = {"cursor": "CURSOR_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
 
 
 def model_with_fallback(model: object, fallback: object, agent_id: str) -> object:
-    """junie/* models run while the Junie account has credits, then fallback_model."""
-    if not (isinstance(model, str) and model.startswith("junie/") and fallback):
+    """The agent's model, or its fallback_model when the model cannot work today:
+    its provider key is missing, or the fleet node recorded a billing or auth
+    failure on it today (fleet/inbox/<id>/model-fallback.json, written by the
+    agent host; it lapses at midnight)."""
+    if not (isinstance(model, str) and isinstance(fallback, str) and fallback):
         return model
-    if junie_usable():
+    key = PROVIDER_KEYS.get(model.split("/", 1)[0])
+    if key and not os.environ.get(key):
+        print(f"launch: {key} is not set; {agent_id} runs on {fallback}", file=sys.stderr)
+        return fallback
+    try:
+        marker = json.loads((fleet_inbox_root() / agent_id / "model-fallback.json").read_text())
+    except (OSError, ValueError):
         return model
-    print(f"launch: Junie credits are used up or the licence ended; {agent_id} runs on {fallback}", file=sys.stderr)
-    return fallback
+    if marker.get("model") == model and marker.get("day") == datetime.now().date().isoformat():
+        print(f"launch: {model} failed today ({str(marker.get('reason', ''))[:120]}); {agent_id} runs on {fallback}", file=sys.stderr)
+        return fallback
+    return model
 
 
 def prepare_pi_launch(
@@ -507,12 +483,6 @@ def prepare_pi_launch(
     for rel in agent.get("extra_prompts") or []:
         extra_prompt_files.append((ROOT / str(rel)).resolve())
 
-    if isinstance(model, str) and model.startswith("junie/"):
-        # Junie buffers tool-call arguments; long single writes stall and drop.
-        extra_prompt_files.append(ROOT / "prompts" / "system" / "junie-tool-calls.md")
-        # Keep the bridge's CRLF fix in place after `pi update` (output captured:
-        # in RPC mode stdout belongs to Pi's protocol).
-        subprocess.run([str(ROOT / "bin" / "patch-junie-bridge")], capture_output=True, check=False)
     prompt_file = build_role_prompt(role_file, path_block, extra_prompt_files)
     args = ["pi", "--approve", "--append-system-prompt", str(prompt_file)]
 
