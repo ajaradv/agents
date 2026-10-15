@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Fleet</title>
   <link rel="stylesheet" href="/pixel.css" />
-  <script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0" integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc" crossorigin="anonymous"></script>
-  <script defer src="https://unpkg.com/alpinejs@3.14.3/dist/cdn.min.js"></script>
+  <!-- Served locally (public/vendor/README.md): no CDN wait, works offline and over Tailscale. -->
+  <script src="/vendor/htmx-4.0.0.min.js" integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc"></script>
+  <script defer src="/vendor/alpinejs-3.14.3.min.js"></script>
   <style>[x-cloak] { display: none !important; }</style>
 </head>
 <body x-data="dashboardApp()" x-cloak :class="{ 'chat-open': chatOpen, 'chat-canvas': chatOpen && canvasShown() }">

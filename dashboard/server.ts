@@ -773,7 +773,10 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     const filePath = join(publicDir, path.replace(/^\//, ""));
     const file = Bun.file(filePath);
     if (await file.exists()) {
-      return new Response(file);
+      // Vendored libraries carry their version in the file name: cache them for good.
+      return path.startsWith("/vendor/")
+        ? new Response(file, { headers: { "Cache-Control": "public, max-age=31536000, immutable" } })
+        : new Response(file);
     }
 
     return new Response("not found", { status: 404 });
