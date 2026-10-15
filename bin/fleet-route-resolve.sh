@@ -7,8 +7,8 @@
 #   fleet-route-resolve.sh <message-file | -> [--dry-run]
 #
 # Options sent to Jev (one Choice question):
-#   agent_<id>   every registered assistant in agents/*/agent.yaml, described by
-#                the `description:` in its roles/<role>.md frontmatter
+#   agent_<id>   every registered assistant in agents/*/agent.yaml (not crew-only
+#                templates), described by the `description:` in its roles/<role>.md frontmatter
 #   group_<id>   every group in $FLEET_INBOX/dashboard-groups.json (name, lead, members)
 #   firstmate    ship or multi-step project work for Firstmate to triage and dispatch
 #   ask          nothing clearly fits; the captain picks
@@ -104,6 +104,8 @@ for y in "$ROOT"/agents/*/agent.yaml; do
   [ -f "$y" ] || continue
   id=$(yaml_get id "$y"); type=$(yaml_get type "$y"); role=$(yaml_get role "$y")
   [ "$type" = assistant ] || continue
+  # Crew-only templates (lead, scout) exist only aboard ships as <ship>-<role>; not a recipient by themselves.
+  [ "$(yaml_get crew "$y")" = only ] && continue
   printf '%s\t%s\n' "$id" "$(role_description "$ROOT/roles/${role:-$id}.md")" >> "$TMP/agents.tsv"
 done
 jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {id: .[0], desc: (.[1] // "")})' "$TMP/agents.tsv" > "$TMP/agents.json"
@@ -132,7 +134,7 @@ REQUEST=$(jq -n --rawfile msg "$TMP/msg" --arg model "$TS_MODEL" \
         type: "choice",
         instructions: "The captain wrote `message` on the fleet dashboard. Which ONE recipient should own it? Prefer a single agent when one agent'"'"'s job covers it, a group when it needs that group'"'"'s members working together, and firstmate when it is project or ship work that needs triage, planning, or crews. Pick `ask` when nothing clearly fits.",
         criteria: ($ac + $gc + {
-          firstmate: "Send to Firstmate: work on a project or ship that needs triage, a plan, or crews (features, bugfixes, refactors, research tasks), or anything about tasks already in flight.",
+          firstmate: "Send to Firstmate: work on a project or ship that needs triage, a plan, or crews (features, bugfixes, refactors, research tasks), or questions about Firstmate'"'"'s own tasks already in flight. Not fleet commands (set sail or dock a voyage, change a crew, stop an agent), which go to the omni agent even when they name a ship.",
           ask: "No option clearly fits, or the message is ambiguous; ask the captain."
         })
       }

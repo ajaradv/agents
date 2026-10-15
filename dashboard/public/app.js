@@ -871,6 +871,7 @@ function dashboardApp() {
           <p class="go-summary">${escapeHtml(summary)}</p>
           <div class="row question-actions"><button type="button" class="btn btn-ink" data-go="go">Go</button><button type="button" class="btn" data-go="no">No</button><span class="muted" data-note></span></div>
         </div>`;
+        row.dataset.go = m.go.id;
         row.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => this.answerGo(m.go.id, b.dataset.go, row)));
       } else if (m.kind === "question" && Array.isArray(m.questions) && m.questions.length) {
         row.className = "bubble-row is-agent is-question";
@@ -1184,6 +1185,8 @@ function dashboardApp() {
         const text = (j.text || "").trim();
         if (!text) {
           this.voiceNote = "Didn't catch that.";
+        } else if (this.voiceAnswer(text)) {
+          this.voiceNote = `Answered by voice: “${text}”`;
         } else {
           this.voiceNote = "";
           this.chatDraft = text;
@@ -1193,6 +1196,63 @@ function dashboardApp() {
         this.voiceNote = e.message || "Transcription failed.";
       }
       this.voiceState = "idle";
+    },
+
+    /**
+     * A short spoken reply while a Go or a question waits in this chat answers
+     * it, the same as clicking: "go" / "no", an option's words, "the second
+     * one", "the recommended one", "yes" for a Yes/No question. Anything else,
+     * or more than six words, goes out as a normal message.
+     */
+    voiceAnswer(text) {
+      if (this.chatGroup || !this.$refs.chatLog) return false;
+      if (text.trim().split(/\s+/).length > 6) return false;
+      const norm = (s) =>
+        String(s).toLowerCase().replace(/\(recommended\)|[—–-]\s*recommended/g, "").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+      const said = norm(text).replace(/^(please|uh|um|ok so|so)\s+/, "").replace(/\s+(please|thanks|thank you)$/, "");
+      const YES_RE = /^(go|yes|yeah|yep|yup|ok|okay|sure|do it|go ahead|go for it|approve|approved|affirmative)$/;
+      const NO_RE = /^(no|nope|nah|cancel|stop|don t|dont|do not|deny|decline|no thanks|negative)$/;
+      // "yeah, go ahead" / "ok do it": a leading filler word does not change the answer.
+      const core = (s) => s.replace(/^(yeah|yes|yep|ok|okay|sure|alright|all right|so|well)\s+/, "");
+      const YES = { test: (s) => YES_RE.test(s) || YES_RE.test(core(s)) };
+      const NO = { test: (s) => NO_RE.test(s) || NO_RE.test(core(s)) };
+      const rows = [...this.$refs.chatLog.querySelectorAll(`.bubble-row.is-question[data-thread="${CSS.escape(this.chatId)}"]:not(.is-answered)`)];
+      const row = rows.pop();
+      if (!row) return false;
+      if (row.classList.contains("is-go")) {
+        const choice = YES.test(said) ? "go" : NO.test(said) ? "no" : "";
+        const btn = choice && row.querySelector(`[data-go="${choice}"]:not([disabled])`);
+        if (!btn) return false;
+        btn.click();
+        return true;
+      }
+      // Questions with options, one at a time (several questions in one block stay a click or a typed answer).
+      if (row.querySelectorAll("fieldset.question").length !== 1) return false;
+      const chips = [...row.querySelectorAll(".chip[data-opt]")];
+      if (!chips.length) return false;
+      const ORD = { one: 0, first: 0, "1": 0, two: 1, second: 1, "2": 1, three: 2, third: 2, "3": 2, four: 3, fourth: 3, "4": 3, five: 4, fifth: 4, "5": 4 };
+      // "the second one", "option two", "number 2" → "second" / "two" / "2".
+      let ord = said;
+      for (let prev = ""; prev !== ord; ) {
+        prev = ord;
+        ord = ord.replace(/^(the|option|number)\s+/, "");
+      }
+      ord = ord.replace(/^(\S+)\s+(one|option)$/, "$1");
+      let pick =
+        chips.find((c) => norm(c.dataset.opt) === said) ||
+        (ord in ORD ? chips[ORD[ord]] : undefined) ||
+        (/^(the )?recommended( one)?$/.test(said) ? chips.find((c) => c.querySelector(".detent") || /recommended/i.test(c.dataset.opt)) : undefined) ||
+        (YES.test(said) ? chips.find((c) => norm(c.dataset.opt) === "yes") : undefined) ||
+        (NO.test(said) ? chips.find((c) => norm(c.dataset.opt) === "no") : undefined);
+      // A unique option that starts with what was said ("tailwind" for "Tailwind and daisyUI").
+      if (!pick && said.length >= 3) {
+        const starts = chips.filter((c) => norm(c.dataset.opt).startsWith(said));
+        if (starts.length === 1) pick = starts[0];
+      }
+      if (!pick) return false;
+      pick.click();
+      row.querySelector("[data-send]")?.click();
+      return true;
     },
 
     toggleVoiceReplies() {
