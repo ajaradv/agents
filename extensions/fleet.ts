@@ -5,11 +5,14 @@
  * the caller by FLEET_CREW_TOKEN, which only a live dashboard session has; in
  * the TUI these tools say so instead of guessing.
  *
- * Phase 1 (reads + fleet_chat). Fleet actions that change state come later
- * behind a captain Go held by the server.
+ * Reads + fleet_chat, and running fleet orders: while an order runs, pass its
+ * `order` and `step` with each planned call, log each step with order_step,
+ * and close it with order_finish (dashboard/lib/orders.ts checks every call).
+ * Fleet actions that change state come later behind a captain Go.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { StringEnum } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 
 const base = (process.env.FLEET_DASHBOARD_URL ?? "").replace(/\/$/, "");
@@ -37,15 +40,21 @@ async function call(method: "GET" | "POST", what: string, params: Record<string,
   }
 }
 
+/** Every fleet tool can be a step of a running order. */
+const OrderArgs = {
+  order: Type.Optional(Type.String({ description: "Only while running a fleet order: its id" })),
+  step: Type.Optional(Type.Number({ description: "Only while running a fleet order: the step number this call is" })),
+};
+
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fleet_status",
     label: "Fleet status",
     description:
       "One picture of the whole fleet: every ship (voyage goal and task progress, crew status), officers, Firstmate's workers, who is working now, everything waiting on the captain (questions, holds, failed messages), and today's spend per agent. Call it first when a message is about the fleet.",
-    parameters: Type.Object({}),
-    async execute() {
-      return text(await call("GET", "status"));
+    parameters: Type.Object({ ...OrderArgs }),
+    async execute(_id, p) {
+      return text(await call("GET", "status", { order: p.order, step: p.step }));
     },
   });
 
@@ -57,9 +66,10 @@ export default function (pi: ExtensionAPI) {
       ship: Type.String({ description: "Ship id, e.g. kinwork, or fleet for officers" }),
       limit: Type.Optional(Type.Number({ description: "Rows, default 40, max 200" })),
       kind: Type.Optional(Type.String()),
+      ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("GET", "log", { ship: p.ship, limit: p.limit, kind: p.kind }));
+      return text(await call("GET", "log", { ship: p.ship, limit: p.limit, kind: p.kind, order: p.order, step: p.step }));
     },
   });
 
@@ -67,9 +77,9 @@ export default function (pi: ExtensionAPI) {
     name: "ship_tasks",
     label: "Ship tasks",
     description: "A ship's open voyage: goal, who it was sent to, and every task with assignee, status, and note.",
-    parameters: Type.Object({ ship: Type.String() }),
+    parameters: Type.Object({ ship: Type.String(), ...OrderArgs }),
     async execute(_id, p) {
-      return text(await call("GET", "tasks", { ship: p.ship }));
+      return text(await call("GET", "tasks", { ship: p.ship, order: p.order, step: p.step }));
     },
   });
 
@@ -77,9 +87,9 @@ export default function (pi: ExtensionAPI) {
     name: "ship_maneuvers",
     label: "Ship maneuvers",
     description: "A ship's recent SSSF maneuvers (ADW runs): status, phases, errors, cost; plus the ADWs it has.",
-    parameters: Type.Object({ ship: Type.String() }),
+    parameters: Type.Object({ ship: Type.String(), ...OrderArgs }),
     async execute(_id, p) {
-      return text(await call("GET", "maneuvers", { ship: p.ship }));
+      return text(await call("GET", "maneuvers", { ship: p.ship, order: p.order, step: p.step }));
     },
   });
 
@@ -90,9 +100,10 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       agent: Type.String({ description: "Agent id, e.g. kinwork-designer, architect, firstmate" }),
       n: Type.Optional(Type.Number({ description: "Lines, default 12, max 60" })),
+      ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("GET", "chat", { agent: p.agent, n: p.n }));
+      return text(await call("GET", "chat", { agent: p.agent, n: p.n, order: p.order, step: p.step }));
     },
   });
 
@@ -104,9 +115,41 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       to: Type.String({ description: "Agent id" }),
       text: Type.String(),
+      ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("POST", "chat", {}, { to: p.to, text: p.text }));
+      return text(await call("POST", "chat", {}, { to: p.to, text: p.text, order: p.order, step: p.step }));
+    },
+  });
+
+  pi.registerTool({
+    name: "order_step",
+    label: "Log an order step",
+    description:
+      "While running a fleet order: record the outcome of step n after making its planned call (ok=true when its expect line holds) or that it cannot be done as written (ok=false with why). Steps are logged in order; none can be skipped.",
+    parameters: Type.Object({
+      order: Type.String(),
+      step: Type.Number(),
+      ok: Type.Boolean(),
+      result: Type.String({ description: "One line: what came back, or why it cannot be done as written" }),
+      evidence: Type.Optional(Type.String({ description: "Event id, task number, timestamp, or path that shows it" })),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "order-step", {}, { order: p.order, step: p.step, ok: p.ok, result: p.result, evidence: p.evidence ?? "" }));
+    },
+  });
+
+  pi.registerTool({
+    name: "order_finish",
+    label: "Finish an order",
+    description: 'While running a fleet order: close it. "done" after every step and acceptance check is logged ok; "blocked" (with why) after logging a step as not doable. Then end your turn.',
+    parameters: Type.Object({
+      order: Type.String(),
+      status: StringEnum(["done", "blocked"] as const),
+      why: Type.Optional(Type.String()),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "order-finish", {}, { order: p.order, status: p.status, why: p.why ?? "" }));
     },
   });
 }

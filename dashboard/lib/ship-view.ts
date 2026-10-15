@@ -2,6 +2,7 @@ import { hostRunning } from "./node-client.ts";
 import { listChatTargets, type ChatTarget } from "./chat-targets.ts";
 import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { humanizeError, plainSummary } from "./humanize.ts";
+import { listOrders, type OrderMeta } from "./order-note.ts";
 import { escapeHtml } from "./quota.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
@@ -281,7 +282,7 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
       </div>
     </div>
 
-    ${voyageHtml(ship, voyage, voyages, ready, cards)}
+    ${ship.id === "fleet" ? await ordersPanelHtml() : voyageHtml(ship, voyage, voyages, ready, cards)}
 
     <section class="stack">
       <h3>Crew</h3>
@@ -340,6 +341,60 @@ export function collapseLog(events: ShipEvent[]): { event: ShipEvent; repeats: n
 
 function isBad(e: ShipEvent): boolean {
   return Boolean((e.kind === "turn-end" && e.payload?.error) || (e.kind === "notice" && e.payload?.level === "error"));
+}
+
+// ---------------------------------------------------------------- fleet orders
+
+const ORDER_LABEL: Record<OrderMeta["status"], string> = {
+  queued: "Waiting for your Go",
+  approved: "Approved, starting soon",
+  running: "Alice is running it",
+  "needs-captain": "Paused for you",
+  done: "Done",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+/** The fleet deck's orders panel: Go, Retry, Cancel, and what each order did. */
+async function ordersPanelHtml(): Promise<string> {
+  const all = (await listOrders()).filter((o) => o.meta);
+  const open = all.filter((o) => !["done", "failed", "cancelled"].includes(o.meta!.status));
+  const closed = all.filter((o) => ["done", "failed", "cancelled"].includes(o.meta!.status)).slice(0, 5);
+  const row = (o: (typeof all)[number]) => {
+    const m = o.meta!;
+    const api = `/api/orders/${encodeURIComponent(o.slug)}`;
+    const hot = m.status === "queued" || m.status === "needs-captain";
+    const steps = o.order ? o.order.steps : [];
+    const buttons =
+      m.status === "queued"
+        ? `<form class="row shipyard-form" data-api="${api}/go"><button class="btn btn-ink" type="submit">Go</button><span class="muted" data-note></span></form>
+           <form class="shipyard-form" data-api="${api}/cancel" data-confirm="Cancel this order?"><button class="btn" type="submit">Cancel</button></form>`
+        : m.status === "needs-captain"
+          ? `<form class="row shipyard-form" data-api="${api}/retry"><button class="btn btn-ink" type="submit">Retry from step ${m.resume ?? 1}</button><span class="muted" data-note></span></form>
+             <form class="shipyard-form" data-api="${api}/cancel" data-confirm="Cancel this order?"><button class="btn" type="submit">Cancel</button></form>`
+          : m.status === "approved"
+            ? `<form class="shipyard-form" data-api="${api}/cancel" data-confirm="Cancel this order?"><button class="btn" type="submit">Cancel</button></form>`
+            : "";
+    return `<li class="order-row${hot ? " is-hot" : ""}">
+      <div class="between">
+        <strong>${escapeHtml(m.title)}</strong>
+        <span class="detent${hot ? " detent-hot" : m.status === "done" ? " detent-ok" : ""}">${ORDER_LABEL[m.status]}</span>
+      </div>
+      <p class="muted">${escapeHtml(o.slug)} · by ${escapeHtml(m.submitted_by)} · ship ${escapeHtml(m.ship)} · ${steps.filter((s) => s.phase === "step").length} step(s), ${steps.filter((s) => s.phase === "acceptance").length} check(s)</p>
+      ${m.reason ? `<p class="warn">${escapeHtml(m.reason)}</p>` : ""}
+      ${
+        steps.length && (m.status === "queued" || m.status === "needs-captain")
+          ? `<ol class="order-steps">${steps.map((s) => `<li${m.resume && s.n < m.resume ? ' class="is-done"' : ""}><code>${escapeHtml(s.tool)}</code> ${escapeHtml(Object.entries(s.args).map(([k, v]) => `${k}=${v}`).join(" ").slice(0, 200))}${s.phase === "acceptance" ? ' <span class="muted">(check)</span>' : ""}</li>`).join("")}</ol>`
+          : ""
+      }
+      ${buttons ? `<div class="row">${buttons}</div>` : ""}
+    </li>`;
+  };
+  return `<section class="voyage stack orders-panel">
+    <div class="between"><h3>Orders</h3><span class="muted">Alice runs each exactly as written, after your Go</span></div>
+    ${open.length ? `<ul class="order-list">${open.map(row).join("")}</ul>` : `<p class="muted">No open orders. Planners queue them with <code>bin/order new</code>; they show here for your Go.</p>`}
+    ${closed.length ? `<details class="fold"><summary>${closed.length} recent order${closed.length === 1 ? "" : "s"}</summary><ul class="order-list">${closed.map(row).join("")}</ul><p class="muted">Each order's report (steps, evidence, planned vs actual) is at the end of its note in the vault: fleet/orders/.</p></details>` : ""}
+  </section>`;
 }
 
 // ---------------------------------------------------------------- shipyard + voyage

@@ -80,7 +80,9 @@ export async function fleetStatus(): Promise<Res> {
         ? { kind: n.kind, task: n.taskId, title: n.title, reason: n.reason }
         : n.kind === "question"
           ? { kind: n.kind, agent: n.agentId, asked: n.ts, question: n.questions.map((q) => q.question).join(" / ") }
-          : { kind: n.kind, agent: n.agentId, at: n.ts, message: n.sentText.slice(0, 160), error: humanizeError(n.error) },
+          : n.kind === "order"
+            ? { kind: n.kind, order: n.slug, title: n.title, status: n.status, ...(n.reason ? { reason: n.reason } : {}) }
+            : { kind: n.kind, agent: n.agentId, at: n.ts, message: n.sentText.slice(0, 160), error: humanizeError(n.error) },
     ),
     spendTodayUsd: spend,
   };

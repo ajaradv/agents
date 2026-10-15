@@ -324,7 +324,10 @@ async function drainQueue(agentId: string): Promise<void> {
       else if (target.runtime === "rpc") {
         const refusal = target.ship ? await budgetRefusal(target.ship, agentId) : officerBudgetRefusal(agentId, target.dailyBudgetUsd);
         if (refusal) await failTurn(agentId, line, "error", 0, refusal);
-        else if (line.kind === "crew") {
+        else if (line.kind === "crew" && line.from === "orders") {
+          // The order watcher's brief (lib/orders.ts) explains itself.
+          await submitToHost(agentId, line);
+        } else if (line.kind === "crew") {
           const who = FLEET_OFFICERS.has(line.from) ? "fleet officer" : "crewmate aboard";
           await submitToHost(agentId, { ...line, text: `Message from ${line.from} (${who}, not the captain):\n\n${line.text}` });
         } else await submitToHost(agentId, line);

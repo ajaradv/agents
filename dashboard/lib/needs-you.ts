@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { WaitHold } from "./captain-wait.ts";
 import { readCaptainChat, type ChatLine, type ChatQuestion } from "./chat.ts";
 import { listChatTargets, type ChatTarget } from "./chat-targets.ts";
+import { listOrders } from "./order-note.ts";
 import { fleetInboxRoot } from "./paths.ts";
 
 /**
@@ -13,6 +14,7 @@ import { fleetInboxRoot } from "./paths.ts";
  *   otherwise the answer is sent as the next message.
  * - hold: a Firstmate task held for a captain decision before it ships.
  * - failed: the captain's last message to an agent did not go through.
+ * - order: a fleet order waiting for the captain's Go, or paused for them.
  *
  * Questions that are no longer live and failed sends can be dismissed; holds
  * are answered or stay.
@@ -23,9 +25,10 @@ type Who = { agentId: string; label: string; art: string | null; ship?: string }
 export type NeedItem =
   | (Who & { kind: "question"; id: string; ts: string; text: string; questions: ChatQuestion[]; dialog?: { id: string; method: string }; live: boolean })
   | { kind: "hold"; id: string; taskId: string; title: string; reason: string }
-  | (Who & { kind: "failed"; id: string; ts: string; error: string; sentText: string; sentTs: string });
+  | (Who & { kind: "failed"; id: string; ts: string; error: string; sentText: string; sentTs: string })
+  | { kind: "order"; id: string; slug: string; ts: string; title: string; by: string; status: "queued" | "needs-captain"; steps: string[]; reason?: string; resume?: number };
 
-const KIND_ORDER = { question: 0, hold: 1, failed: 2 } as const;
+const KIND_ORDER = { question: 0, order: 1, hold: 2, failed: 3 } as const;
 
 function who(t: ChatTarget): Who {
   return { agentId: t.id, label: t.label, art: t.art, ...(t.ship ? { ship: t.ship } : {}) };
@@ -74,7 +77,25 @@ export function holdItems(holds: WaitHold[]): NeedItem[] {
   return holds.map((h) => ({ kind: "hold", id: `hold:${h.id}`, taskId: h.id, title: h.title || h.id, reason: h.holdReason }));
 }
 
-/** Questions first (an agent is blocked), then holds, then failed sends; newest first within each. */
+/** Fleet orders that wait on the captain: a Go, or a decision after a pause. */
+export async function orderItems(): Promise<NeedItem[]> {
+  return (await listOrders())
+    .filter((o) => o.order && (o.meta?.status === "queued" || o.meta?.status === "needs-captain"))
+    .map((o) => ({
+      kind: "order" as const,
+      id: `order:${o.slug}`,
+      slug: o.slug,
+      ts: o.meta!.created || o.slug.slice(0, 10),
+      title: o.meta!.title,
+      by: o.meta!.submitted_by,
+      status: o.meta!.status as "queued" | "needs-captain",
+      steps: o.order!.steps.map((s) => `${s.tool} ${Object.entries(s.args).map(([k, v]) => `${k}=${v}`).join(" ")}`.trim()),
+      ...(o.meta!.reason ? { reason: o.meta!.reason } : {}),
+      ...(o.meta!.resume ? { resume: o.meta!.resume } : {}),
+    }));
+}
+
+/** Blocked agents first, then orders, then holds, then failed sends; newest first within each. */
 export function sortNeeds(items: NeedItem[]): NeedItem[] {
   const ts = (i: NeedItem) => ("ts" in i ? i.ts : "");
   return [...items].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || ts(b).localeCompare(ts(a)));
@@ -114,5 +135,5 @@ export async function collectNeedsYou(opts: { waiting: (agentId: string) => bool
   const items = threads
     .filter((i): i is NeedItem => i !== null)
     .filter((i) => (i.kind === "question" && i.live) || !dismissed.has(i.id));
-  return sortNeeds(items.concat(holdItems(opts.holds)));
+  return sortNeeds(items.concat(holdItems(opts.holds), await orderItems()));
 }

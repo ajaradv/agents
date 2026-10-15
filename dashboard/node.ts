@@ -15,6 +15,7 @@ import type { ChatLine } from "./lib/chat.ts";
 import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { agentChatRead, fleetCallerAllowed, fleetChat, fleetStatus, shipLog, shipManeuvers, shipTasks } from "./lib/fleet-api.ts";
 import { dashLog } from "./lib/log.ts";
+import { checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
 import { nodeToken, tokenMatches } from "./lib/node-auth.ts";
 import type { NodeAgentState, NodeState } from "./lib/node-client.ts";
 import { HOST, NODE_PORT, nodeStateDir, ROOT } from "./lib/paths.ts";
@@ -103,7 +104,11 @@ setChatTurnEmitter(() => {
 });
 onShipLogWrite((ship) => emit("ship", ship));
 startHostReaper();
-void startChatTargetRefresh(() => emit("rail", {})).then(() => startChatBridge());
+void startChatTargetRefresh(() => emit("rail", {})).then(() => {
+  startChatBridge();
+  // Orders tell the dashboard when they change, so the fleet deck and Needs you refresh.
+  startOrderWatcher(() => emit("orders", {}));
+});
 
 process.on("unhandledRejection", (reason) => console.error("[node] unhandledRejection:", reason));
 process.on("uncaughtException", (err) => console.error("[node] uncaughtException:", err));
@@ -175,28 +180,60 @@ async function crewApi(req: Request, shipId: string, what: string, num: string |
   return Response.json(res, { status: res.ok ? 200 : 400 });
 }
 
+/** Route → the order tool it is, with the arguments exactly as the caller sent them. */
+function fleetCall(what: string, method: string, q: URLSearchParams, b: Record<string, unknown>): { tool: string; read: boolean; args: Record<string, string> } | null {
+  const pick = (src: (k: string) => unknown, keys: string[]) =>
+    Object.fromEntries(keys.map((k) => [k, src(k)]).filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => [k, String(v)]));
+  const fromQ = (keys: string[]) => pick((k) => q.get(k), keys);
+  if (method === "GET" && what === "status") return { tool: "fleet_status", read: true, args: {} };
+  if (method === "GET" && what === "log") return { tool: "ship_log", read: true, args: fromQ(["ship", "limit", "kind"]) };
+  if (method === "GET" && what === "tasks") return { tool: "ship_tasks", read: true, args: fromQ(["ship"]) };
+  if (method === "GET" && what === "maneuvers") return { tool: "ship_maneuvers", read: true, args: fromQ(["ship"]) };
+  if (method === "GET" && what === "chat") return { tool: "agent_chat_read", read: true, args: fromQ(["agent", "n"]) };
+  if (method === "POST" && what === "chat") return { tool: "fleet_chat", read: false, args: pick((k) => b[k], ["to", "text"]) };
+  return null;
+}
+
 async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise<Response> {
   const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
   if (!fleetCallerAllowed(from)) return Response.json({ ok: false, message: "Fleet calls come from an officer's live session." }, { status: 403 });
-  const ship = q.get("ship") ?? "";
+  const b = req.method === "POST" ? await body(req) : {};
+  const reply = (res: { ok: boolean; message: string }) => Response.json(res, { status: res.ok ? 200 : 400 });
+
+  if (what === "order-step" && req.method === "POST") {
+    return reply(await orderStep(String(b.order ?? ""), Number(b.step), b.ok === true, String(b.result ?? ""), String(b.evidence ?? "")));
+  }
+  if (what === "order-finish" && req.method === "POST") {
+    return reply(await orderFinish(String(b.order ?? ""), b.status === "done" ? "done" : "blocked", String(b.why ?? "")));
+  }
+
+  const call = fleetCall(what, req.method, q, b);
+  if (!call) return Response.json({ ok: false, message: "unknown fleet call" }, { status: 404 });
+  // While an order runs, calls that are part of it must be its current step, literally (lib/orders.ts).
+  const ctx = { order: String(q.get("order") ?? b.order ?? "") || undefined, step: Number(q.get("step") ?? b.step) || undefined };
+  const gate = await checkOrderCall(call.tool, call.args, call.read, ctx);
+  if (!gate.ok) return reply({ ok: false, message: gate.message });
+
+  const a = call.args;
   let res: { ok: boolean; message: string };
-  if (req.method === "GET" && what === "status") res = await fleetStatus();
-  else if (req.method === "GET" && what === "log") res = shipLog(ship, Number(q.get("limit")) || 40, q.get("kind") || undefined);
-  else if (req.method === "GET" && what === "tasks") res = await shipTasks(ship);
-  else if (req.method === "GET" && what === "maneuvers") res = await shipManeuvers(ship);
-  else if (req.method === "GET" && what === "chat") res = await agentChatRead(q.get("agent") ?? "", Number(q.get("n")) || 12);
-  else if (req.method === "POST" && what === "chat") {
-    const b = await body(req);
-    res = await fleetChat(from, String(b.to ?? ""), String(b.text ?? ""));
-  } else return Response.json({ ok: false, message: "unknown fleet call" }, { status: 404 });
-  return Response.json(res, { status: res.ok ? 200 : 400 });
+  if (call.tool === "fleet_status") res = await fleetStatus();
+  else if (call.tool === "ship_log") res = shipLog(a.ship ?? "", Number(a.limit) || 40, a.kind || undefined);
+  else if (call.tool === "ship_tasks") res = await shipTasks(a.ship ?? "");
+  else if (call.tool === "ship_maneuvers") res = await shipManeuvers(a.ship ?? "");
+  else if (call.tool === "agent_chat_read") res = await agentChatRead(a.agent ?? "", Number(a.n) || 12);
+  else res = await fleetChat(from, a.to ?? "", a.text ?? "");
+  if (gate.step) {
+    recordOrderCall(gate.step, call.tool, call.args, res.message);
+    res = { ...res, message: `${res.message} (Step ${gate.step} call recorded; now check its expect line and call order_step.)` };
+  }
+  return reply(res);
 }
 
 async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat)$/);
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers)(?:\/(\d+))?$/);
@@ -213,6 +250,10 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
 
   const b = await body(req);
   const agentId = String(b.agentId ?? "");
+  if (path === "/v1/orders/kick") {
+    await kickOrders();
+    return Response.json({ ok: true });
+  }
   if (path === "/v1/refresh-targets") {
     await refreshAgentTargets();
     return Response.json({ ok: true });

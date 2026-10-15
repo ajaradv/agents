@@ -496,6 +496,17 @@ function dashboardApp() {
           <div class="row question-actions"><button type="button" class="btn btn-ink" data-send>Send answer</button>${item.live ? '<button type="button" class="btn" data-skip>Skip</button>' : '<button type="button" class="btn" data-dismiss>Dismiss</button>'}${openChat}<span class="muted" data-note></span></div>
         </div>`;
         this.wireQuestion(card, item.agentId, item.live ? item.dialog : null, (text) => this.postCaptain(item.agentId, text, card));
+      } else if (item.kind === "order") {
+        const alice = this.findTarget("alice") || { id: "alice", label: "Alice", art: null };
+        const oface = alice.art ? `<img class="avatar" src="${alice.art}" alt="" width="48" height="48" />` : face;
+        const paused = item.status === "needs-captain";
+        card.innerHTML = `${oface}<div class="need-body">
+          <div class="need-head"><h3>${paused ? "Order paused" : "Order waiting for your Go"}: “${escapeHtml(item.title)}”</h3><span class="muted need-when">by ${escapeHtml(item.by)}</span></div>
+          ${paused && item.reason ? `<p class="need-reason warn">${escapeHtml(item.reason)}</p>` : ""}
+          <ol class="order-steps">${item.steps.map((s, i) => `<li${paused && item.resume && i + 1 < item.resume ? ' class="is-done"' : ""}>${escapeHtml(s)}</li>`).join("")}</ol>
+          <div class="row question-actions"><button type="button" class="btn btn-ink" data-order="${paused ? "retry" : "go"}">${paused ? `Retry from step ${item.resume || 1}` : "Go"}</button><button type="button" class="btn" data-order="cancel">Cancel</button><span class="muted" data-note></span></div>
+        </div>`;
+        card.querySelectorAll("[data-order]").forEach((b) => b.addEventListener("click", () => this.orderAction(item.slug, b.dataset.order, card)));
       } else if (item.kind === "hold") {
         card.innerHTML = `${face}<div class="need-body">
           <div class="need-head"><h3>Firstmate holds “${escapeHtml(item.title)}”</h3><span class="detent detent-hot">before it ships</span></div>
@@ -571,6 +582,22 @@ function dashboardApp() {
         }
       } catch {
         note.textContent = "Not recorded; try again.";
+      }
+    },
+
+    async orderAction(slug, action, card) {
+      const note = card.querySelector("[data-note]");
+      card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      note.textContent = "…";
+      try {
+        const r = await fetch(`/api/orders/${encodeURIComponent(slug)}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const j = await r.json();
+        note.textContent = j.message || (j.ok ? "Done." : "Failed.");
+        if (j.ok) card.classList.add("is-done");
+        else card.querySelectorAll("button").forEach((b) => (b.disabled = false));
+      } catch {
+        note.textContent = "Not sent; try again.";
+        card.querySelectorAll("button").forEach((b) => (b.disabled = false));
       }
     },
 

@@ -90,14 +90,16 @@ export function logShipEvent(
   summary: string,
   payload?: Record<string, unknown> | null,
   opts: { root?: string; ts?: string } = {},
-): void {
+): number | null {
   try {
-    open(ship, opts.root)
+    const r = open(ship, opts.root)
       ?.query("INSERT INTO events (ts, actor, kind, summary, payload_json) VALUES (?, ?, ?, ?, ?)")
       .run(opts.ts ?? new Date().toISOString(), actor, kind, summary.slice(0, 2000), payload ? JSON.stringify(payload) : null);
     if (!opts.root) onWrite(ship);
+    return r ? Number(r.lastInsertRowid) : null;
   } catch (e) {
     console.error("[dashboard] ship log:", e);
+    return null;
   }
 }
 

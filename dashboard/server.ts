@@ -18,6 +18,7 @@ import {
 import { metricsStripHtml } from "./lib/bus.ts";
 import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fleet-snapshot.ts";
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
+import { approveOrder, cancelOrder, retryOrder } from "./lib/order-note.ts";
 import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
@@ -38,6 +39,7 @@ import {
   hostAlive,
   hostRunning,
   hostWaiting,
+  kickNodeOrders,
   newSession,
   refreshNodeTargets,
   startNodeLink,
@@ -167,6 +169,10 @@ startNodeLink({
   state: () => sseBroadcast("agents"),
   ship: shipChanged,
   rail: () => sseBroadcast("rail"),
+  orders: () => {
+    sseBroadcast("ship", "");
+    needsChanged();
+  },
 });
 
 // Canvas: tell the page when an agent's canvas items change (extensions/canvas.ts writes them).
@@ -382,6 +388,18 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       const ok = await dismissNeed(String(b.id ?? ""));
       if (ok) needsChanged();
       return Response.json({ ok }, { status: ok ? 200 : 400 });
+    }
+
+    const orderAction = path.match(/^\/api\/orders\/(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]{0,63})\/(go|cancel|retry)$/);
+    if (orderAction && req.method === "POST") {
+      const [, slug, action] = orderAction as unknown as [string, string, string];
+      const res = action === "go" ? await approveOrder(slug) : action === "retry" ? await retryOrder(slug) : await cancelOrder(slug);
+      if (res.ok) {
+        await kickNodeOrders();
+        sseBroadcast("ship", "fleet");
+        needsChanged();
+      }
+      return Response.json(res, { status: res.ok ? 200 : 400 });
     }
 
     if (path === "/api/chat-turns" && req.method === "GET") {
