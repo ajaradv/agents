@@ -9,11 +9,12 @@ import {
 } from "./chat.ts";
 import { agentKeyEnv } from "./fleet-env.ts";
 import { dashLog } from "./log.ts";
-import { PORT, ROOT } from "./paths.ts";
+import { NODE_PORT, ROOT } from "./paths.ts";
 
 /**
  * Agent host: one long-lived `pi --mode rpc` process per agent with
- * `runtime: rpc` in agent.yaml (started through `bin/launch rpc <id>`).
+ * `runtime: rpc` in agent.yaml (started through `bin/launch rpc <id>`). It runs
+ * inside the fleet node (node.ts), so a dashboard restart leaves agents working.
  *
  * - Captain messages become RPC `prompt` commands; a message sent while the
  *   agent works is queued as a steer (read between its steps).
@@ -92,6 +93,11 @@ export function hostWaiting(agentId: string): boolean {
 
 export function hostAlive(agentId: string): boolean {
   return procs.has(agentId);
+}
+
+/** Agents with a live process right now. */
+export function hostIds(): string[] {
+  return [...procs.keys()];
 }
 
 function send(p: AgentProc, cmd: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -337,9 +343,9 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    // Crewmates call back into this dashboard (extensions/crew.ts) and prove
+    // Crewmates call back into the fleet node (extensions/crew.ts) and prove
     // who they are with FLEET_CREW_TOKEN, never with a name in the request.
-    env: { ...process.env, ...keys, FLEET_DASHBOARD_URL: `http://127.0.0.1:${PORT}`, FLEET_CREW_TOKEN: crewToken },
+    env: { ...process.env, ...keys, FLEET_DASHBOARD_URL: `http://127.0.0.1:${NODE_PORT}`, FLEET_CREW_TOKEN: crewToken },
   });
   const p: AgentProc = {
     id: agentId,

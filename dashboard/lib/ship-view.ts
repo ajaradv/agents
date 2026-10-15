@@ -1,4 +1,4 @@
-import { hostRunning } from "./agent-host.ts";
+import { hostRunning } from "./node-client.ts";
 import { listChatTargets, type ChatTarget } from "./chat-targets.ts";
 import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { humanizeError, plainSummary } from "./humanize.ts";

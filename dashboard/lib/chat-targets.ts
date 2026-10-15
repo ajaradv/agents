@@ -23,7 +23,7 @@ export type ChatTarget = {
   description?: string;
   /** Seconds one dashboard turn may run (agent.yaml `turn_timeout:`). */
   turnTimeoutSec?: number;
-  /** "rpc": a live Pi session in the dashboard's agent host (lib/agent-host.ts). */
+  /** "rpc": a live Pi session in the fleet node's agent host (lib/agent-host.ts). */
   runtime?: "headless" | "rpc";
   /** Shares one Pi session across turns and the TUI; New session starts a fresh one. */
   persistentSession?: boolean;
@@ -174,21 +174,21 @@ export async function refreshAgentTargets(): Promise<void> {
 let refreshing: Promise<void> | null = null;
 
 /** Overlapping calls share one refresh (the 20s timer must not stack them). */
-export function refreshChatTargets(): Promise<void> {
-  refreshing ??= doRefreshChatTargets().finally(() => {
+export function refreshChatTargets(opts: { archive?: boolean } = {}): Promise<void> {
+  refreshing ??= doRefreshChatTargets(opts.archive ?? true).finally(() => {
     refreshing = null;
   });
   return refreshing;
 }
 
-async function doRefreshChatTargets(): Promise<void> {
+async function doRefreshChatTargets(archive: boolean): Promise<void> {
   try {
     await refreshAgents();
   } catch (e) {
     console.error("[dashboard] chat targets (agents):", e);
   }
   try {
-    if (await refreshTasks()) {
+    if ((await refreshTasks()) && archive) {
       const moved = await archiveEndedTaskThreads(new Set(allChatTargetIds()));
       if (moved.length) await dashLog("chat-archive", moved.join(","));
     }
@@ -197,11 +197,12 @@ async function doRefreshChatTargets(): Promise<void> {
   }
 }
 
-export function startChatTargetRefresh(onChange: () => void): Promise<void> {
-  const first = refreshChatTargets();
+/** archive: move ended worker threads aside (only the process that runs turns does this). */
+export function startChatTargetRefresh(onChange: () => void, opts: { archive?: boolean } = {}): Promise<void> {
+  const first = refreshChatTargets(opts);
   setInterval(() => {
     const before = allChatTargetIds().join(",");
-    void refreshChatTargets().then(() => {
+    void refreshChatTargets(opts).then(() => {
       if (allChatTargetIds().join(",") !== before) onChange();
     });
   }, REFRESH_MS);

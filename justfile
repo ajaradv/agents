@@ -59,6 +59,17 @@ architect:
 dashboard:
     cd "{{root}}" && bun run dashboard/server.ts
 
+# The fleet node runs the agents; the dashboard starts it when it is missing.
+# Run it here instead to watch its log in the foreground.
+node:
+    cd "{{root}}" && bun run dashboard/node.ts
+
+# Restart the node after changing agent-running code (agent-host, chat-bridge,
+# crew-api). This stops live agents; their sessions resume on the next message.
+node-restart:
+    #!/usr/bin/env bash
+    pid=$(lsof -tiTCP:"${FLEET_NODE_PORT:-8786}" -sTCP:LISTEN) && kill "$pid" && echo "stopped fleet node $pid; the dashboard starts a new one" || echo "no fleet node running"
+
 architect-op:
     #!/usr/bin/env bash
     set -euo pipefail

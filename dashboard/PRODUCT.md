@@ -8,7 +8,7 @@ web (installable on the phone as a PWA next; see Operating Context)
 
 ## Stack
 
-Bun server on `127.0.0.1:8787` (`just dashboard`), htmx 4 partials and Alpine.js on the client, no build step. The server is also the fleet's runtime today: it hosts live agent sessions (`pi --mode rpc`), the ship logs (SQLite per ship), the canvas, voice, and the crew API.
+Bun server on `127.0.0.1:8787` (`just dashboard`), htmx 4 partials and Alpine.js on the client, no build step. Agents run in a separate **fleet node** (`dashboard/node.ts`, `127.0.0.1:8786`, token in `fleet/inbox/.node/`): live agent sessions (`pi --mode rpc`), chat turns, open questions, and the crew API. The dashboard starts the node when it is missing and mirrors its state, so restarting the dashboard leaves agents working. The dashboard still serves the ship logs (SQLite per ship), the canvas, and voice.
 
 ## Users
 

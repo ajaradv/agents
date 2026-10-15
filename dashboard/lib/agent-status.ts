@@ -1,8 +1,6 @@
 import { chatAllowed } from "./chat.ts";
-import {
-  getHeadlessChatState,
-  type LastChatTurn,
-} from "./chat-bridge.ts";
+import type { LastChatTurn } from "./chat-bridge.ts";
+import { getHeadlessChatState } from "./node-client.ts";
 import { firstmateTuiReachable } from "./firstmate-chat.ts";
 import {
   readFirstmateWaitStatus,

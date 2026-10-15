@@ -10,6 +10,7 @@ import { agentsSidebarHtml } from "./lib/partials.ts";
 import { agentsStatusJson } from "./lib/agents-api.ts";
 import {
   appendCaptainChat,
+  appendChatError,
   findSentLine,
   readCaptainChat,
   type ChatLine,
@@ -20,25 +21,28 @@ import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
 import { resolveRoute } from "./lib/route.ts";
-import { newSession } from "./lib/session-rotate.ts";
 import { loadAgents } from "./lib/agents.ts";
 import { speakable, speechParts, sttAvailable, synthesize, transcribe, ttsState, voiceFor } from "./lib/voice.ts";
 import { onShipLogWrite } from "./lib/ship-log.ts";
 import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
-import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { dockVoyage, findShip, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
 import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas, withFrameChecks } from "./lib/canvas.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
+import type { HostEvent } from "./lib/agent-host.ts";
 import {
-  acceptCaptainLine,
+  abortHost,
+  answerDialog,
   getAllLastChatTurns,
   getHeadlessChatState,
-  registerChatBroadcaster,
-  registerChatEventBroadcaster,
-  setChatTurnEmitter,
-  startChatBridge,
-} from "./lib/chat-bridge.ts";
-import { abortHost, answerDialog, crewCaller, hostAlive, hostWaiting, hostRunning, startHostReaper, stopHost, type HostEvent } from "./lib/agent-host.ts";
+  hostAlive,
+  hostRunning,
+  hostWaiting,
+  newSession,
+  refreshNodeTargets,
+  startNodeLink,
+  stopHost,
+  submitCaptainLine,
+} from "./lib/node-client.ts";
 import { chatAllowed, chatTarget, listChatTargets, refreshAgentTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import { HOST, PORT, ROOT } from "./lib/paths.ts";
 import { requestRefusal } from "./lib/request-guard.ts";
@@ -69,7 +73,6 @@ function chatPayload(line: ChatLine) {
 /** Live RPC-agent events go to open sockets only; they are not saved. */
 function broadcastChatEvent(agentId: string, ev: HostEvent) {
   const set = chatSockets.get(agentId);
-  if (ev.kind === "running") sseBroadcast("agents");
   if (!set) return;
   const payload = JSON.stringify({ event: ev });
   for (const ws of set) {
@@ -107,7 +110,7 @@ export function sseBroadcast(event: string, data = "") {
 
 // Ship's log writes come in bursts (tool steps); tell pages at most every 1.5s per ship.
 const shipPending = new Map<string, ReturnType<typeof setTimeout>>();
-onShipLogWrite((ship) => {
+function shipChanged(ship: string) {
   if (shipPending.has(ship)) return;
   shipPending.set(
     ship,
@@ -116,7 +119,8 @@ onShipLogWrite((ship) => {
       sseBroadcast("ship", ship);
     }, 1500),
   );
-});
+}
+onShipLogWrite(shipChanged);
 
 setLifecycleEmitter(() => {
   sseBroadcast("agents");
@@ -131,9 +135,14 @@ scheduleQuotaLoop(() => {
   }
 });
 
-registerChatBroadcaster(broadcastChat);
-registerChatEventBroadcaster(broadcastChatEvent);
-startHostReaper();
+// Agents run in the fleet node (node.ts); its stream feeds the chat sockets and SSE.
+startNodeLink({
+  line: broadcastChat,
+  host: broadcastChatEvent,
+  state: () => sseBroadcast("agents"),
+  ship: shipChanged,
+  rail: () => sseBroadcast("rail"),
+});
 
 // Canvas: tell the page when an agent's canvas items change (extensions/canvas.ts writes them).
 const canvasSigs = new Map<string, string>();
@@ -147,8 +156,8 @@ setInterval(() => {
     }
   })().catch((e) => console.error("[dashboard] canvas poll:", e));
 }, 2000);
-setChatTurnEmitter(() => sseBroadcast("agents"));
-void startChatTargetRefresh(() => sseBroadcast("rail")).then(() => startChatBridge());
+// The node archives ended worker threads; the dashboard only reads the targets.
+void startChatTargetRefresh(() => sseBroadcast("rail"), { archive: false });
 
 process.on("unhandledRejection", (reason) => {
   console.error("[dashboard] unhandledRejection:", reason);
@@ -224,7 +233,7 @@ async function captainSend(agentId: string, text: string, requestId?: string): P
     if (prior) return { line: prior, duplicate: true };
     const line = await appendCaptainChat(agentId, text, requestId);
     broadcastChat(agentId, line);
-    await acceptCaptainLine(agentId, line);
+    await handToNode(agentId, line);
     return { line, duplicate: false };
   })();
   if (!key) return work;
@@ -235,6 +244,12 @@ async function captainSend(agentId: string, text: string, requestId?: string): P
   } finally {
     sendsInFlight.delete(key);
   }
+}
+
+/** Give a saved captain line to the node; if it cannot take it, say so in the thread. */
+async function handToNode(agentId: string, line: ChatLine): Promise<void> {
+  const error = await submitCaptainLine(agentId, line);
+  if (error) broadcastChat(agentId, await appendChatError(agentId, error, line.ts));
 }
 
 /** WebSocket sends are JSON {text, requestId} from current pages, plain text from older ones. */
@@ -540,30 +555,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       }
     }
 
-    // Crew API for crewmates (extensions/crew.ts): status, tasks, messages, maneuvers.
-    const crewApi = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers)(?:\/(\d+))?$/);
-    if (crewApi) {
-      const [, shipId, what, num] = crewApi as unknown as [string, string, string, string | undefined];
-      // The caller is whoever holds the token its live process was given; a
-      // name in the request ("from") is never trusted.
-      const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
-      if (!from) return Response.json({ ok: false, message: "Crew calls come from a crewmate's live session." }, { status: 403 });
-      let res: { ok: boolean; message: string };
-      if (what === "status" && req.method === "GET") {
-        res = await voyageStatus(shipId, from);
-      } else if (req.method === "POST") {
-        const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-        if (what === "tasks" && num) res = await crewUpdateTask(shipId, Number(num), { ...b, from } as never);
-        else if (what === "tasks") res = await crewAddTask(shipId, { ...b, from } as never);
-        else if (what === "message") res = await crewMessage(shipId, { ...b, from } as never);
-        else if (what === "maneuvers") res = await crewStartManeuver(shipId, { ...b, from } as never);
-        else res = { ok: false, message: "unknown crew call" };
-        sseBroadcast("ship", shipId);
-      } else {
-        return new Response("method not allowed", { status: 405 });
-      }
-      return Response.json(res, { status: res.ok ? 200 : 400 });
-    }
+    // The crew API (extensions/crew.ts) is served by the fleet node, where crewmates run.
 
     // Shipyard: register, crew, budget, orchestrator, voyages (lib/shipyard.ts).
     if (path === "/api/ships" && req.method === "POST") {
@@ -599,6 +591,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
         });
         if (res.ok) {
           await refreshAgentTargets();
+          await refreshNodeTargets();
           sseBroadcast("rail");
         }
       } else if (action === "orchestrator") {
@@ -615,7 +608,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
           if (started.ok && started.voyage && ship) {
             const line = await appendCaptainChat(to, voyageBrief(ship, started.voyage));
             broadcastChat(to, line);
-            await acceptCaptainLine(to, line);
+            await handToNode(to, line);
           }
         }
       } else {
