@@ -5,13 +5,21 @@ import { formatDuration } from "./partials.ts";
 import { logShipEvent } from "./ship-log.ts";
 
 /**
- * Feed crewmate activity into its ship's log (lib/ship-log.ts). Agents that are
- * not aboard a ship are ignored. Called from the chat bridge, which already
- * sees every captain line, agent line, host event, and turn result.
+ * Feed agent activity into a ship's log (lib/ship-log.ts): crewmates into
+ * their ship's, officers (Alice, the Architect, the Designer, ...) into the
+ * `fleet` ship's, so their turns and spend are on record too. Firstmate and
+ * its workers keep their own records. Called from the chat bridge, which
+ * already sees every captain line, agent line, host event, and turn result.
  */
 
-function shipOf(agentId: string): string | null {
-  return chatTarget(agentId)?.ship ?? null;
+/** Officers' activity is logged on this ship (fleet/ships/fleet.yaml, the agents repo). */
+export const OFFICER_SHIP = "fleet";
+
+export function shipOf(agentId: string): string | null {
+  const t = chatTarget(agentId);
+  if (!t) return null;
+  if (t.ship) return t.ship;
+  return t.kind === "headless" ? OFFICER_SHIP : null;
 }
 
 export function logCrewLine(agentId: string, line: ChatLine): void {

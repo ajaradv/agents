@@ -13,6 +13,7 @@ import { abortHost, answerDialog, crewCaller, hostAlive, hostIds, hostRunning, h
 import { allChatTargetIds, chatAllowed, chatTarget, refreshAgentTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import type { ChatLine } from "./lib/chat.ts";
 import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
+import { agentChatRead, fleetCallerAllowed, fleetChat, fleetStatus, shipLog, shipManeuvers, shipTasks } from "./lib/fleet-api.ts";
 import { dashLog } from "./lib/log.ts";
 import { nodeToken, tokenMatches } from "./lib/node-auth.ts";
 import type { NodeAgentState, NodeState } from "./lib/node-client.ts";
@@ -39,6 +40,7 @@ import { newSession } from "./lib/session-rotate.ts";
  *   POST /v1/abort|stop|new-session  { agentId }
  *   POST /v1/refresh-targets after crew changes
  * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers>
+ * Fleet API (extensions/fleet.ts, officers' crew token): GET /api/fleet/<status|log|tasks|maneuvers|chat>, POST /api/fleet/chat
  */
 
 export const NODE_API = 1;
@@ -173,8 +175,29 @@ async function crewApi(req: Request, shipId: string, what: string, num: string |
   return Response.json(res, { status: res.ok ? 200 : 400 });
 }
 
+async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise<Response> {
+  const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+  if (!fleetCallerAllowed(from)) return Response.json({ ok: false, message: "Fleet calls come from an officer's live session." }, { status: 403 });
+  const ship = q.get("ship") ?? "";
+  let res: { ok: boolean; message: string };
+  if (req.method === "GET" && what === "status") res = await fleetStatus();
+  else if (req.method === "GET" && what === "log") res = shipLog(ship, Number(q.get("limit")) || 40, q.get("kind") || undefined);
+  else if (req.method === "GET" && what === "tasks") res = await shipTasks(ship);
+  else if (req.method === "GET" && what === "maneuvers") res = await shipManeuvers(ship);
+  else if (req.method === "GET" && what === "chat") res = await agentChatRead(q.get("agent") ?? "", Number(q.get("n")) || 12);
+  else if (req.method === "POST" && what === "chat") {
+    const b = await body(req);
+    res = await fleetChat(from, String(b.to ?? ""), String(b.text ?? ""));
+  } else return Response.json({ ok: false, message: "unknown fleet call" }, { status: 404 });
+  return Response.json(res, { status: res.ok ? 200 : 400 });
+}
+
 async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promise<Response> {
-  const path = new URL(req.url).pathname;
+  const url = new URL(req.url);
+  const path = url.pathname;
+
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat)$/);
+  if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers)(?:\/(\d+))?$/);
   if (crew) return crewApi(req, crew[1]!, crew[2]!, crew[3]);

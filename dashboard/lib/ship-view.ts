@@ -28,10 +28,11 @@ type CrewCard = {
 
 const DAY_MS = 86_400_000;
 
-export function crewStatus(id: string, events: ShipEvent[]): { status: CrewStatus; activity: string; lastAt: string | null } {
+/** `running` defaults to the dashboard's mirror of the node; the node passes its own host state. */
+export function crewStatus(id: string, events: ShipEvent[], running = hostRunning(id)): { status: CrewStatus; activity: string; lastAt: string | null } {
   const mine = events.filter((e) => e.actor === id);
   const last = mine[0];
-  if (hostRunning(id)) {
+  if (running) {
     const tool = mine.find((e) => e.kind === "tool");
     return { status: "working", activity: tool?.summary ?? "Thinking", lastAt: last?.ts ?? null };
   }
@@ -55,8 +56,9 @@ export function crewStatus(id: string, events: ShipEvent[]): { status: CrewStatu
 
 function crewCards(ship: ShipRow, events: ShipEvent[]): CrewCard[] {
   const totals = shipTurnTotals(ship.id, new Date(Date.now() - 7 * DAY_MS).toISOString());
+  // The fleet ship (this repo) is crewed by the officers: their turns are logged there (lib/ship-events.ts).
   return listChatTargets()
-    .agents.filter((t) => t.ship === ship.id)
+    .agents.filter((t) => t.ship === ship.id || (ship.id === "fleet" && !t.ship && t.kind === "headless"))
     .map((target) => {
       const s = crewStatus(target.id, events);
       const t = totals[target.id];
@@ -364,7 +366,8 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
       ${pastHtml}
     </section>`;
   }
-  const crewTargets = cards.map((c) => ({ id: c.target.id, label: c.target.label })).sort((a, b) => Number(b.id.endsWith("-lead")) - Number(a.id.endsWith("-lead")));
+  // Voyages go to crewmates aboard (officers on the fleet deck are not crew).
+  const crewTargets = cards.filter((c) => c.target.ship).map((c) => ({ id: c.target.id, label: c.target.label })).sort((a, b) => Number(b.id.endsWith("-lead")) - Number(a.id.endsWith("-lead")));
   const targets = (ship.orchestrator === "firstmate" ? [{ id: "firstmate", label: "Firstmate" }] : []).concat(crewTargets);
   if (!ready || !targets.length) {
     return `<section class="voyage stack"><h3>Voyage</h3><p class="muted">${ready ? "Bring a crewmate aboard to set sail." : "Finish the required shipyard items below, then set a course."}</p>${pastHtml}</section>`;

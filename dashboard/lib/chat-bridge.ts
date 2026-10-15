@@ -12,7 +12,7 @@ import {
 import { hostRunning, registerHostHooks, submitToHost, type HostEvent } from "./agent-host.ts";
 import { allChatTargetIds, chatTarget } from "./chat-targets.ts";
 import { logCrewEvent, logCrewLine, logCrewTurn } from "./ship-events.ts";
-import { budgetRefusal } from "./shipyard.ts";
+import { budgetRefusal, officerBudgetRefusal } from "./shipyard.ts";
 import { dashLog } from "./log.ts";
 import { spawnTimed } from "./proc.ts";
 import { fleetInboxRoot, ROOT } from "./paths.ts";
@@ -138,9 +138,12 @@ function parseChatLine(raw: string): ChatLine | null {
   }
 }
 
+/** Officers who may message other agents (lib/fleet-api.ts fleet_chat). */
+export const FLEET_OFFICERS = new Set(["alice"]);
+
 function buildTurnPrompt(history: ChatLine[]): string {
   const thread = history
-    .filter((l) => l.kind === "chat" || l.kind === "question")
+    .filter((l) => l.kind === "chat" || l.kind === "question" || l.kind === "crew")
     .slice(-CONTEXT_LINES)
     .map((l) => `${l.from}: ${l.text}`)
     .join("\n");
@@ -319,12 +322,13 @@ async function drainQueue(agentId: string): Promise<void> {
       if (target.kind === "firstmate") await runFirstmateTurn(line);
       else if (target.kind === "task") await runTaskTurn(agentId, line);
       else if (target.runtime === "rpc") {
-        const refusal = target.ship ? await budgetRefusal(target.ship, agentId) : null;
+        const refusal = target.ship ? await budgetRefusal(target.ship, agentId) : officerBudgetRefusal(agentId, target.dailyBudgetUsd);
         if (refusal) await failTurn(agentId, line, "error", 0, refusal);
         else if (line.kind === "crew") {
-          await submitToHost(agentId, { ...line, text: `Message from ${line.from} (crewmate aboard, not the captain):\n\n${line.text}` });
+          const who = FLEET_OFFICERS.has(line.from) ? "fleet officer" : "crewmate aboard";
+          await submitToHost(agentId, { ...line, text: `Message from ${line.from} (${who}, not the captain):\n\n${line.text}` });
         } else await submitToHost(agentId, line);
-      } else if (line.kind === "crew") {
+      } else if (line.kind === "crew" && !FLEET_OFFICERS.has(line.from)) {
         await failTurn(agentId, line, "error", 0, `${agentId} only takes crew messages as a live crewmate.`);
       }
       else await runHeadlessTurn(agentId, line);

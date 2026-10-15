@@ -105,6 +105,16 @@ export function spentToday(shipId: string, crewmateId: string): number {
   return shipTurnTotals(shipId, midnight.toISOString())[crewmateId]?.cost ?? 0;
 }
 
+/** Refusal text when an officer has spent its daily_budget_usd today (spend from the fleet log), else null. */
+export function officerBudgetRefusal(agentId: string, budget: number | undefined): string | null {
+  if (!budget) return null;
+  const spent = spentToday("fleet", agentId);
+  const usd = (n: number) => `$${n.toFixed(n < 1 ? 3 : 2)}`;
+  return spent >= budget
+    ? `${agentId} has spent ${usd(spent)} of its ${usd(budget)} daily budget. Raise daily_budget_usd in agents/${agentId}/agent.yaml to continue today.`
+    : null;
+}
+
 /** Refusal text when a crewmate has spent its budget today, else null. */
 export async function budgetRefusal(shipId: string, crewmateId: string): Promise<string | null> {
   const role = crewmateId.slice(shipId.length + 1);

@@ -29,6 +29,8 @@ export type ChatTarget = {
   persistentSession?: boolean;
   /** Ship crewmates: the ship they serve aboard. */
   ship?: string;
+  /** Officers: daily spend cap in USD (agent.yaml daily_budget_usd), checked against the fleet ship log. */
+  dailyBudgetUsd?: number;
   /** Task role on the rail: crew or secondmate. */
   role?: "crew" | "secondmate";
   state?: string;
@@ -81,6 +83,7 @@ async function refreshAgents(): Promise<void> {
       runtime: a.runtime,
       persistentSession: a.persistentSession || undefined,
       ship: a.ship,
+      dailyBudgetUsd: a.ship ? undefined : a.dailyBudgetUsd || undefined,
     }));
 }
 

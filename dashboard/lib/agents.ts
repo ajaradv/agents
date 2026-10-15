@@ -25,6 +25,8 @@ export type AgentMeta = {
   voice: string;
   /** Set for ship crewmates (`<ship>-<role>`): the ship they serve aboard. */
   ship?: string;
+  /** `daily_budget_usd:` for officers (crewmates use the ship's crew_budgets); 0 means none. */
+  dailyBudgetUsd: number;
 };
 
 function parseAgentYaml(text: string): Record<string, string> {
@@ -79,6 +81,7 @@ export async function loadAgents(): Promise<AgentMeta[]> {
         crewEligible: y.crew === "true" || y.crew === "only",
         crewOnly: y.crew === "only",
         voice: y.voice ?? "",
+        dailyBudgetUsd: Math.max(0, Number(y.daily_budget_usd) || 0),
       });
     } catch {
       /* skip */
