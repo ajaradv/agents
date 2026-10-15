@@ -29,6 +29,8 @@ export type NodeHandlers = {
   rail: () => void;
   /** A fleet order changed state (lib/orders.ts). */
   orders: () => void;
+  /** A fleet action is waiting for, or got, the captain's Go (lib/go-gate.ts). */
+  go: () => void;
 };
 
 const BASE = `http://127.0.0.1:${NODE_PORT}`;
@@ -163,6 +165,13 @@ export async function newSession(agentId: string): Promise<{ ok: boolean; messag
   return (await r.json().catch(() => ({ ok: false, message: "bad reply from the fleet node" }))) as { ok: boolean; message: string };
 }
 
+/** The captain's Go or No on a held fleet action; the node runs it and tells the officer. */
+export async function decideGo(id: string, go: boolean): Promise<{ ok: boolean; message: string }> {
+  const r = await call("/v1/go", { id, decision: go ? "go" : "no" });
+  if (!r) return { ok: false, message: OFFLINE };
+  return (await r.json().catch(() => ({ ok: false, message: "bad reply from the fleet node" }))) as { ok: boolean; message: string };
+}
+
 /** After a Go, retry, or cancel, so the watcher acts now instead of at its next poll. */
 export async function kickNodeOrders(): Promise<void> {
   await post("/v1/orders/kick", {}, 5000);
@@ -204,6 +213,7 @@ function dispatch(h: NodeHandlers, event: string, data: string): void {
   else if (event === "ship") h.ship(String(j));
   else if (event === "rail") h.rail();
   else if (event === "orders") h.orders();
+  else if (event === "go") h.go();
 }
 
 /** Follow the node's event stream for the dashboard's life, restarting the node when it is gone. */

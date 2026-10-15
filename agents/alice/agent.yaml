@@ -33,6 +33,7 @@ authority:
     - fleet-read
     - fleet-chat
     - order-run
+    - fleet-steer
     - vault-file
     - status
     - steer

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { WaitHold } from "./captain-wait.ts";
 import { readCaptainChat, type ChatLine, type ChatQuestion } from "./chat.ts";
 import { listChatTargets, type ChatTarget } from "./chat-targets.ts";
+import { readGoRequests } from "./go-gate.ts";
 import { listOrders } from "./order-note.ts";
 import { fleetInboxRoot } from "./paths.ts";
 
@@ -15,6 +16,7 @@ import { fleetInboxRoot } from "./paths.ts";
  * - hold: a Firstmate task held for a captain decision before it ships.
  * - failed: the captain's last message to an agent did not go through.
  * - order: a fleet order waiting for the captain's Go, or paused for them.
+ * - go: a fleet action an officer asked for, held until the captain says Go or No.
  *
  * Questions that are no longer live and failed sends can be dismissed; holds
  * are answered or stay.
@@ -26,9 +28,10 @@ export type NeedItem =
   | (Who & { kind: "question"; id: string; ts: string; text: string; questions: ChatQuestion[]; dialog?: { id: string; method: string }; live: boolean })
   | { kind: "hold"; id: string; taskId: string; title: string; reason: string }
   | (Who & { kind: "failed"; id: string; ts: string; error: string; sentText: string; sentTs: string })
+  | (Who & { kind: "go"; id: string; goId: string; ts: string; tool: string; summary: string })
   | { kind: "order"; id: string; slug: string; ts: string; title: string; by: string; status: "queued" | "needs-captain"; steps: string[]; reason?: string; resume?: number };
 
-const KIND_ORDER = { question: 0, order: 1, hold: 2, failed: 3 } as const;
+const KIND_ORDER = { go: 0, question: 0, order: 1, hold: 2, failed: 3 } as const;
 
 function who(t: ChatTarget): Who {
   return { agentId: t.id, label: t.label, art: t.art, ...(t.ship ? { ship: t.ship } : {}) };
@@ -49,7 +52,8 @@ export function pendingInThread(t: ChatTarget, lines: ChatLine[], waitingDialog:
     const answered = q && lines.some((l) => l.kind === "answer" && l.ref === q.ts);
     if (q && !answered) return questionItem(t, q, true);
   }
-  if (last.kind === "question" && last.questions?.length) return questionItem(t, last, false);
+  // Go lines are listed from the Go store (they need its id), not as questions.
+  if (last.kind === "question" && last.questions?.length && !last.go) return questionItem(t, last, false);
   if (last.kind === "error") {
     const at = last.ref ? lines.findIndex((l) => l.ts === last.ref && l.from === "captain") : -1;
     const sent = lines[at];
@@ -135,5 +139,9 @@ export async function collectNeedsYou(opts: { waiting: (agentId: string) => bool
   const items = threads
     .filter((i): i is NeedItem => i !== null)
     .filter((i) => (i.kind === "question" && i.live) || !dismissed.has(i.id));
-  return sortNeeds(items.concat(holdItems(opts.holds), await orderItems()));
+  const gos: NeedItem[] = (await readGoRequests()).map((g) => {
+    const t = agents.find((a) => a.id === g.from);
+    return { kind: "go", id: `go:${g.id}`, goId: g.id, ts: g.ts, tool: g.tool, summary: g.summary, agentId: g.from, label: t?.label ?? g.from, art: t?.art ?? null };
+  });
+  return sortNeeds(items.concat(holdItems(opts.holds), await orderItems(), gos));
 }

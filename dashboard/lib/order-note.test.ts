@@ -43,12 +43,12 @@ describe("parseOrder", () => {
   });
   test("free text, unknown tools, bad arguments, and missing expect lines are rejected with line numbers", () => {
     const bad = NOTE.replace("1. `ship_tasks` ship=kinwork", "1. make sure the ship is healthy")
-      .replace("`fleet_chat` to=kinwork-designer", "`voyage_start` ship=kinwork")
+      .replace("`fleet_chat` to=kinwork-designer", "`merge_branch` ship=kinwork")
       .replace("  expect: the message is in the thread\n", "");
     const { order, errors } = parseOrder(bad);
     expect(order).toBeNull();
     expect(errors.some((e) => e.startsWith("line 16:") && e.includes("free text"))).toBe(true);
-    expect(errors.some((e) => e.startsWith("line 18:") && e.includes("voyage_start` is not an order tool"))).toBe(true);
+    expect(errors.some((e) => e.startsWith("line 18:") && e.includes("merge_branch` is not an order tool"))).toBe(true);
     expect(errors.some((e) => e.includes('add an indented "expect:"'))).toBe(true);
   });
   test("acceptance lines must be reads", () => {

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { TIER2_TOOLS } from "./go-gate.ts";
 import { aliceVault } from "./paths.ts";
 
 /**
@@ -28,8 +29,9 @@ import { aliceVault } from "./paths.ts";
 export const ORDER_STATUSES = ["queued", "approved", "running", "needs-captain", "done", "failed", "cancelled"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
-/** Tools an order step may name (phase 2: reads and fleet_chat), with their parameters. */
+/** Tools an order step may name, with their parameters: reads, fleet_chat, and the tier 2 fleet actions (the order's Go covers them). */
 export const ORDER_TOOLS: Record<string, { params: string[]; required: string[]; read: boolean }> = {
+  ...Object.fromEntries(Object.entries(TIER2_TOOLS).map(([k, v]) => [k, { ...v, read: false }])),
   fleet_status: { params: [], required: [], read: true },
   ship_log: { params: ["ship", "limit", "kind"], required: ["ship"], read: true },
   ship_tasks: { params: ["ship"], required: ["ship"], read: true },
@@ -132,7 +134,7 @@ function parseLines(sec: { text: string; offset: number }, phase: OrderStep["pha
     const tool = cm[1]!;
     const spec = ORDER_TOOLS[tool];
     if (!spec) {
-      errors.push(`line ${lineNo}: \`${tool}\` is not an order tool. Allowed: ${Object.keys(ORDER_TOOLS).join(", ")} (fleet actions such as voyage_start come with the captain's Go in a later phase)`);
+      errors.push(`line ${lineNo}: \`${tool}\` is not an order tool. Allowed: ${Object.keys(ORDER_TOOLS).join(", ")}`);
       continue;
     }
     if (phase === "acceptance" && !spec.read) errors.push(`line ${lineNo}: acceptance lines must be read tools, not \`${tool}\``);

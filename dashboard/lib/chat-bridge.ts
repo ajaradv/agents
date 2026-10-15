@@ -2,6 +2,7 @@ import { open, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   appendAgentChat,
+  appendCaptainChat,
   appendChatError,
   appendChatLine,
   chatLogPath,
@@ -140,6 +141,27 @@ function parseChatLine(raw: string): ChatLine | null {
 
 /** Officers who may message other agents (lib/fleet-api.ts fleet_chat). */
 export const FLEET_OFFICERS = new Set(["alice"]);
+
+/** Senders whose messages explain themselves (the order watcher, the Go gate): no "message from" prefix. */
+const SYSTEM_SENDERS = new Set(["orders", "go"]);
+
+/** A captain line written by the node on the captain's behalf (a voyage brief after their Go): saved, shown, and run. */
+export async function postCaptainLine(agentId: string, text: string): Promise<ChatLine> {
+  const line = await appendCaptainChat(agentId, text);
+  agentState(agentId).seenKeys.add(lineKey(line));
+  broadcast(agentId, line);
+  logCrewLine(agentId, line);
+  enqueueCaptainTurn(agentId, line);
+  return line;
+}
+
+/** Save a line the node produced itself (a Go request, its answer) and show it live. */
+export async function postLine(agentId: string, line: ChatLine): Promise<ChatLine> {
+  const saved = await appendChatLine(agentId, line);
+  logCrewLine(agentId, saved);
+  emitOwn(agentId, saved);
+  return saved;
+}
 
 function buildTurnPrompt(history: ChatLine[]): string {
   const thread = history
@@ -324,8 +346,8 @@ async function drainQueue(agentId: string): Promise<void> {
       else if (target.runtime === "rpc") {
         const refusal = target.ship ? await budgetRefusal(target.ship, agentId) : officerBudgetRefusal(agentId, target.dailyBudgetUsd);
         if (refusal) await failTurn(agentId, line, "error", 0, refusal);
-        else if (line.kind === "crew" && line.from === "orders") {
-          // The order watcher's brief (lib/orders.ts) explains itself.
+        else if (line.kind === "crew" && SYSTEM_SENDERS.has(line.from)) {
+          // The order watcher's brief and Go results explain themselves.
           await submitToHost(agentId, line);
         } else if (line.kind === "crew") {
           const who = FLEET_OFFICERS.has(line.from) ? "fleet officer" : "crewmate aboard";

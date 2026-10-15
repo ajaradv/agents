@@ -496,6 +496,14 @@ function dashboardApp() {
           <div class="row question-actions"><button type="button" class="btn btn-ink" data-send>Send answer</button>${item.live ? '<button type="button" class="btn" data-skip>Skip</button>' : '<button type="button" class="btn" data-dismiss>Dismiss</button>'}${openChat}<span class="muted" data-note></span></div>
         </div>`;
         this.wireQuestion(card, item.agentId, item.live ? item.dialog : null, (text) => this.postCaptain(item.agentId, text, card));
+      } else if (item.kind === "go") {
+        card.classList.add("is-question");
+        card.innerHTML = `${face}<div class="need-body">
+          <div class="need-head"><h3>${escapeHtml(item.label)} wants to act on the fleet</h3>${when}</div>
+          <p class="need-reason">${escapeHtml(item.summary)}</p>
+          <div class="row question-actions"><button type="button" class="btn btn-ink" data-go="go">Go</button><button type="button" class="btn" data-go="no">No</button>${openChat}<span class="muted" data-note></span></div>
+        </div>`;
+        card.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => this.answerGo(item.goId, b.dataset.go, card)));
       } else if (item.kind === "order") {
         const alice = this.findTarget("alice") || { id: "alice", label: "Alice", art: null };
         const oface = alice.art ? `<img class="avatar" src="${alice.art}" alt="" width="48" height="48" />` : face;
@@ -582,6 +590,23 @@ function dashboardApp() {
         }
       } catch {
         note.textContent = "Not recorded; try again.";
+      }
+    },
+
+    /** The captain's Go or No on a held fleet action; the node runs it and tells the agent. */
+    async answerGo(id, decision, el) {
+      const note = el.querySelector("[data-note]");
+      el.querySelectorAll("[data-go]").forEach((b) => (b.disabled = true));
+      if (note) note.textContent = decision === "go" ? "Running…" : "…";
+      try {
+        const r = await fetch(`/api/go/${encodeURIComponent(id)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) });
+        const j = await r.json();
+        if (note) note.textContent = decision === "go" ? (j.ok ? "Done: " : "Failed: ") + (j.message || "") : j.message || "Declined.";
+        if (r.status === 409 || j.ok) el.classList.add("is-done", "is-answered");
+        else el.querySelectorAll("[data-go]").forEach((b) => (b.disabled = false));
+      } catch {
+        if (note) note.textContent = "Not sent; try again.";
+        el.querySelectorAll("[data-go]").forEach((b) => (b.disabled = false));
       }
     },
 
@@ -832,6 +857,19 @@ function dashboardApp() {
           target.after(row);
           return;
         }
+      } else if (m.kind === "question" && m.go) {
+        // A fleet action held by the server until the captain says Go (lib/go-gate.ts).
+        row.className = "bubble-row is-agent is-question is-go";
+        const face = t.art
+          ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
+          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
+        const summary = (m.questions && m.questions[0] && m.questions[0].question) || m.text;
+        row.innerHTML = `${face}<div class="bubble question-block">
+          <span class="bubble-name">${escapeHtml(t.label || m.role)} wants to act on the fleet</span>
+          <p class="go-summary">${escapeHtml(summary)}</p>
+          <div class="row question-actions"><button type="button" class="btn btn-ink" data-go="go">Go</button><button type="button" class="btn" data-go="no">No</button><span class="muted" data-note></span></div>
+        </div>`;
+        row.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => this.answerGo(m.go.id, b.dataset.go, row)));
       } else if (m.kind === "question" && Array.isArray(m.questions) && m.questions.length) {
         row.className = "bubble-row is-agent is-question";
         const face = t.art

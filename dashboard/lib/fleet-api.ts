@@ -1,7 +1,10 @@
-import { hostRunning, hostWaiting } from "./agent-host.ts";
-import { acceptCrewLine, FLEET_OFFICERS } from "./chat-bridge.ts";
+import { abortHost, hostRunning, hostWaiting, stopHost } from "./agent-host.ts";
+import { acceptCrewLine, FLEET_OFFICERS, postCaptainLine, postLine } from "./chat-bridge.ts";
 import { readCaptainChat } from "./chat.ts";
-import { chatAllowed, chatTarget, listChatTargets } from "./chat-targets.ts";
+import { chatAllowed, chatTarget, listChatTargets, refreshAgentTargets } from "./chat-targets.ts";
+import { crewStartManeuver } from "./crew-api.ts";
+import { describeAction, readGoRequests, tier2ArgError, writeGoRequests, type GoRequest } from "./go-gate.ts";
+import { newSession } from "./session-rotate.ts";
 import { readShips } from "./fleet-layers.ts";
 import { collectCaptainHolds, lastFleetSnapshot } from "./fleet-snapshot.ts";
 import { humanizeError, plainSummary } from "./humanize.ts";
@@ -10,14 +13,15 @@ import { OFFICER_SHIP, shipOf } from "./ship-events.ts";
 import { recentShipEvents, shipTurnTotals } from "./ship-log.ts";
 import { recentManeuvers } from "./ship-maneuvers.ts";
 import { crewStatus } from "./ship-view.ts";
-import { openVoyage } from "./shipyard.ts";
+import { dockVoyage, findShip, openVoyage, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./shipyard.ts";
 import { listTasks, taskProgress } from "./voyage-tasks.ts";
 
 /**
  * The fleet API for officers (extensions/fleet.ts), served by the fleet node.
- * Phase 1 of the Alice omni plan: reads of the whole fleet plus fleet_chat
- * (messages to any agent on the rail). Fleet actions that change state
- * (voyages, crew, maneuvers) come in phase 3 behind a server-held captain Go.
+ * Reads of the whole fleet, fleet_chat (messages to any agent on the rail),
+ * and tier 2 fleet actions (voyages, crew, orchestrator, maneuvers, stopping
+ * an agent, new sessions), which run only after the captain's Go
+ * (lib/go-gate.ts) or as a step of an order the captain approved.
  *
  * The caller is the officer whose live process holds the crew token; a name
  * in the request is never trusted (same as the crew API).
@@ -78,7 +82,9 @@ export async function fleetStatus(): Promise<Res> {
     needsCaptain: needs.map((n) =>
       n.kind === "hold"
         ? { kind: n.kind, task: n.taskId, title: n.title, reason: n.reason }
-        : n.kind === "question"
+        : n.kind === "go"
+          ? { kind: n.kind, from: n.agentId, action: n.summary }
+          : n.kind === "question"
           ? { kind: n.kind, agent: n.agentId, asked: n.ts, question: n.questions.map((q) => q.question).join(" / ") }
           : n.kind === "order"
             ? { kind: n.kind, order: n.slug, title: n.title, status: n.status, ...(n.reason ? { reason: n.reason } : {}) }
@@ -158,4 +164,116 @@ export async function fleetChat(from: string, to: string, text: string): Promise
   if (t?.kind === "task") return { ok: false, message: `${to} is a Firstmate worker; message Firstmate instead.` };
   const line = await acceptCrewLine(to, from, body.slice(0, 8000));
   return { ok: true, message: `Sent to ${to} at ${line.ts}${shipOf(to) ? ` (logged on the ${shipOf(to)} ship log)` : ""}. Its reply lands in its own thread; read it with agent_chat_read.` };
+}
+
+// ---------------------------------------------------------------- tier 2 actions
+
+let fleetChanged: (what: "rail" | "ship" | "go") => void = () => {};
+
+/** The node tells the dashboard when an action changed crews, ships, or pending Gos. */
+export function onFleetChange(fn: (what: "rail" | "ship" | "go") => void): void {
+  fleetChanged = fn;
+}
+
+/** Run a fleet action now: the captain said Go, or it is an approved order's step. */
+export async function runFleetAction(tool: string, a: Record<string, string>): Promise<Res> {
+  const bad = tier2ArgError(tool, a);
+  if (bad) return { ok: false, message: bad };
+  const ship = a.ship ? await findShip(a.ship) : undefined;
+  if (a.ship && !ship) return { ok: false, message: `No ship named ${a.ship}.` };
+  let res: Res;
+  switch (tool) {
+    case "voyage_start": {
+      const allowed = (ship!.orchestrator === "firstmate" ? ["firstmate"] : []).concat(ship!.crew.map((r) => `${ship!.id}-${r}`));
+      if (!allowed.includes(a.to!)) return { ok: false, message: `Send the voyage to ${allowed.join(" or ") || "a crewmate aboard (none yet)"}.` };
+      const started = await startVoyage(ship!.id, a.goal!, a.to!);
+      res = started;
+      if (started.ok && started.voyage) {
+        const line = await postCaptainLine(a.to!, voyageBrief(ship!, started.voyage));
+        res = { ok: true, message: `${ship!.id} set sail; the brief went to ${a.to} at ${line.ts}.`, voyage: started.voyage.file };
+      }
+      break;
+    }
+    case "voyage_dock":
+      res = await dockVoyage(ship!.id, a.summary ?? "");
+      break;
+    case "crew_change": {
+      if (a.remove) {
+        const ashore = `${ship!.id}-${a.remove}`;
+        if (hostRunning(ashore)) return { ok: false, message: `${ashore} is mid-task. Stop it or let it finish first.` };
+        await stopHost(ashore);
+      }
+      const budget = a.budget === undefined ? undefined : a.budget === "" || a.budget === "none" ? null : Number(a.budget);
+      if (budget !== undefined && budget !== null && !(budget >= 0)) return { ok: false, message: "budget is a number of dollars, or none." };
+      res = await setCrew(ship!.id, {
+        ...(a.add ? { add: a.add } : {}),
+        ...(a.remove ? { remove: a.remove } : {}),
+        ...(budget !== undefined ? { budget: { role: a.role!, usd: budget } } : {}),
+        ...(a.model !== undefined ? { model: { role: a.role!, model: a.model === "" || a.model === "default" ? null : a.model } } : {}),
+      });
+      if (res.ok) {
+        await refreshAgentTargets();
+        fleetChanged("rail");
+      }
+      break;
+    }
+    case "orchestrator_set":
+      res = await setOrchestrator(ship!.id, a.orchestrator!);
+      break;
+    case "maneuver_start": {
+      if (!ship!.crew.includes("lead")) return { ok: false, message: `${ship!.id} has no lead aboard to run a maneuver; crew the ship first.` };
+      res = await crewStartManeuver(ship!.id, { from: `${ship!.id}-lead`, adw: a.adw, prompt: a.prompt });
+      break;
+    }
+    case "agent_abort":
+      if (chatTarget(a.agent!)?.runtime !== "rpc") return { ok: false, message: `${a.agent} is not a live agent.` };
+      res = (await abortHost(a.agent!)) ? { ok: true, message: `${a.agent} was stopped mid-turn.` } : { ok: false, message: `${a.agent} was not working.` };
+      break;
+    case "agent_new_session":
+      if (!chatTarget(a.agent!)?.persistentSession) return { ok: false, message: `${a.agent} has no shared session.` };
+      res = await newSession(a.agent!);
+      break;
+    default:
+      return { ok: false, message: `${tool} is not a fleet action.` };
+  }
+  if (a.ship) fleetChanged("ship");
+  return res;
+}
+
+/** Outside an order: hold the action for the captain's Go and ask in the officer's thread. */
+export async function requestGo(from: string, tool: string, a: Record<string, string>): Promise<Res> {
+  const bad = tier2ArgError(tool, a);
+  if (bad) return { ok: false, message: bad };
+  const summary = describeAction(tool, a);
+  const id = crypto.randomUUID().slice(0, 12);
+  const line = await postLine(from, {
+    ts: new Date().toISOString(),
+    from,
+    kind: "question",
+    text: `Go for this? ${summary}`,
+    questions: [{ id: `go-${id}`, question: summary, options: ["Go", "No"] }],
+    go: { id, tool },
+  });
+  const list = await readGoRequests();
+  list.push({ id, tool, args: a, from, ts: line.ts, lineTs: line.ts, summary });
+  await writeGoRequests(list);
+  fleetChanged("go");
+  return { ok: true, message: `Waiting for the captain's Go on: ${summary} End your turn now; the result arrives as a message. Do not ask again or retry.` };
+}
+
+/** The captain's answer to a held action. */
+export async function decideGo(id: string, go: boolean): Promise<Res> {
+  const list = await readGoRequests();
+  const req: GoRequest | undefined = list.find((r) => r.id === id);
+  if (!req) return { ok: false, message: "That request is no longer waiting." };
+  await writeGoRequests(list.filter((r) => r.id !== id));
+  await postLine(req.from, { ts: new Date().toISOString(), from: "captain", kind: "answer", text: go ? "Go" : "No", ref: req.lineTs });
+  fleetChanged("go");
+  if (!go) {
+    await acceptCrewLine(req.from, "go", `The captain said No to: ${req.summary} Nothing was done. Do not retry it unless the captain asks.`);
+    return { ok: true, message: "Declined; Alice was told." };
+  }
+  const res = await runFleetAction(req.tool, req.args);
+  await acceptCrewLine(req.from, "go", `The captain said Go: ${req.summary}\nResult: ${res.ok ? "done" : "failed"}: ${res.message}`);
+  return { ok: res.ok, message: res.message };
 }

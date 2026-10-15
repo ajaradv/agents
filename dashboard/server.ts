@@ -39,6 +39,7 @@ import {
   hostAlive,
   hostRunning,
   hostWaiting,
+  decideGo,
   kickNodeOrders,
   newSession,
   refreshNodeTargets,
@@ -70,6 +71,7 @@ function chatPayload(line: ChatLine) {
     ...(line.ref ? { ref: line.ref } : {}),
     ...(line.questions ? { questions: line.questions } : {}),
     ...(line.dialog ? { dialog: line.dialog } : {}),
+    ...(line.go ? { go: line.go } : {}),
   };
 }
 
@@ -168,7 +170,11 @@ startNodeLink({
   host: broadcastChatEvent,
   state: () => sseBroadcast("agents"),
   ship: shipChanged,
-  rail: () => sseBroadcast("rail"),
+  rail: () => {
+    // A crew change in the node (Alice's crew_change after a Go): re-read crews here too.
+    void refreshAgentTargets().then(() => sseBroadcast("rail"));
+  },
+  go: () => needsChanged(),
   orders: () => {
     sseBroadcast("ship", "");
     needsChanged();
@@ -388,6 +394,14 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       const ok = await dismissNeed(String(b.id ?? ""));
       if (ok) needsChanged();
       return Response.json({ ok }, { status: ok ? 200 : 400 });
+    }
+
+    const goAnswer = path.match(/^\/api\/go\/([a-z0-9-]{6,40})$/);
+    if (goAnswer && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { decision?: string };
+      const res = await decideGo(goAnswer[1]!, b.decision === "go");
+      needsChanged();
+      return Response.json(res, { status: res.ok ? 200 : 409 });
     }
 
     const orderAction = path.match(/^\/api\/orders\/(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]{0,63})\/(go|cancel|retry)$/);

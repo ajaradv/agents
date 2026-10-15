@@ -27,6 +27,8 @@ export type ChatLine = {
   ref?: string;
   questions?: ChatQuestion[];
   dialog?: { id: string; method: string; timeoutMs?: number };
+  /** A fleet action held for the captain's Go (lib/go-gate.ts); answered with /api/go/<id>. */
+  go?: { id: string; tool: string };
   /** Client-chosen id for a captain send; a retry with the same id is not sent twice. */
   requestId?: string;
 };

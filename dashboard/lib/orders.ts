@@ -71,12 +71,14 @@ function brief(order: Order, from: number): string {
     `1. Call its tool with exactly these arguments plus order="${order.meta.order}" and step=<n>. No other arguments.`,
     "2. Check the result against its expect line.",
     `3. Call order_step with order="${order.meta.order}", step=<n>, ok (true when the expect line holds), result (one line on what came back), evidence (event id, task number, timestamp, or path).`,
-    `After the last item call order_finish with status "done". If an item cannot be done as written, call order_step with ok=false and why, then order_finish with status "blocked". Do not improvise around the plan, skip items, or add fleet calls; the server refuses calls that do not match.`,
+    `Acceptance checks are items too: run and log each one like a step. Only after the last item call order_finish with status "done". If an item cannot be done as written, call order_step with ok=false and why, then order_finish with status "blocked". Do not improvise around the plan, skip items, or add fleet calls; the server refuses calls that do not match.`,
     "If the captain messages you meanwhile, answer in a line and carry on.",
     "",
     ...(order.intent ? ["Intent (context only, do not act on it):", order.intent, ""] : []),
     "Items:",
-    ...steps.map((s) => `${s.n}. ${stepLabel(s)}${s.phase === "acceptance" ? " (acceptance check)" : ""}\n   expect: ${s.expect}`),
+    ...steps.map((s) => `${s.n}. ${stepLabel(s)}${s.phase === "acceptance" ? " (acceptance check, required)" : ""}\n   expect: ${s.expect}`),
+    "",
+    `${steps.length} item(s) in all; order_finish comes after item ${order.steps.length}.`,
   ]
     .filter((l, i, a) => !(l === "" && a[i - 1] === ""))
     .join("\n");
@@ -254,7 +256,14 @@ export async function orderStep(order: string, n: number, ok: boolean, result: s
   const left = r.order.steps.length - r.next + 1;
   return {
     ok: true,
-    message: ok ? (left > 0 ? `Step ${n} logged (event ${event}). Next: step ${r.next}.` : `Step ${n} logged (event ${event}). All items done: call order_finish with status "done".`) : `Step ${n} logged as blocked. Call order_finish with status "blocked" and why.`,
+    message: ok
+      ? left > 0
+        ? (() => {
+            const nx = r.order.steps.find((s) => s.n === r.next)!;
+            return `Step ${n} logged (event ${event}). Next: step ${r.next}${nx.phase === "acceptance" ? " (an acceptance check; required before finishing)" : ""}: ${stepLabel(nx)} with order and step=${r.next}. ${left} item(s) left; do not call order_finish yet.`;
+          })()
+        : `Step ${n} logged (event ${event}). All items done: call order_finish with status "done".`
+      : `Step ${n} logged as blocked. Call order_finish with status "blocked" and why.`,
   };
 }
 

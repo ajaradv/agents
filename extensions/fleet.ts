@@ -5,10 +5,11 @@
  * the caller by FLEET_CREW_TOKEN, which only a live dashboard session has; in
  * the TUI these tools say so instead of guessing.
  *
- * Reads + fleet_chat, and running fleet orders: while an order runs, pass its
- * `order` and `step` with each planned call, log each step with order_step,
- * and close it with order_finish (dashboard/lib/orders.ts checks every call).
- * Fleet actions that change state come later behind a captain Go.
+ * Reads, fleet_chat, and tier 2 fleet actions (voyages, crew, orchestrator,
+ * maneuvers, stopping an agent, new sessions). A tier 2 call outside an order
+ * is held by the server for the captain's Go (dashboard/lib/go-gate.ts).
+ * While an order runs, pass its `order` and `step` with each planned call, log
+ * each step with order_step, and close it with order_finish.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -119,6 +120,95 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, p) {
       return text(await call("POST", "chat", {}, { to: p.to, text: p.text, order: p.order, step: p.step }));
+    },
+  });
+
+  // Tier 2: fleet actions that change state. Outside an order the server holds
+  // each one for the captain's Go and answers "waiting"; end the turn then.
+  const action = (tool: string, args: Record<string, unknown>, p: { order?: string; step?: number }) =>
+    call("POST", "action", {}, { tool, args: Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined)), order: p.order, step: p.step });
+  const GO = " Needs the captain's Go: outside an approved order the call returns \"waiting for the captain's Go\"; end your turn then, and the result arrives as a message.";
+
+  pi.registerTool({
+    name: "voyage_start",
+    label: "Set sail",
+    description: "Start a voyage on a ship: a goal sent to the crewmate (or Firstmate) who runs it; they get the brief." + GO,
+    parameters: Type.Object({
+      ship: Type.String(),
+      goal: Type.String({ description: "What the voyage should achieve, in one or two sentences" }),
+      to: Type.String({ description: "Who runs it: <ship>-lead (usual), another crewmate aboard, or firstmate on Firstmate ships" }),
+      ...OrderArgs,
+    }),
+    async execute(_id, p) {
+      return text(await action("voyage_start", { ship: p.ship, goal: p.goal, to: p.to }, p));
+    },
+  });
+
+  pi.registerTool({
+    name: "voyage_dock",
+    label: "Dock a voyage",
+    description: "Close a ship's open voyage, with an optional summary for its record." + GO,
+    parameters: Type.Object({ ship: Type.String(), summary: Type.Optional(Type.String()), ...OrderArgs }),
+    async execute(_id, p) {
+      return text(await action("voyage_dock", { ship: p.ship, summary: p.summary }, p));
+    },
+  });
+
+  pi.registerTool({
+    name: "crew_change",
+    label: "Change a crew",
+    description: "Change one thing about a ship's crew: add a role, send one ashore (remove), set a role's daily budget (role + budget in dollars, or none), or a role's model (role + model id, or default)." + GO,
+    parameters: Type.Object({
+      ship: Type.String(),
+      add: Type.Optional(Type.String({ description: "Role to bring aboard, e.g. scout" })),
+      remove: Type.Optional(Type.String({ description: "Role to send ashore" })),
+      role: Type.Optional(Type.String()),
+      budget: Type.Optional(Type.String({ description: "Dollars per day, or none" })),
+      model: Type.Optional(Type.String({ description: "Model id, or default" })),
+      ...OrderArgs,
+    }),
+    async execute(_id, p) {
+      return text(await action("crew_change", { ship: p.ship, add: p.add, remove: p.remove, role: p.role, budget: p.budget, model: p.model }, p));
+    },
+  });
+
+  pi.registerTool({
+    name: "orchestrator_set",
+    label: "Set who runs voyages",
+    description: "Choose who runs a ship's voyages: firstmate or lead (its own crew)." + GO,
+    parameters: Type.Object({ ship: Type.String(), orchestrator: StringEnum(["firstmate", "lead"] as const), ...OrderArgs }),
+    async execute(_id, p) {
+      return text(await action("orchestrator_set", { ship: p.ship, orchestrator: p.orchestrator }, p));
+    },
+  });
+
+  pi.registerTool({
+    name: "maneuver_start",
+    label: "Launch a maneuver",
+    description: "Launch an SSSF maneuver (ADW) on a ship under sail, through its lead. The prompt is the full brief: intent, files, what done means." + GO,
+    parameters: Type.Object({ ship: Type.String(), adw: Type.String({ description: "One of the ship's ADWs (ship_maneuvers lists them)" }), prompt: Type.String(), ...OrderArgs }),
+    async execute(_id, p) {
+      return text(await action("maneuver_start", { ship: p.ship, adw: p.adw, prompt: p.prompt }, p));
+    },
+  });
+
+  pi.registerTool({
+    name: "agent_abort",
+    label: "Stop an agent",
+    description: "Stop a live agent mid-turn (its work so far stays in its session)." + GO,
+    parameters: Type.Object({ agent: Type.String(), ...OrderArgs }),
+    async execute(_id, p) {
+      return text(await action("agent_abort", { agent: p.agent }, p));
+    },
+  });
+
+  pi.registerTool({
+    name: "agent_new_session",
+    label: "New session for an agent",
+    description: "Start an agent with a shared session on a new, empty history (long sessions make every turn expensive)." + GO,
+    parameters: Type.Object({ agent: Type.String(), ...OrderArgs }),
+    async execute(_id, p) {
+      return text(await action("agent_new_session", { agent: p.agent }, p));
     },
   });
 
