@@ -29,7 +29,7 @@ Firstmate crew workers (`fm-spawn` panes) are unchanged — not started from thi
 
 ## Chat rail
 
-A right-edge rail holds one portrait per chat target, with one drawer and one composer. Tapping a face swaps the thread. On a phone the rail collapses to one **Chat** button; the drawer then shows the faces in a strip under its header.
+A right-edge rail holds one portrait per chat target, with one drawer and one composer. Tapping a face swaps the thread. On a phone the rail is hidden and **Chat** is the last dock item; the drawer then shows the faces in a strip under its header.
 
 | Row | Source | Send path |
 |---|---|---|
@@ -93,7 +93,7 @@ Options come from role frontmatter `description:` lines and `dashboard-groups.js
 | **WebSocket** `/ws/chat/:id` | Text chat |
 | **POST** `/agents/:id/start` · `/stop` | Firstmate TUI only |
 
-Stack: htmx 4 and Alpine.js. Health, Fleet, and Agents are leaves; chat is the rail and its drawer. On a phone, the three leaves sit in a bottom dock. Live updates use `EventSource` on `/events`, then `htmx.ajax` refreshes the partial in that leaf.
+Stack: htmx 4 and Alpine.js. Health, Fleet, and Agents are leaves; chat is the rail and its drawer. On a phone, Needs you, the three leaves, and Chat sit in a bottom dock. Live updates use `EventSource` on `/events`, then `htmx.ajax` refreshes the partial in that leaf.
 
 ## Usage metrics
 

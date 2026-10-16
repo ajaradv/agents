@@ -169,7 +169,7 @@ Silkscreen is Jason Kottke’s bitmap face, SIL Open Font License, self-hosted a
 
 ## Layout
 
-The page is centered at a max width of 72rem with 1rem of side padding, over the sea chart. Leaves stack their contents with 0.85rem gaps. Sheets sit in auto-fit grids: three-up from 14rem, two-up from 16rem. Below 640px both grids and the metric pair become one column, body padding tightens, and a three-item dock (Harbor, Health, Agents) sits on the bottom edge. The chat drawer is `100vw` by `100dvh`; on a phone it hides the dock and uses a one-line header, a one-row composer, and full-width messages without avatars.
+The page is centered at a max width of 72rem with 1rem of side padding, over the sea chart. Leaves stack their contents with 0.85rem gaps. Sheets sit in auto-fit grids: three-up from 14rem, two-up from 16rem. Below 640px both grids and the metric pair become one column, body padding tightens, and the bottom dock (see Navigation) sits on the bottom edge; the page uses `viewport-fit=cover`, so body, dock, chat header, and composer pad by the safe-area insets. The chat drawer is `100vw` by `100dvh`; on a phone it hides the dock and uses a one-row header (44px voice toggle and Close; Stop, New session, and Canvas wrap to a row below), a one-row composer with a 48px field, and full-width messages without avatars. Chat tables keep words whole and scroll sideways, with edge shadows.
 
 Space above a leaf heading is the tab bar’s 1.1rem margin. Space below that heading is 0.85rem.
 
@@ -211,7 +211,7 @@ Corners are square. Borders are 1px ink. The punch is a 10px square. A detent ma
 
 ### Navigation
 
-Desktop tabs: Harbor, Health, Agents. Unselected tabs are sheet with an empty punch. The selected tab is ink with a punched hole. Hover on an unselected tab uses hover sheet. If anyone is waiting on the captain (a Firstmate hold or an agent's open question), the Harbor and Agents punches grow a vermilion ring. Below 640px the tabs are replaced by a bottom dock with the same three destinations, ringed the same way. The right-hand rail lists every agent's portrait, waiting agents first, with a name label on hover or focus.
+Desktop tabs: Harbor, Health, Agents. Unselected tabs are sheet with an empty punch. The selected tab is ink with a punched hole. Hover on an unselected tab uses hover sheet. If anyone is waiting on the captain (a Firstmate hold or an agent's open question), the Harbor and Agents punches grow a vermilion ring. Below 640px the tabs are replaced by a bottom dock with the same three destinations, ringed the same way, plus Needs you first and Chat last (the rail and its floating button are hidden). The right-hand rail lists every agent's portrait, waiting agents first, with a name label on hover or focus.
 
 ### Meters and detents
 
