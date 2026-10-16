@@ -59,6 +59,29 @@ architect:
 dashboard:
     cd "{{root}}" && bun run dashboard/server.ts
 
+# Background services (launchd): node and dashboard start at login and restart
+# if they die. Stop a dashboard running in a terminal before installing.
+services-install:
+    cd "{{root}}" && bin/fleet-services install
+
+services-uninstall:
+    cd "{{root}}" && bin/fleet-services uninstall
+
+services-status:
+    cd "{{root}}" && bin/fleet-services status
+
+# The fleet node runs the agents; the dashboard starts it when it is missing.
+# Run it here instead to watch its log in the foreground.
+node:
+    cd "{{root}}" && bun run dashboard/node.ts
+
+# The dashboard restarts a node running older code by itself once no agent is
+# busy (dashboard/lib/node-version.ts). This forces it now; it stops live
+# agents, and their sessions resume on the next message.
+node-restart:
+    #!/usr/bin/env bash
+    pid=$(lsof -tiTCP:"${FLEET_NODE_PORT:-8786}" -sTCP:LISTEN) && kill "$pid" && echo "stopped fleet node $pid; the dashboard starts a new one" || echo "no fleet node running"
+
 architect-op:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -69,6 +92,12 @@ architect-op:
       exit 1
     fi
     cd "$root" && op run --env-file="$op_env" -- bin/launch architect
+
+shipwright:
+    cd "{{root}}" && bin/launch shipwright
+
+designer:
+    cd "{{root}}" && bin/launch designer
 
 # ── single extensions (same names as atria-factory) ───────────────────────
 

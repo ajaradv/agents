@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ROOT } from "./paths.ts";
+import { realFleet, ROOT } from "./paths.ts";
 import { readRuntime, agentPaneIsLive, FLEET_HERDR_SESSION } from "./herdr.ts";
 import { readSession, pidAlive } from "./session.ts";
 import { spawnTimed } from "./proc.ts";
@@ -11,6 +11,7 @@ export async function firstmateTuiReachable(): Promise<{
   ok: boolean;
   reason?: string;
 }> {
+  if (!realFleet()) return { ok: false, reason: "Test inbox: sends to the captain's live TUIs are off (FLEET_ALLOW_TUI=1 to allow)." };
   const session = await readSession("firstmate");
   const pane = await agentPaneIsLive("firstmate", session?.pid);
   if (pane.live) return { ok: true };
@@ -96,6 +97,24 @@ export async function sendToFirstmateTui(text: string): Promise<{
       timedOut: false,
     };
   }
+  return sendFmText(target, text);
+}
+
+export type FmSendResult = {
+  ok: boolean;
+  ms: number;
+  exitCode: number;
+  stderr: string;
+  stdout: string;
+  timedOut: boolean;
+};
+
+/**
+ * fm-send to a resolved target: the Firstmate pane, or an exact task id for a
+ * worker. fm-send refuses unresolved targets, so a retired worker fails loudly.
+ */
+export async function sendFmText(target: string, text: string): Promise<FmSendResult> {
+  if (!realFleet()) return { ok: false, ms: 0, exitCode: 1, stderr: "Test inbox: fm-send to the captain's live panes is off.", stdout: "", timedOut: false };
   const fmSend = join(FM_HOME, "bin", "fm-send.sh");
   const env = {
     ...process.env,

@@ -16,10 +16,17 @@ fleet/config/              crew-harness + crew-dispatch (copied into fleet/home/
 fleet/home/                firstmate FM_HOME (gitignored; seeded from vendor/firstmate)
 vendor/firstmate/          firstmate distro (ajaradv fork)
 vendor/obsidian-skills/    kepano obsidian skills (symlinked into brain vault)
+vendor/gsap-skills/        greensock GSAP skills (Designer motion work)
+vendor/motion-design-skill/ LottieFiles motion-design craft skill (Designer)
+vendor/three-agent-skills/ Three.js + R3F best-practice skills (Designer)
 bin/launch                 start an agent from agent.yaml
 bin/setup                  submodules + bun + alice vault
 bin/setup-alice-vault      brain inbox + obsidian skill symlinks
+bin/voice-setup            local text-to-speech model (Kokoro) for dashboard voice replies
 bin/seed-fleet-home        copy vendor/firstmate → fleet/home
+bin/new-agent              scaffold agents/<id>, roles/<id>.md, just recipe, inbox, README row
+bin/stamp-ship             fleet/ships/<id>.yaml + copy SSSF into a ship + install.py (+ optional Firstmate registration)
+bin/agent-portrait         rail portrait for an agent in the house pixel style (OpenRouter image model)
 docs/harness-auth.md       per-harness login and API keys
 docs/onepassword.md        vault Fleet, Environment agents-fleet
 docs/remote-ops.md         Herdr secondmates, Alice relocate, SDLC, phone SSH
@@ -36,6 +43,7 @@ agents/alice/improvements/ phone chat/voice action plans (later)
 | `lineage_atria` | `/Users/avega/Workspace/lineage_atria` | `.claude/skills/sssf` (stamped) |
 | `pochteca` | `/Users/avega/Workspace/pochteca` | none yet |
 | `fleet` | this repo | none (meta ship) |
+| `kinwork` | `/Users/avega/Workspace/Kinwork` | none (Django; design records from the Designer) |
 
 Record definitions: [fleet/ships/](fleet/ships/).
 
@@ -43,7 +51,7 @@ Record definitions: [fleet/ships/](fleet/ships/).
 
 | Where | Role | Examples |
 |---|---|---|
-| **This repo** | Interactive Pi, Firstmate, Alice, Architect | `just setup`, `bin/launch alice`, `bin/launch firstmate`, `just architect` |
+| **This repo** | Interactive Pi, Firstmate, Alice, Architect, Shipwright, Designer | `just setup`, `bin/launch alice`, `bin/launch firstmate`, `just architect` |
 | **Stamped ship** | ADW control plane + trace | `just demo`, `just sdlc` inside `lineage_atria` |
 
 ## Setup
@@ -64,8 +72,10 @@ just firstmate             # Pi + cursor-sdk, grok-4.7@256k, fleet/home
 just alice-op              # op run --env-file=fleet/home/.env.op (see fleet/config/env.op.example)
 just firstmate-op
 just architect             # Pi + grok-4.7@256k, vault cwd, plan review primary
+just shipwright            # Pi + composer-2.5, repo cwd, new agents + SSSF stamping
+just designer              # Pi + gpt-5.5, whole impeccable sessions; shares its session with dashboard chat
 just architect-op
-just dashboard             # http://127.0.0.1:8787 — usage cards, Herdr Alice start/stop
+just dashboard             # http://127.0.0.1:8787 — usage, fleet, chat rail, Firstmate TUI start/stop
 bin/launch alice -- -p "…" # extra pi args after --
 ```
 
@@ -80,6 +90,8 @@ Default models (Cursor via `pi-cursor-sdk`, listed per agent, not in `~/.pi/agen
 | Alice | `cursor/composer-2.5` | Vault inbox and ship-shaped actions on Cursor |
 | Firstmate | `cursor/grok-4.7@256k` | Routing, supervision, and recon-shaped primary work |
 | Architect | `cursor/grok-4.7@256k` | Interactive plan review; workers spawned by Firstmate |
+| Shipwright | `cursor/composer-2.5` | Repo upkeep: new agents, ship stamping |
+| Designer | `cursor/gpt-5.5@272k` | design taste and image reading; impeccable comps and critique |
 
 ## Crew dispatch and billing lanes
 
@@ -94,12 +106,13 @@ Source of truth: [fleet/config/](fleet/config/). After `bin/seed-fleet-home`, fi
 | Pi + Hugging Face | Hugging Face API | `harness: pi` + `huggingface/...` + `HF_API_KEY` |
 | Pi + OpenRouter | OpenRouter API | `harness: pi` + `openrouter/...` — you add key and model id |
 
+- **Rule ids:** each rule in `crew-dispatch.json` has a stable `id` (`news-scout`, `scout`, `plan-greenfield`, `plan-scoped`, `mechanical`, `big-ship`, `api-fallback`). Architect plans and Jev routing refer to rules by id; Firstmate's validator ignores the extra key. Cursor profiles carry the effort in the model name (`grok-4.7-high`), never an `effort` field.
 - **Secrets:** [docs/onepassword.md](docs/onepassword.md) — vault **Fleet**, Environment **agents-fleet**; names in [fleet/config/env.example](fleet/config/env.example).
 - **DeepSeek / Hugging Face:** `just merge-pi-providers` (from [pi-deepseek-provider.json](fleet/config/pi-deepseek-provider.json) and [pi-huggingface-provider.json](fleet/config/pi-huggingface-provider.json)). **OpenRouter:** Pi builtin + `OPENROUTER_API_KEY`.
 - **OpenRouter / native Anthropic API:** operator-owned keys and Pi provider wiring; dispatch names the lane in `crew-dispatch.json`.
 - **Harness setup:** [docs/harness-auth.md](docs/harness-auth.md).
 - **quota-axi:** external CLI on PATH; ranks profiles by spend priority after auth probe.
-- **Jev (optional):** `TYPESAFE_API_KEY` in `fleet/home/.env`; `bin/fm-dispatch-resolve.sh` selects a dispatch rule before quota chooses a profile.
+- **Jev (optional):** `TYPESAFE_API_KEY` in `fleet/home/.env`; `bin/fm-dispatch-resolve.sh` selects a dispatch rule before quota chooses a profile. `bin/fleet-route-resolve.sh` (dashboard **Auto**) picks who owns a message: an agent, a group (its lead), or Firstmate.
 - **Remote crews / phone SSH:** [docs/remote-ops.md](docs/remote-ops.md).
 - **Alice phone chat/voice (later):** [agents/alice/improvements/](agents/alice/improvements/).
 
@@ -113,13 +126,15 @@ just firstmate        # scout on lineage_atria should prefer claude, then cursor
 - Vault: `/Users/avega/Workspace/brain` (open in Obsidian).
 - Human inbox: `brain/fleet/inbox/` — drop notes; Alice reads them at session start.
 - Agent bus (this repo): `fleet/inbox/alice/events.jsonl`, `fleet/inbox/firstmate/events.jsonl`, `fleet/inbox/architect/events.jsonl`.
-- Ideas / requests / plans: `brain/fleet/ideas/`, `brain/fleet/requests/`, `brain/fleet/plans/` — see [docs/architect.md](docs/architect.md).
+- Ideas / requests / initiatives / plans: `brain/fleet/ideas/`, `brain/fleet/requests/`, `brain/fleet/initiatives/`, `brain/fleet/plans/` — see [docs/architect.md](docs/architect.md).
 
 **Tools** ([pi-obsidian](https://pi.dev/packages/pi-obsidian)): read, search, append, tags, backlinks, Kanban, Canvas, daily notes.
 
 **Skills** ([kepano/obsidian-skills](https://github.com/kepano/obsidian-skills)): OFM, Bases, JSON Canvas, CLI — linked under `brain/.pi/skills/`. Query routing is in [roles/alice.md](roles/alice.md).
 
 ## Stamp / refresh a factory on a ship
+
+Preferred: `bin/stamp-ship <id> <path> [--adws ...] [--mode ...] [--register "desc"] --dry-run`, or ask **Shipwright** (`just shipwright` or the dashboard rail). The manual steps below are what the script runs.
 
 From this repo (source of truth for SSSF):
 

@@ -9,13 +9,14 @@ mkdir -p "$INBOX" "$INBOX/done" "${VAULT}/.pi/skills"
 mkdir -p \
   "${VAULT}/fleet/ideas" \
   "${VAULT}/fleet/requests" \
+  "${VAULT}/fleet/initiatives" \
   "${VAULT}/fleet/plans/project" \
   "${VAULT}/fleet/plans/feature" \
   "${VAULT}/fleet/plans/bugfix" \
   "${VAULT}/fleet/plans/refactor" \
   "${VAULT}/fleet/plans/research" \
   "${VAULT}/fleet/plans/ops"
-mkdir -p "$ROOT/fleet/inbox/alice" "$ROOT/fleet/inbox/firstmate" "$ROOT/fleet/inbox/architect"
+mkdir -p "$ROOT/fleet/inbox/alice" "$ROOT/fleet/inbox/firstmate" "$ROOT/fleet/inbox/architect" "$ROOT/fleet/inbox/shipwright" "$ROOT/fleet/inbox/designer"
 
 if [[ ! -d "$SKILLS_SRC/obsidian-markdown" ]]; then
   echo "missing vendor/obsidian-skills; run: git submodule update --init vendor/obsidian-skills" >&2
@@ -29,4 +30,4 @@ done
 # Hermes and Obsidian are listed in agents/alice/agent.yaml only; bin/launch loads them
 # with -ne -e npm:… (not ~/.pi/agent/settings.json packages).
 
-echo "vault ready at $VAULT (human inbox: $INBOX; ideas/requests/plans under fleet/)"
+echo "vault ready at $VAULT (human inbox: $INBOX; ideas/requests/initiatives/plans under fleet/)"

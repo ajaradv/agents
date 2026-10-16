@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Scaffold a registered agent: agent.yaml, role, just recipe, inbox, README row.
+
+Usage:
+  bin/new-agent <id> --model <model> [--type assistant] [--description "..."]
+                [--workspace repo|ships|vault|fm-home] [--extensions a,b] [--why "..."]
+                [--dry-run]
+
+Refuses an id that already has agents/<id>/ or roles/<id>.md. Extensions are
+checked against agents/config.yaml (npm) or extensions/<name>.ts (local), the
+same rule bin/launch applies. The dashboard rail picks the agent up from
+agent.yaml on its next refresh; no dashboard change is needed.
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.machinery
+import importlib.util
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+TYPES = ("assistant", "orchestrator", "crew")
+JUST_MARKER = "# ── single extensions"
+README_TABLE_HEAD = "| Agent | Model | Why |"
+VAULT_SETUP = ROOT / "bin" / "setup-alice-vault"
+
+
+def load_launch():
+    """Reuse bin/launch's extension registry so the two never disagree."""
+    sys.dont_write_bytecode = True  # bin/__pycache__ is tracked; do not churn it
+    path = str(ROOT / "bin" / "launch")
+    loader = importlib.machinery.SourceFileLoader("fleet_launch", path)
+    spec = importlib.util.spec_from_loader("fleet_launch", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def agent_yaml(a: argparse.Namespace, extensions: list[str]) -> str:
+    lines = [
+        f"id: {a.id}",
+        f"type: {a.type}",
+        f"role: {a.id}",
+        "harness: pi",
+        f"model: {a.model}",
+    ]
+    if a.workspace in ("repo", "ships"):
+        lines.append(f"workspace: {a.workspace}")
+    elif a.workspace == "vault":
+        lines.append("vault: /Users/avega/Workspace/brain")
+    if extensions:
+        lines.append("extensions:")
+        lines += [f"  - {e}" for e in extensions]
+    lines += [
+        "authority:",
+        "  allow:",
+        "    - status",
+        "  deny:",
+        "    - merge",
+        "    - force-push",
+        "    - secrets",
+        "    - retire-home",
+        "    - spawn",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def role_md(a: argparse.Namespace) -> str:
+    title = a.id.replace("-", " ").title()
+    return f"""---
+name: {a.id}
+description: {a.description}
+tools: read,bash,grep,find,ls,write,edit
+---
+You are the fleet {title}. {a.description}
+
+Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1`, plain language, no scope creep).
+
+## Session start
+
+1. Read new lines in **`FLEET_INBOX/{a.id}/events.jsonl`** if present (see **Resolved paths**).
+2. Drain new lines in **`FLEET_INBOX/{a.id}/captain-chat.jsonl`** when present. Reply in the same file with `from: {a.id}`, `kind: chat`, and plain text.
+
+## Work
+
+<!-- Describe what this agent does, what it reads, and what it writes. -->
+
+Denied without captain: merge, force-push, secrets, retire-home, spawn.
+"""
+
+
+def just_recipe(agent_id: str) -> str:
+    return f"{agent_id}:\n    cd \"{{{{root}}}}\" && bin/launch {agent_id}\n\n"
+
+
+def add_just_recipe(text: str, agent_id: str) -> str:
+    if re.search(rf"^{re.escape(agent_id)}:", text, re.M):
+        return text
+    i = text.find(JUST_MARKER)
+    if i < 0:
+        return text.rstrip() + "\n\n" + just_recipe(agent_id)
+    return text[:i] + just_recipe(agent_id) + text[i:]
+
+
+def add_readme_row(text: str, agent_id: str, model: str, why: str) -> str:
+    i = text.find(README_TABLE_HEAD)
+    if i < 0:
+        return text
+    lines = text[i:].split("\n")
+    end = 0
+    for n, line in enumerate(lines):
+        if not line.startswith("|"):
+            end = n
+            break
+    else:
+        end = len(lines)
+    title = agent_id.replace("-", " ").title()
+    if any(l.startswith(f"| {title} |") for l in lines[:end]):
+        return text
+    lines.insert(end, f"| {title} | `{model}` | {why} |")
+    return text[:i] + "\n".join(lines)
+
+
+def add_vault_inbox(text: str, agent_id: str) -> str:
+    m = re.search(r'^mkdir -p "\$ROOT/fleet/inbox/alice".*$', text, re.M)
+    if not m or f'fleet/inbox/{agent_id}"' in m.group(0):
+        return text
+    line = m.group(0) + f' "$ROOT/fleet/inbox/{agent_id}"'
+    return text[: m.start()] + line + text[m.end() :]
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("id")
+    p.add_argument("--model", required=True)
+    p.add_argument("--type", default="assistant", choices=TYPES)
+    p.add_argument("--description", default="Describe this agent's job in one sentence.")
+    p.add_argument("--workspace", default="fm-home", choices=("repo", "ships", "vault", "fm-home"))
+    p.add_argument("--extensions", default="cursor-sdk")
+    p.add_argument("--why", default="")
+    p.add_argument("--dry-run", action="store_true")
+    a = p.parse_args()
+    sys.stdout.reconfigure(line_buffering=True)
+
+    if not ID_RE.match(a.id):
+        print(f"error: id must match {ID_RE.pattern}", file=sys.stderr)
+        return 2
+    agent_dir = ROOT / "agents" / a.id
+    role_file = ROOT / "roles" / f"{a.id}.md"
+    if agent_dir.exists() or role_file.exists():
+        print(f"error: {a.id} already exists ({agent_dir} or {role_file})", file=sys.stderr)
+        return 1
+
+    extensions = [e.strip() for e in a.extensions.split(",") if e.strip()]
+    launch = load_launch()
+    reg = launch.load_npm_registry()
+    for e in extensions:
+        ok, _ref = launch.extension_allowed(e, a.type, reg)
+        if not ok:
+            print(f"error: extension {e!r} is not allowed for type {a.type} (see agents/config.yaml)", file=sys.stderr)
+            return 1
+
+    justfile = ROOT / "justfile"
+    readme = ROOT / "README.md"
+    writes: list[tuple[Path, str]] = [
+        (agent_dir / "agent.yaml", agent_yaml(a, extensions)),
+        (role_file, role_md(a)),
+        (justfile, add_just_recipe(justfile.read_text(), a.id)),
+        (readme, add_readme_row(readme.read_text(), a.id, a.model, a.why or a.description)),
+    ]
+    if VAULT_SETUP.is_file():
+        writes.append((VAULT_SETUP, add_vault_inbox(VAULT_SETUP.read_text(), a.id)))
+    inbox = ROOT / "fleet" / "inbox" / a.id
+
+    for path, body in writes:
+        changed = not path.exists() or path.read_text() != body
+        print(f"{'would write' if a.dry_run else 'write'} {path.relative_to(ROOT)}{'' if changed else ' (unchanged)'}")
+        if not a.dry_run and changed:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body)
+    print(f"{'would create' if a.dry_run else 'create'} {inbox.relative_to(ROOT)}/")
+    if not a.dry_run:
+        inbox.mkdir(parents=True, exist_ok=True)
+    print(f"next: edit roles/{a.id}.md (Work section), then `just {a.id}`")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

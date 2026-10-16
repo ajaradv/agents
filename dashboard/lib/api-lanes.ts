@@ -98,9 +98,7 @@ export async function readConfiguredApiLanes(
       provider === "openrouter" ? inDispatch : await providerInPiCatalog(provider);
     if (!inDispatch && !inCatalog) continue;
     const keySet =
-      provider === "huggingface"
-        ? huggingFaceKeyPresent(dotenv)
-        : envKeyPresent(meta.keyEnv, dotenv);
+      provider === "huggingface" ? huggingFaceKeyPresent(dotenv) : envKeyPresent(meta.keyEnv, dotenv);
     const usage = usageByProvider[provider];
     const note =
       provider === "huggingface"
@@ -123,9 +121,10 @@ export async function readConfiguredApiLanes(
 }
 
 export function apiLaneCardHtml(lane: ApiLane): string {
+  const [on, off] = ["key set", "key not set"];
   const keyBadge = lane.keySet
-    ? `<span class="detent detent-ok">key set</span>`
-    : `<span class="detent detent-warn">key not set</span>`;
+    ? `<span class="detent detent-ok">${on}</span>`
+    : `<span class="detent detent-warn">${off}</span>`;
   const usage = lane.usage;
   const headline = usage?.ok && usage.headline ? `<p>${escapeHtml(usage.headline)}</p>` : "";
   const detail = usage?.ok && usage.detail ? `<p class="muted">${escapeHtml(usage.detail)}</p>` : "";

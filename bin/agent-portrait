@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# agent-portrait - generate a rail portrait for a registered agent, in the same
+# pixel-art style as the existing ones, via an OpenRouter image model.
+#
+# Usage:
+#   bin/agent-portrait <id> "<character: who they are, look, clothes, one prop>" [--force] [--dry-run]
+#   bin/agent-portrait --pool crew|secondmate <name> "<character>" [--force] [--dry-run]
+#
+# --pool writes dashboard/public/art/<pool>/<name>.png instead and registers
+# nothing: the dashboard lists each pool folder and gives every Firstmate task a
+# stable pick by id (secondmate tasks from the secondmate pool, others from crew).
+#
+# Sends the prompt plus dashboard/public/art/{firstmate,architect,alice}.png as
+# style references. Writes dashboard/public/art/<id>.png (512x512) and adds the
+# id to dashboard/lib/agent-art.ts. Refuses to overwrite an existing portrait
+# without --force. Look at the image before committing it; re-run to re-roll.
+#
+# Key: OPENROUTER_API_KEY from the environment, else fleet/home/.env. It reaches
+#   curl as a header read from a file descriptor, never on argv.
+# Model: PORTRAIT_MODEL (default google/gemini-3-pro-image).
+# --dry-run prints the prompt and target paths; sends nothing.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ART="$ROOT/dashboard/public/art"
+ART_TS="$ROOT/dashboard/lib/agent-art.ts"
+MODEL="${PORTRAIT_MODEL:-google/gemini-3-pro-image}"
+
+die() { printf 'error: %s\n' "$1" >&2; exit 2; }
+usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
+
+ID='' CHAR='' POOL='' FORCE=false DRY=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --force) FORCE=true ;;
+    --dry-run) DRY=true ;;
+    --pool) [ $# -ge 2 ] || die "--pool needs crew or secondmate"; POOL=$2; shift ;;
+    -h|--help) usage; exit 0 ;;
+    -*) die "unknown flag $1" ;;
+    *) if [ -z "$ID" ]; then ID=$1; elif [ -z "$CHAR" ]; then CHAR=$1; else die "too many arguments"; fi ;;
+  esac
+  shift
+done
+[ -n "$ID" ] && [ -n "$CHAR" ] || die "usage: bin/agent-portrait <id> \"<character>\" (see --help)"
+[[ "$ID" =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || die "bad id $ID"
+case "$POOL" in
+  '') [ -f "$ROOT/agents/$ID/agent.yaml" ] || die "no agents/$ID/agent.yaml"; OUT="$ART/$ID.png" ;;
+  crew|secondmate) mkdir -p "$ART/$POOL"; OUT="$ART/$POOL/$ID.png" ;;
+  *) die "unknown pool $POOL (crew or secondmate)" ;;
+esac
+[ ! -e "$OUT" ] || $FORCE || die "$OUT exists (pass --force to replace)"
+
+if [ -n "$POOL" ]; then WHO="one of the fleet's ${POOL} portraits (${ID})."; else WHO="the fleet's ${ID}."; fi
+PROMPT="Create a new character portrait in EXACTLY the same style as the three reference images: 16-bit JRPG pixel-art bust portrait, chunky visible pixels, the same cream/off-white flat background, the same framing (head and shoulders, centered, slightly turned), the same limited palette of deep teal, brick red, warm gold and brown, the same dark outline and shading style. Square 1:1 image, no text, no border.
+
+Character: ${WHO} ${CHAR}
+They belong in the same ship's crew as the three reference characters."
+
+if $DRY; then
+  printf 'model: %s\nwrite: %s\nregister: %s\n--- prompt\n%s\n' "$MODEL" "$OUT" "$ART_TS" "$PROMPT"
+  exit 0
+fi
+
+command -v jq >/dev/null || die "jq required"
+command -v sips >/dev/null || die "sips required (macOS)"
+KEY=${OPENROUTER_API_KEY:-}
+unset OPENROUTER_API_KEY
+[ -n "$KEY" ] || KEY=$(awk -F= '{ sub(/^[ \t]*export[ \t]+/, "") } $1 == "OPENROUTER_API_KEY" { v = substr($0, index($0, "=") + 1) }
+  END { gsub(/^[ \t"'"'"']+|[ \t"'"'"']+$/, "", v); printf "%s", v }' "$ROOT/fleet/home/.env" 2>/dev/null)
+[ -n "$KEY" ] || die "OPENROUTER_API_KEY absent from the environment and fleet/home/.env"
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+for n in firstmate architect alice; do
+  printf 'data:image/png;base64,%s' "$(base64 -i "$ART/$n.png" | tr -d '\n')" > "$TMP/$n.b64"
+done
+jq -n --arg model "$MODEL" --arg p "$PROMPT" \
+  --rawfile a "$TMP/firstmate.b64" --rawfile b "$TMP/architect.b64" --rawfile c "$TMP/alice.b64" '{
+  model: $model, modalities: ["image", "text"],
+  messages: [{role: "user", content: [
+    {type: "text", text: $p},
+    {type: "image_url", image_url: {url: $a}},
+    {type: "image_url", image_url: {url: $b}},
+    {type: "image_url", image_url: {url: $c}}]}]}' > "$TMP/req.json"
+
+curl -sS --max-time 180 https://openrouter.ai/api/v1/chat/completions -H 'Content-Type: application/json' \
+  -H @/dev/fd/3 3< <(printf 'Authorization: Bearer %s\n' "$KEY") \
+  --data-binary @"$TMP/req.json" > "$TMP/resp.json" || die "request failed"
+url=$(jq -r '.choices[0].message.images[0].image_url.url // empty' "$TMP/resp.json")
+[ -n "$url" ] || die "no image in response: $(jq -c '.error // .choices[0].message.content' "$TMP/resp.json" | head -c 300)"
+printf '%s' "${url#*,}" | base64 -d > "$TMP/raw.png"
+sips -s format png -z 512 512 "$TMP/raw.png" --out "$OUT" >/dev/null
+echo "wrote $OUT"
+
+[ -z "$POOL" ] || exit 0
+if ! grep -q "^  $ID: \"/art/$ID.png\"," "$ART_TS"; then
+  awk -v line="  $ID: \"/art/$ID.png\"," '
+    !done && /^};/ && seen { print line; done = 1 }
+    /^const AGENT_ART/ { seen = 1 }
+    { print }' "$ART_TS" > "$TMP/art.ts" && cat "$TMP/art.ts" > "$ART_TS"
+  echo "registered $ID in dashboard/lib/agent-art.ts"
+fi

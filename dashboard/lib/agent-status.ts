@@ -1,8 +1,6 @@
 import { chatAllowed } from "./chat.ts";
-import {
-  getHeadlessChatState,
-  type LastChatTurn,
-} from "./chat-bridge.ts";
+import type { LastChatTurn } from "./chat-bridge.ts";
+import { getHeadlessChatState } from "./node-client.ts";
 import { firstmateTuiReachable } from "./firstmate-chat.ts";
 import {
   readFirstmateWaitStatus,
@@ -101,7 +99,7 @@ export async function resolveAgentStatus(agentId: string): Promise<AgentStatusVi
     } else if (pidOnly) {
       tuiState = "open";
       tuiMessage =
-        "Firstmate already running (session pid). Attach your terminal — do not Start TUI again.";
+        `${agentId === "firstmate" ? "Firstmate" : agentId} already running (session pid). Attach your terminal — do not Start TUI again.`;
     } else if (lc?.state === "starting" || lc?.state === "stopping") {
       tuiState = lc.state;
       tuiMessage = lc.message;

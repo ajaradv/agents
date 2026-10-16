@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# voice-setup - fetch the local text-to-speech model (Kokoro-82M, ONNX int8)
+# into fleet/home/models/kokoro/ (gitignored), and warm uv's cache for the
+# dashboard's speech helper (dashboard/voice/kokoro_tts.py).
+#
+# Usage: bin/voice-setup [--force]
+# Files: kokoro-v1.0.int8.onnx (~92 MB), voices-v1.0.bin (~28 MB), from
+#   https://github.com/thewh1teagle/kokoro-onnx/releases (model-files-v1.0).
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DIR="$ROOT/fleet/home/models/kokoro"
+BASE="https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
+FORCE=false; [ "${1:-}" = "--force" ] && FORCE=true
+mkdir -p "$DIR"
+for f in kokoro-v1.0.int8.onnx voices-v1.0.bin; do
+  if [ -s "$DIR/$f" ] && ! $FORCE; then echo "have $f"; continue; fi
+  echo "fetching $f"
+  curl -fL --retry 2 -o "$DIR/$f.part" "$BASE/$f" && mv "$DIR/$f.part" "$DIR/$f"
+done
+command -v uv >/dev/null || { echo "uv is required (https://docs.astral.sh/uv/)" >&2; exit 2; }
+uv run -q --python 3.12 --with kokoro-onnx --with soundfile python -c "import kokoro_onnx, soundfile; print('speech helper ready')"

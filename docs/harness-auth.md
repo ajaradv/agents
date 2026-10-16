@@ -88,6 +88,13 @@ bin/fm-dispatch-resolve.sh data/<id>/brief.md --project <name>
 
 Off = one stderr line, no network; Firstmate still dispatches with judgment.
 
+Message routing (dashboard **Auto**) uses the same key:
+
+```bash
+echo "message text" | bin/fleet-route-resolve.sh -            # agent, group (its lead), or firstmate
+echo "message text" | bin/fleet-route-resolve.sh - --dry-run  # print the request; nothing sent
+```
+
 ## Worker launch allowlist
 
 If `fleet/home/config/launch-env-allowlist` exists, only listed env **names** pass to new workers (plus Firstmate's operational floor). Example: [fleet/config/launch-env-allowlist.example](../fleet/config/launch-env-allowlist.example).

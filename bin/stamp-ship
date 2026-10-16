@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Stamp the SSSF factory onto a ship and record it in fleet/ships/.
+
+Usage:
+  bin/stamp-ship <id> <path> [--mode no-mistakes|no-mistakes-prod-only|no-mistakes-required|direct-PR|local-only]
+                 [--adws adw_plan_build_test,...] [--no-factory] [--force]
+                 [--register "<description>"] [--dry-run]
+
+Steps:
+  1. Write fleet/ships/<id>.yaml (refuses an existing one unless --force).
+  2. Copy .claude/skills/sssf into <path>/.claude/skills/sssf (skipped with --no-factory).
+  3. Run `uv run .claude/skills/sssf/scripts/install.py` in the ship. install.py
+     skips existing files; --force is passed through only when you give --force.
+  4. With --register, append the project to Firstmate's registry
+     (fleet/home/data/projects.md). Without it, print the line to add.
+
+Steps 2-4 write outside this repo. Run with --dry-run first and get a captain yes.
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import shutil
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SSSF = ROOT / ".claude" / "skills" / "sssf"
+SHIPS = ROOT / "fleet" / "ships"
+PROJECTS = ROOT / "fleet" / "home" / "data" / "projects.md"
+ID_RE = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
+MODES = ("no-mistakes", "no-mistakes-prod-only", "no-mistakes-required", "direct-PR", "local-only")
+COPY_IGNORE = shutil.ignore_patterns("node_modules", "__pycache__", "*.pyc", ".DS_Store", "dist")
+
+
+def ship_yaml(ship_id: str, path: Path, mode: str, factory: bool, adws: list[str]) -> str:
+    lines = [f"id: {ship_id}", f"path: {path}", "orchestrator: firstmate", "crew: []"]
+    if factory:
+        lines += ["factory:", "  skill: .claude/skills/sssf"]
+        if adws:
+            lines.append("  adws:")
+            lines += [f"    - {a}" for a in adws]
+    else:
+        lines.append("factory: null")
+    lines.append(f"mode: {mode}")
+    return "\n".join(lines) + "\n"
+
+
+def registry_line(ship_id: str, mode: str, desc: str) -> str:
+    return f"- {ship_id} [{mode}] - {desc} (added {date.today().isoformat()})"
+
+
+def registered(ship_id: str) -> bool:
+    if not PROJECTS.is_file():
+        return False
+    return any(re.match(rf"^[-*]\s+{re.escape(ship_id)}(\s|$)", l, re.I) for l in PROJECTS.read_text().splitlines())
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("id")
+    p.add_argument("path")
+    p.add_argument("--mode", default="no-mistakes", choices=MODES)
+    p.add_argument("--adws", default="", help="comma list of ADW chains to declare, e.g. adw_plan_build_test")
+    p.add_argument("--no-factory", action="store_true", help="record the ship without stamping SSSF")
+    p.add_argument("--force", action="store_true", help="replace the ship yaml and pass --force to install.py")
+    p.add_argument("--register", metavar="DESC", help="append the project to Firstmate's projects.md")
+    p.add_argument("--dry-run", action="store_true")
+    a = p.parse_args()
+    sys.stdout.reconfigure(line_buffering=True)
+
+    if not ID_RE.match(a.id):
+        print(f"error: id must match {ID_RE.pattern}", file=sys.stderr)
+        return 2
+    ship_path = Path(a.path).expanduser().resolve()
+    if not ship_path.is_dir():
+        print(f"error: {ship_path} is not a directory", file=sys.stderr)
+        return 1
+    if ship_path == ROOT:
+        print("error: this repo is the meta ship `fleet`; do not stamp SSSF onto it", file=sys.stderr)
+        return 1
+    yaml_path = SHIPS / f"{a.id}.yaml"
+    if yaml_path.exists() and not a.force:
+        print(f"error: {yaml_path.relative_to(ROOT)} exists (use --force to replace)", file=sys.stderr)
+        return 1
+    factory = not a.no_factory
+    adws = [x.strip() for x in a.adws.split(",") if x.strip()]
+    if factory:
+        known = {f.stem for f in (SSSF / "templates" / "adws").glob("adw_*.py")}
+        unknown = [x for x in adws if x not in known]
+        if unknown:
+            print(f"error: unknown ADW chain(s): {', '.join(unknown)} (known: {', '.join(sorted(known))})", file=sys.stderr)
+            return 1
+    if shutil.which("uv") is None and factory and not a.dry_run:
+        print("error: uv not on PATH (needed for install.py)", file=sys.stderr)
+        return 1
+
+    verb = "would" if a.dry_run else "will"
+    print(f"{verb} write {yaml_path.relative_to(ROOT)}")
+    if factory:
+        print(f"{verb} copy {SSSF.relative_to(ROOT)} -> {ship_path / '.claude/skills/sssf'}")
+        print(f"{verb} run install.py{' --force' if a.force else ''} in {ship_path}")
+    line = registry_line(a.id, a.mode, a.register or "<description>")
+    if registered(a.id):
+        print(f"{a.id} already in Firstmate's projects.md; not touching it")
+    elif a.register:
+        print(f"{verb} append to {PROJECTS}: {line}")
+    if a.dry_run:
+        return 0
+
+    SHIPS.mkdir(parents=True, exist_ok=True)
+    yaml_path.write_text(ship_yaml(a.id, ship_path, a.mode, factory, adws))
+    if factory:
+        dest = ship_path / ".claude" / "skills" / "sssf"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(SSSF, dest, dirs_exist_ok=True, ignore=COPY_IGNORE)
+        cmd = ["uv", "run", ".claude/skills/sssf/scripts/install.py"] + (["--force"] if a.force else [])
+        r = subprocess.run(cmd, cwd=str(ship_path))
+        if r.returncode != 0:
+            print(f"error: install.py exited {r.returncode}; ship yaml written, factory partly copied", file=sys.stderr)
+            return r.returncode
+    if not registered(a.id):
+        if a.register:
+            PROJECTS.parent.mkdir(parents=True, exist_ok=True)
+            with PROJECTS.open("a") as f:
+                f.write(line + "\n")
+            print(f"registered {a.id} with Firstmate")
+        else:
+            print(f"not registered with Firstmate. To register, add to {PROJECTS}:\n  {line}")
+    print("done")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

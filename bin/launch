@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -76,7 +77,7 @@ def parse_simple_yaml(path: Path) -> dict:
             list_key = None
         if rest == "":
             if indent == 0:
-                if key in ("authority",):
+                if key in ("authority", "env", "crew_models", "crew_budgets"):
                     data[key] = {}
                     nested = data[key]
                     nested_key = None
@@ -185,7 +186,16 @@ def parse_env_file(path: Path) -> dict[str, str]:
     """Last assignment wins; # comments and blank lines ignored."""
     out: dict[str, str] = {}
     text = _read_env_file_contents(path)
+    # The secrets manager's pipe serves one reader at a time; an empty read is
+    # usually a collision, so try again before launching without keys.
+    for _ in range(2):
+        if text.strip():
+            break
+        time.sleep(0.5)
+        text = _read_env_file_contents(path)
     if not text:
+        if path.exists():
+            print(f"launch: {path} gave no keys; provider calls may fail", file=sys.stderr)
         return out
     for raw in text.splitlines():
         line = raw.strip()
@@ -234,8 +244,145 @@ DASHBOARD_CHAT_BLOCK = (
     "## Dashboard captain chat (this turn)\n\n"
     "You are answering a **headless dashboard message** from the captain (not the interactive TUI composer). "
     "Reply in **plain text** suitable for the dashboard chat log. "
-    "When you finish, your reply text is captured from stdout; you do not need to append the jsonl file yourself in print mode.\n"
+    "When you finish, your reply text is captured from stdout; you do not need to append the jsonl file yourself in print mode.\n\n"
+    "**The captain can answer questions.** This chat is a conversation: when a decision is the captain's (direction, naming, "
+    "scope, a pick between options) or the request is ambiguous, call the **`ask_captain`** tool with 2-5 concrete options per "
+    "question, then end your turn. The questions appear in the dashboard as clickable choices and the answer comes back as the "
+    "captain's next message. Do not choose a default for a captain decision because you are in a headless turn; that is what "
+    "`ask_captain` is for. Settle facts you can check yourself instead of asking.\n\n"
+    "**Show, don't paste paths.** When the captain should look at something (images, a page, a table, a local URL), "
+    "call **`canvas_show`**; it appears on the canvas next to this chat.\n"
 )
+
+
+DASHBOARD_RPC_BLOCK = (
+    "## Dashboard captain chat (live session)\n\n"
+    "The captain talks to you from the fleet dashboard, which runs you as one long-lived session. "
+    "Your messages stream into the chat drawer as you write them; reply in **plain text**. "
+    "The captain can send more messages while you work (they arrive between your steps) and can stop you.\n\n"
+    "**Ask instead of assuming.** When a decision is the captain's (direction, naming, scope, a pick between options) "
+    "or the request is ambiguous, call **`ask_captain`** with 2-5 concrete options per question. It shows clickable "
+    "choices in the dashboard and **waits for the answer**, then you continue in the same turn. Settle facts you can "
+    "check yourself instead of asking.\n\n"
+    "**Show, don't paste paths.** When the captain should look at something (images, comps, screenshots, a page, a "
+    "table, a local URL such as a decision board or the dev server), call **`canvas_show`**. It appears on the canvas "
+    "next to this chat.\n\n"
+    "**Your first line may be spoken aloud.** With voice on, the dashboard reads the opening of each reply and stops at "
+    "the first list, table, or code block. Make the first line the answer or a short acknowledgement a person would say, "
+    "and keep the details below it.\n"
+)
+
+# Set by rpc_main before prepare_pi_launch so the prompt matches the runtime.
+RUNTIME = "headless"
+
+
+def dashboard_chat_block() -> str:
+    return DASHBOARD_RPC_BLOCK if RUNTIME == "rpc" else DASHBOARD_CHAT_BLOCK
+
+
+def resolve_crewmate(agent_id: str) -> tuple[dict, dict] | None:
+    """`<ship>-<role>` for a role listed under `crew:` in fleet/ships/<ship>.yaml.
+
+    Returns (ship, role agent.yaml merged with the ship's overrides), or None.
+    A crewmate is the role's template deployed aboard one ship: cwd is the ship's
+    repo, the session is persistent and lives in fleet/inbox/<ship>-<role>/.
+    """
+    for y in sorted((ROOT / "fleet" / "ships").glob("*.yaml")):
+        ship = parse_simple_yaml(y)
+        sid = str(ship.get("id") or y.stem)
+        if not agent_id.startswith(sid + "-"):
+            continue
+        role = agent_id[len(sid) + 1 :]
+        if role not in [str(r) for r in ship.get("crew") or []]:
+            continue
+        template = ROOT / "agents" / role / "agent.yaml"
+        if not template.is_file() or not ship.get("path"):
+            return None
+        agent = parse_simple_yaml(template)
+        model = (ship.get("crew_models") or {}).get(role)
+        if model:
+            agent["model"] = model
+        agent["runtime"] = "rpc"
+        agent["dashboard_session"] = "persistent"
+        ship["id"] = sid
+        return ship, agent
+    return None
+
+
+def load_agent(agent_id: str) -> tuple[dict, dict | None] | None:
+    """(agent.yaml, ship or None) for a registered agent or a ship crewmate."""
+    path = ROOT / "agents" / agent_id / "agent.yaml"
+    if path.is_file():
+        return parse_simple_yaml(path), None
+    crew = resolve_crewmate(agent_id)
+    if crew:
+        return crew[1], crew[0]
+    return None
+
+
+# A model's provider and the key it needs from fleet/home/.env.
+PROVIDER_KEYS = {"cursor": "CURSOR_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
+
+
+def memory_block(agent_id: str, inbox: Path) -> str:
+    """File-based memory for every assistant: static paths (cache-safe), read on demand."""
+    mem = inbox / agent_id / "memory"
+    vault = Path(os.environ.get("ALICE_VAULT", "/Users/avega/Workspace/brain")).expanduser()
+    return (
+        "\n## Memory (files, read on demand)\n\n"
+        f"- **Your memory folder:** `{mem}`\n"
+        "  - `state.md`: written automatically after every compaction, a handoff of everything before it. "
+        "**When this session's history is empty or starts with a summary, read `state.md` and `plan.md` first.**\n"
+        "  - `plan.md`: your current plan and open threads; keep it up to date when the plan changes.\n"
+        "  - `notes.md`: durable notes worth keeping across sessions (decisions, facts you had to look up).\n"
+        f"- **The captain's profile (shared, in the vault):** `{vault / 'fleet' / 'captain.md'}`: preferences and standing instructions. "
+        "Read it when a preference matters; Alice keeps it current.\n"
+        "Do not paste these files into replies; read them when needed, write them with your file tools.\n"
+    )
+
+
+def record_running_model(agent_id: str, configured: object, chosen: object) -> None:
+    """fleet/inbox/<id>/model-running.json: the model this launch uses, so the
+    dashboard can show when an agent is on its backup."""
+    try:
+        d = fleet_inbox_root() / agent_id
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "model-running.json").write_text(json.dumps({
+            "model": chosen,
+            "configured": configured,
+            "backup": bool(chosen and configured and chosen != configured),
+            "reason": LAST_FALLBACK_REASON if chosen != configured else "",
+            "at": datetime.now(timezone.utc).isoformat(),
+        }) + "\n")
+    except OSError:
+        pass
+
+
+LAST_FALLBACK_REASON = ""
+
+
+def model_with_fallback(model: object, fallback: object, agent_id: str) -> object:
+    """The agent's model, or its fallback_model when the model cannot work today:
+    its provider key is missing, or the fleet node recorded a billing or auth
+    failure on it today (fleet/inbox/<id>/model-fallback.json, written by the
+    agent host; it lapses at midnight)."""
+    if not (isinstance(model, str) and isinstance(fallback, str) and fallback):
+        return model
+    global LAST_FALLBACK_REASON
+    key = PROVIDER_KEYS.get(model.split("/", 1)[0])
+    if key and not os.environ.get(key):
+        print(f"launch: {key} is not set; {agent_id} runs on {fallback}", file=sys.stderr)
+        LAST_FALLBACK_REASON = f"{key} is not set"
+        return fallback
+    try:
+        marker = json.loads((fleet_inbox_root() / agent_id / "model-fallback.json").read_text())
+    except (OSError, ValueError):
+        return model
+    if marker.get("model") == model and marker.get("day") == datetime.now().date().isoformat():
+        print(f"launch: {model} failed today ({str(marker.get('reason', ''))[:120]}); {agent_id} runs on {fallback}", file=sys.stderr)
+        LAST_FALLBACK_REASON = f"{model} failed today: {str(marker.get('reason', ''))[:160]}"
+        return fallback
+    return model
 
 
 def prepare_pi_launch(
@@ -243,12 +390,13 @@ def prepare_pi_launch(
 ) -> tuple[Path, list[str], Path, str | None] | None:
     """Build pi argv for agent_id. Returns (cwd, args, temp_role_prompt_path, model)."""
     extra = extra or []
-    agent_path = ROOT / "agents" / agent_id / "agent.yaml"
-    if not agent_path.is_file():
-        print(f"missing {agent_path}", file=sys.stderr)
+    loaded = load_agent(agent_id)
+    if not loaded:
+        print(f"missing {ROOT / 'agents' / agent_id / 'agent.yaml'} (and no ship crewmate by that id)", file=sys.stderr)
         return None
-    agent = parse_simple_yaml(agent_path)
+    agent, aboard = loaded
     agent_type = str(agent.get("type") or "")
+    uses_hermes = "hermes-memory" in [str(e) for e in agent.get("extensions") or []]
     harness = str(agent.get("harness") or "pi")
     role = str(agent.get("role") or agent_id)
     model = agent.get("model")
@@ -266,6 +414,9 @@ def prepare_pi_launch(
         subprocess.run([str(ROOT / "bin" / "seed-fleet-home")], check=False)
 
     apply_fleet_home_env()
+    configured = model
+    model = model_with_fallback(model, agent.get("fallback_model"), agent_id)
+    record_running_model(agent_id, configured, model)
 
     inbox = fleet_inbox_root()
     os.environ.setdefault("FLEET_INBOX", str(inbox))
@@ -276,7 +427,25 @@ def prepare_pi_launch(
     vault_agents = {"alice", "architect"}
     cwd: Path
     path_block: str
-    if vault_raw or agent_id in vault_agents:
+    if aboard:
+        # Ship crewmate: lives in the ship's repo for the whole session.
+        ship_path = Path(str(aboard["path"])).expanduser()
+        cwd = ship_path
+        os.environ["FLEET_SHIP"] = str(aboard["id"])
+        crew = ", ".join(f"`{aboard['id']}-{r}`" for r in aboard.get("crew") or [])
+        path_block = (
+            "## Resolved paths (this session)\n\n"
+            f"- **Aboard ship:** `{aboard['id']}`; you are its `{role}` crewmate (`{agent_id}`)\n"
+            f"- **Ship repo (cwd):** `{ship_path}`; stay in this project. Work for other ships belongs to their crews.\n"
+            f"- **Delivery mode:** `{aboard.get('mode') or 'unset'}`\n"
+            f"- **Crew aboard:** {crew}\n"
+            f"- **FLEET_INBOX:** `{inbox}`\n"
+            f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
+            f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
+            f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
+            + dashboard_chat_block()
+        )
+    elif vault_raw or agent_id in vault_agents:
         default_vault = str(vault_raw) if vault_raw else "/Users/avega/Workspace/brain"
         vault_path = Path(os.environ.get("ALICE_VAULT", default_vault)).expanduser().resolve()
         os.environ["ALICE_VAULT"] = str(vault_path)
@@ -291,17 +460,53 @@ def prepare_pi_launch(
             f"- Vault human inbox: `{vault_path / 'fleet' / 'inbox'}/`\n"
             f"- Plans: `{vault_path / 'fleet' / 'plans'}/`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
-            f"- Hermes project memory: `{vault_path / '.pi' / 'agent' / 'pi-hermes-memory'}/`\n"
-            + DASHBOARD_CHAT_BLOCK
+            + (f"- Hermes project memory: `{vault_path / '.pi' / 'agent' / 'pi-hermes-memory'}/`\n" if uses_hermes else "")
+            + dashboard_chat_block()
         )
-        hermes_dir = vault_path / ".pi" / "agent" / "pi-hermes-memory"
-        hermes_dir.mkdir(parents=True, exist_ok=True)
+        if uses_hermes:
+            (vault_path / ".pi" / "agent" / "pi-hermes-memory").mkdir(parents=True, exist_ok=True)
         for skill in agent.get("skills") or []:
             skill_dir = cwd / ".pi" / "skills" / str(skill)
             if skill_dir.is_dir():
                 pass  # added below in args
             else:
                 print(f"warning: skill missing {skill_dir} (run bin/setup-alice-vault)", file=sys.stderr)
+    elif str(agent.get("workspace") or "") == "repo":
+        # Repo-upkeep agents (shipwright): work in this repo, not the vault or FM_HOME.
+        cwd = ROOT
+        vault_path = Path(os.environ.get("ALICE_VAULT", "/Users/avega/Workspace/brain")).expanduser()
+        path_block = (
+            "## Resolved paths (this session)\n\n"
+            f"- **Repo (cwd):** `{ROOT}`\n"
+            f"- **FLEET_INBOX:** `{inbox}`\n"
+            f"- Agents: `{ROOT / 'agents'}/`, roles: `{ROOT / 'roles'}/`\n"
+            f"- Ships: `{ROOT / 'fleet' / 'ships'}/`\n"
+            f"- SSSF source: `{ROOT / '.claude' / 'skills' / 'sssf'}/`\n"
+            f"- Firstmate project registry (read; write only with captain yes): `{FLEET_HOME / 'data' / 'projects.md'}`\n"
+            f"- Vault initiatives (read only): `{vault_path / 'fleet' / 'initiatives'}/`\n"
+            f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
+            f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
+            + dashboard_chat_block()
+        )
+    elif str(agent.get("workspace") or "") == "ships":
+        # Agents that work inside project repos (designer): start in this repo, cd per request.
+        cwd = ROOT
+        ship_lines = ""
+        for y in sorted((ROOT / "fleet" / "ships").glob("*.yaml")):
+            ship = parse_simple_yaml(y)
+            if ship.get("path"):
+                ship_lines += f"  - `{ship.get('id') or y.stem}`: `{ship['path']}`\n"
+        path_block = (
+            "## Resolved paths (this session)\n\n"
+            f"- **Repo (start cwd):** `{ROOT}`; `cd` into the project named in each request\n"
+            f"- **FLEET_INBOX:** `{inbox}`\n"
+            "- Ships (id: path):\n" + (ship_lines or "  - none registered\n") +
+            f"- Firstmate project registry (read only): `{FLEET_HOME / 'data' / 'projects.md'}`\n"
+            f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
+            f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
+            f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
+            + dashboard_chat_block()
+        )
     else:
         home = FLEET_HOME
         cwd = home
@@ -313,7 +518,7 @@ def prepare_pi_launch(
             f"- Alice bus (write): `{inbox / 'alice' / 'events.jsonl'}`\n"
             f"- Architect bus (write): `{inbox / 'architect' / 'events.jsonl'}`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
-            + DASHBOARD_CHAT_BLOCK
+            + dashboard_chat_block()
         )
 
     cwd_override = agent.get("cwd")
@@ -324,6 +529,8 @@ def prepare_pi_launch(
     for rel in agent.get("extra_prompts") or []:
         extra_prompt_files.append((ROOT / str(rel)).resolve())
 
+    if agent_type == "assistant":
+        path_block += memory_block(agent_id, inbox)
     prompt_file = build_role_prompt(role_file, path_block, extra_prompt_files)
     args = ["pi", "--approve", "--append-system-prompt", str(prompt_file)]
 
@@ -338,8 +545,30 @@ def prepare_pi_launch(
             return None
         ext_refs.append(ref if ref.startswith("npm:") else ref)
 
+    # Every assistant can ask the captain structured questions (ask-captain.ts),
+    # show work on the dashboard canvas (canvas.ts), sends only its newest
+    # screenshots to the model (image-window.ts), compacts between tasks once
+    # context passes 65% (context-guard.ts), and watches prompt caching and
+    # repeated reads (cache-watch.ts).
+    if agent_type == "assistant":
+        # Crewmates also work as a crew: tasks, crew messages, maneuvers (crew.ts).
+        for name in ("ask-captain", "canvas", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()):
+            ref = str(ROOT / "extensions" / f"{name}.ts")
+            if ref not in ext_refs:
+                ext_refs.append(ref)
+    os.environ["FLEET_AGENT_ID"] = agent_id
+    # Per-agent tuning (e.g. Firstmate's FM_* watcher settings); the caller's env wins.
+    for key, val in (agent.get("env") or {}).items():
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*", str(key)) and val is not None and key not in os.environ:
+            os.environ[key] = str(val)
+
     for ref in ext_refs:
         args.extend(["-e", ref])
+
+    # `tools:` in agent.yaml adjusts the declared tools, e.g. [+codemode, +tool_search].
+    tool_changes = [str(t) for t in agent.get("tools") or [] if re.fullmatch(r"[+-]?[a-z_]+", str(t))]
+    if tool_changes:
+        args.extend(["--tools", ",".join(tool_changes)])
 
     if vault_raw or agent_id in vault_agents:
         for skill in agent.get("skills") or []:
@@ -347,9 +576,56 @@ def prepare_pi_launch(
             if skill_dir.is_dir():
                 args.extend(["--skill", str(skill_dir)])
 
+    # `discover_skills: false`: only the skills named here, none found on disk (a
+    # skill list in the system prompt costs every turn; Alice's global skills were 28k chars).
+    if str(agent.get("discover_skills")).lower() == "false":
+        args.append("--no-skills")
+
+    # Repo-relative skill folders (each holds a SKILL.md), for any agent type.
+    for rel in agent.get("skill_paths") or []:
+        skill_dir = (ROOT / str(rel)).resolve()
+        if (skill_dir / "SKILL.md").is_file():
+            args.extend(["--skill", str(skill_dir)])
+        else:
+            print(f"warning: skill_paths entry missing SKILL.md: {skill_dir}", file=sys.stderr)
+
     args.extend(extra)
     model_str = str(model) if model else None
     return cwd, args, prompt_file, model_str
+
+
+def persistent_session_args(agent_id: str) -> list[str]:
+    """Shared Pi session for agents with `dashboard_session: persistent`.
+
+    Dashboard turns and the interactive TUI (`just <id>`, or Start TUI on the
+    dashboard) resume the same session, so the conversation carries across both.
+    The dashboard's New session writes a fresh id to sessions/current; without
+    that file the id is dashboard-<id>.
+    """
+    loaded = load_agent(agent_id)
+    agent = loaded[0] if loaded else {}
+    if str(agent.get("dashboard_session") or "") != "persistent":
+        return []
+    session_dir = fleet_inbox_root() / agent_id / "sessions"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    session_id = f"dashboard-{agent_id}"
+    try:
+        current = (session_dir / "current").read_text().strip()
+        if re.fullmatch(r"dashboard-[a-z0-9_-]{1,80}", current):
+            session_id = current
+    except OSError:
+        pass
+    return ["--session-dir", str(session_dir), "--session-id", session_id]
+
+
+def tui_pid_alive(agent_id: str) -> int | None:
+    """PID of a live interactive session for agent_id (fleet/inbox/<id>/session.json), else None."""
+    try:
+        pid = int(json.loads((fleet_inbox_root() / agent_id / "session.json").read_text())["pid"])
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def headless_main() -> int:
@@ -365,21 +641,56 @@ def headless_main() -> int:
     if prepared is None:
         return 1
     cwd, base_args, prompt_file, _model = prepared
-    args = base_args + ["-p", "--no-session", user_prompt]
-    print(f"cd {cwd} && {' '.join(base_args)} -p --no-session …", file=sys.stderr)
-    try:
-        r = subprocess.run(
-            args,
-            cwd=str(cwd),
-            env=os.environ.copy(),
-            capture_output=True,
-            text=True,
+    session_args = persistent_session_args(agent_id)
+    if session_args and tui_pid_alive(agent_id):
+        # Both would write the same session file. The TUI is the live one.
+        print(
+            f"{agent_id} is open in its TUI right now, so this message was not run. "
+            f"Answer it there (herdr pane fleet-{agent_id}, or the terminal running `just {agent_id}`), "
+            "or close the TUI to chat here again.",
+            file=sys.stderr,
         )
-        if r.returncode != 0:
-            err = (r.stderr or r.stdout or "pi headless failed").strip()
+        try:
+            prompt_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return 3
+    if not session_args:
+        session_args = ["--no-session"]
+    args = base_args + ["-p", *session_args, user_prompt]
+    print(f"cd {cwd} && {' '.join(base_args)} -p {' '.join(session_args)} …", file=sys.stderr)
+    env = os.environ.copy()
+    # pi-cursor-sdk's own cursor_ask_question tells the model "UI unavailable, pick a
+    # default" in print mode. Turn it off so ask_captain is the question tool here.
+    env["PI_CURSOR_ASK_QUESTION"] = "false"
+    proc = subprocess.Popen(
+        args,
+        cwd=str(cwd),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    def stop_child(signum, _frame):
+        # The dashboard stops a turn by signalling this launcher; take pi down
+        # with it so a timed-out agent does not keep working unseen.
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        sys.exit(128 + signum)
+
+    signal.signal(signal.SIGTERM, stop_child)
+    signal.signal(signal.SIGINT, stop_child)
+    try:
+        stdout, stderr = proc.communicate()
+        if proc.returncode != 0:
+            err = (stderr or stdout or "pi headless failed").strip()
             print(err, file=sys.stderr)
-            return r.returncode if r.returncode else 1
-        out = (r.stdout or "").strip()
+            return proc.returncode if proc.returncode else 1
+        out = (stdout or "").strip()
         if out:
             print(out)
         return 0
@@ -390,12 +701,52 @@ def headless_main() -> int:
             pass
 
 
+def rpc_main() -> int:
+    """`bin/launch rpc <id>`: exec pi in RPC mode for the dashboard's agent host.
+
+    stdin/stdout carry Pi's JSONL RPC protocol, so nothing else may print to
+    stdout. The session is the agent's persistent one when it has
+    `dashboard_session: persistent`.
+    """
+    global RUNTIME
+    if len(sys.argv) < 3:
+        print("usage: bin/launch rpc <agent-id>", file=sys.stderr)
+        return 2
+    agent_id = sys.argv[2]
+    RUNTIME = "rpc"
+    if tui_pid_alive(agent_id):
+        print(
+            f"{agent_id} is open in its TUI right now. Answer it there (herdr pane fleet-{agent_id}, "
+            f"or the terminal running `just {agent_id}`), or close the TUI to chat from the dashboard.",
+            file=sys.stderr,
+        )
+        return 3
+    prepared = prepare_pi_launch(agent_id, [])
+    if prepared is None:
+        return 1
+    cwd, base_args, prompt_file, _model = prepared
+    # exec leaves nobody to delete a temp prompt, so RPC launches keep one
+    # stable copy per agent, replaced on each launch.
+    stable = fleet_inbox_root() / agent_id / "role-prompt.md"
+    stable.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(prompt_file, stable)
+    base_args = [str(stable) if a == str(prompt_file) else a for a in base_args]
+    session_args = persistent_session_args(agent_id) or ["--no-session"]
+    args = base_args + ["--mode", "rpc", *session_args]
+    print(f"cd {cwd} && {' '.join(base_args)} --mode rpc {' '.join(session_args)}", file=sys.stderr)
+    os.chdir(cwd)
+    os.execvpe(args[0], args, os.environ.copy())
+
+
 def main() -> int:
     if len(sys.argv) >= 2 and sys.argv[1] == "headless":
         return headless_main()
+    if len(sys.argv) >= 2 and sys.argv[1] == "rpc":
+        return rpc_main()
     if len(sys.argv) < 2:
         print("usage: bin/launch <agent-id> [-- extra pi args...]", file=sys.stderr)
         print("       bin/launch headless <agent-id>  # prompt on stdin", file=sys.stderr)
+        print("       bin/launch rpc <agent-id>       # Pi RPC on stdin/stdout (dashboard agent host)", file=sys.stderr)
         return 2
     agent_id = sys.argv[1]
     extra: list[str] = []
@@ -406,6 +757,9 @@ def main() -> int:
     if prepared is None:
         return 1
     cwd, args, prompt_file, model = prepared
+    session_flags = ("--session", "--session-id", "--session-dir", "--no-session", "--continue", "-c", "--resume", "-r", "--fork")
+    if not any(a in session_flags for a in extra):
+        args += persistent_session_args(agent_id)
     print(f"cd {cwd} && {' '.join(args)}", file=sys.stderr)
 
     agent_inbox = fleet_inbox_root() / agent_id

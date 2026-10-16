@@ -2,38 +2,73 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Fleet</title>
+  <!-- Phone app (D6): installable, opens on Needs you, push notifications through sw.js. -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#071018" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Fleet" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
   <link rel="stylesheet" href="/pixel.css" />
-  <script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0" integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc" crossorigin="anonymous"></script>
-  <script defer src="https://unpkg.com/alpinejs@3.14.3/dist/cdn.min.js"></script>
+  <!-- Served locally (public/vendor/README.md): no CDN wait, works offline and over Tailscale. -->
+  <script src="/vendor/htmx-4.0.0.min.js" integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc"></script>
+  <script defer src="/vendor/alpinejs-3.14.3.min.js"></script>
   <style>[x-cloak] { display: none !important; }</style>
 </head>
-<body x-data="dashboardApp()" x-cloak :class="{ 'alice-open': aliceOpen }">
+<body x-data="dashboardApp()" x-cloak :class="{ 'chat-open': chatOpen, 'chat-canvas': chatOpen && canvasShown() }">
   <header class="mast">
     <div class="mast-captain">
       <img class="portrait mast-face" src="/art/captain.png" width="56" height="56" alt="" />
       <h1>Fleet</h1>
     </div>
-    <p class="muted mast-hint"><kbd>⌘K</kbd> command</p>
+    <div class="mast-end">
+      <button type="button" class="needs-btn" :class="{ 'has-items': needs.length, 'is-open': leaf === 'needs' && !chatOpen }"
+              :aria-label="needs.length ? needs.length + (needs.length === 1 ? ' thing needs' : ' things need') + ' you' : 'Nothing needs you'"
+              @click="openLeaf('needs')">Needs you <span class="needs-count" x-text="needs.length"></span></button>
+      <button type="button" class="btn quiet-btn" :class="{ 'btn-ink': quiet.snoozed }" :aria-pressed="quiet.snoozed"
+              :title="quiet.snoozed ? 'Snoozed: interruptions are held. Wake to see them as a digest.' : 'Snooze: hold interruptions until you wake'"
+              @click="toggleQuiet()" x-text="quiet.snoozed ? 'Wake' + (quiet.held ? ' · ' + quiet.held : '') : 'Snooze'"></button>
+      <p class="muted mast-hint"><kbd>⌘K</kbd> command</p>
+    </div>
   </header>
 
   <nav class="leaf-tabs" role="tablist" aria-label="Fleet sections">
+    <button type="button" class="tab" role="tab" id="tab-harbor" aria-controls="leaf-harbor"
+            :aria-selected="leaf === 'harbor'" :class="{ 'is-open': leaf === 'harbor', 'is-ring': anyWaiting() }"
+            @click="openLeaf('harbor')"><span class="punch" aria-hidden="true"></span>Harbor</button>
     <button type="button" class="tab" role="tab" id="tab-health" aria-controls="leaf-health"
             :aria-selected="leaf === 'health'" :class="{ 'is-open': leaf === 'health' }"
             @click="openLeaf('health')"><span class="punch" aria-hidden="true"></span>Health</button>
-    <button type="button" class="tab" role="tab" id="tab-fleet" aria-controls="leaf-fleet"
-            :aria-selected="leaf === 'fleet'" :class="{ 'is-open': leaf === 'fleet' }"
-            @click="openLeaf('fleet')"><span class="punch" aria-hidden="true"></span>Fleet</button>
     <button type="button" class="tab" role="tab" id="tab-agents" aria-controls="leaf-agents"
-            :aria-selected="leaf === 'agents'" :class="{ 'is-open': leaf === 'agents', 'is-ring': waiting }"
+            :aria-selected="leaf === 'agents'" :class="{ 'is-open': leaf === 'agents', 'is-ring': anyWaiting() }"
             @click="openLeaf('agents')"><span class="punch" aria-hidden="true"></span>Agents</button>
-    <button type="button" class="tab" id="tab-alice" aria-controls="alice-drawer" aria-haspopup="dialog"
-            :aria-expanded="aliceOpen" :class="{ 'is-open': aliceOpen }"
-            @click="toggleAlice()"><span class="punch" aria-hidden="true"></span>Alice</button>
   </nav>
 
   <main>
+    <section id="leaf-needs" class="leaf" role="region" aria-labelledby="needs-title"
+             :class="{ 'is-open': leaf === 'needs', 'is-hinge': hinge === 'needs' }">
+      <div class="between needs-head">
+        <h2 id="needs-title">Needs you</h2>
+        <span class="row">
+        <button type="button" class="btn" x-show="push !== 'unsupported'" x-cloak :disabled="push === 'busy' || push === 'denied'" :aria-pressed="push === 'on'" @click="togglePush()"
+                :title="push === 'denied' ? 'Notifications are blocked for this site in the browser settings' : 'Push what needs you to this device'"
+                x-text="push === 'on' ? 'Notifying this device' : push === 'denied' ? 'Notifications blocked' : 'Notify this device'"></button>
+        <button type="button" class="btn" :class="{ 'btn-ink': quiet.snoozed }" :aria-pressed="quiet.snoozed" @click="toggleQuiet()"
+                x-text="quiet.snoozed ? 'Wake' + (quiet.held ? ' · ' + quiet.held + ' held' : '') : 'Snooze'"></button>
+        </span>
+      </div>
+      <p class="muted" x-show="quiet.snoozed" x-cloak>Snoozed: agents' interruptions and phone notifications are held. Questions and Go requests still appear here. Wake shows what was held as a digest.</p>
+      <p class="muted needs-empty" x-show="!needs.length" x-cloak>Nobody needs you right now. Questions, holds, and messages that did not go through show up here.</p>
+      <div id="needs-list" class="needs-list" aria-live="polite"></div>
+    </section>
+
+    <section id="leaf-harbor" class="leaf" role="tabpanel" aria-labelledby="tab-harbor"
+             :class="{ 'is-open': leaf === 'harbor', 'is-hinge': hinge === 'harbor' }">
+      <h2 x-text="shipSel ? 'Ship' : 'Harbor'">Harbor</h2>
+      <div id="harbor-view" @click="harborClick($event)" @submit="harborSubmit($event)"></div>
+    </section>
+
     <section id="leaf-health" class="leaf" role="tabpanel" aria-labelledby="tab-health"
              :class="{ 'is-open': leaf === 'health', 'is-hinge': hinge === 'health' }">
       <h2>Health</h2>
@@ -41,65 +76,200 @@
         <p x-text="waitSummary"></p>
       </aside>
       <div class="stack">
-        <div id="usage" hx-get="/partials/usage" hx-trigger="load" hx-swap="innerHTML"></div>
-        <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerHTML"></div>
+        <div id="fleet" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerMorph"></div>
+        <div id="usage" hx-get="/partials/usage" hx-trigger="load" hx-swap="innerMorph"></div>
+        <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerMorph"></div>
       </div>
-    </section>
-
-    <section id="leaf-fleet" class="leaf" role="tabpanel" aria-labelledby="tab-fleet"
-             :class="{ 'is-open': leaf === 'fleet', 'is-hinge': hinge === 'fleet' }">
-      <h2>Fleet</h2>
-      <div id="fleet" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerHTML"></div>
     </section>
 
     <section id="leaf-agents" class="leaf" role="tabpanel" aria-labelledby="tab-agents"
              :class="{ 'is-open': leaf === 'agents', 'is-hinge': hinge === 'agents' }">
       <h2>Agents</h2>
-      <div class="grid-2">
-        <div id="agents" hx-get="/partials/agents" hx-trigger="load" hx-swap="innerHTML"></div>
-        <div id="agent-space">
-          <div x-show="selectedAgent" x-html="spaceHtml"></div>
-          <p class="muted" x-show="!selectedAgent">Open an agent to see its space and chat.</p>
-        </div>
+      <div class="stack">
+        <div id="agents" class="stack" hx-get="/partials/agents" hx-trigger="load" hx-swap="innerMorph"></div>
+        <div id="groups" hx-get="/partials/groups" hx-trigger="load" hx-swap="innerMorph"></div>
       </div>
     </section>
 
   </main>
 
-  <aside id="alice-drawer" class="alice-drawer" role="dialog" aria-modal="true" aria-labelledby="alice-title"
-         :class="{ 'is-open': aliceOpen }" :aria-hidden="aliceOpen ? 'false' : 'true'" :inert="!aliceOpen">
-    <header class="alice-bar">
-      <div class="alice-who">
-        <img class="portrait" src="/art/alice.png" width="64" height="64" alt="" />
+  <nav class="rail" aria-label="Chat" @scroll.passive="hideTip()" @click="hideTip()">
+    <template x-for="t in railList('agents')" :key="t.id">
+      <button type="button" class="rail-face" :class="{ 'is-open': chatOpen && !chatGroup && chatId === t.id, 'is-busy': t.thinking && !(voiceSpeaking && chatId === t.id), 'is-waiting': t.waiting, 'is-speaking': voiceSpeaking && chatId === t.id }"
+              :aria-label="(t.waiting ? t.label + ' is waiting on you. ' : '') + 'Chat with ' + t.label" :data-name="t.label + (t.waiting ? ' · needs you' : t.thinking ? ' · working' : '')" @click="openChat(t.id)"
+              @mouseenter="showTip($event)" @mouseleave="hideTip()" @focus="showTip($event)" @blur="hideTip()">
+        <img x-show="t.art" :src="t.art" width="44" height="44" alt="" />
+        <span x-show="!t.art" x-text="initials(t)"></span>
+        <span class="ship-badge" x-show="t.ship" :style="badgeStyle(t.ship)" x-text="badgeText(t.ship)" aria-hidden="true"></span>
+      </button>
+    </template>
+    <p class="rail-label" x-show="groups.length" x-cloak>Groups</p>
+    <template x-for="g in groups" :key="g.id">
+      <button type="button" class="rail-face rail-group" :class="{ 'is-open': chatOpen && chatGroup && chatGroup.id === g.id }"
+              :aria-label="'Open group ' + g.name" :title="g.name + ' · lead ' + g.lead" @click="openGroup(g.id)">
+        <template x-for="(f, i) in groupFaces(g)" :key="f.id">
+          <span class="stack-face" :style="'--i:' + i"><img x-show="f.art" :src="f.art" alt="" /><span x-show="!f.art" x-text="initials(f)"></span></span>
+        </template>
+      </button>
+    </template>
+    <p class="rail-label" x-show="rail.workers.length" x-cloak>Crew</p>
+    <template x-for="t in railList('workers')" :key="t.id">
+      <button type="button" class="rail-face rail-worker" :class="{ 'is-open': chatOpen && chatId === t.id, 'is-busy': t.thinking, 'is-waiting': t.waiting }"
+              :aria-label="(t.waiting ? t.label + ' is waiting on you. ' : '') + 'Chat with ' + (t.role || 'worker') + ' ' + t.label" :data-name="t.label + (t.waiting ? ' · needs you' : '')" @click="openChat(t.id)"
+              @mouseenter="showTip($event)" @mouseleave="hideTip()" @focus="showTip($event)" @blur="hideTip()">
+        <img x-show="t.art" :src="t.art" width="34" height="34" alt="" />
+        <span x-show="!t.art" x-text="initials(t)"></span>
+      </button>
+    </template>
+  </nav>
+
+  <div class="rail-tip" role="presentation" x-show="railTip.text" x-cloak :style="`left:${railTip.x}px;top:${railTip.y}px`" x-text="railTip.text"></div>
+
+  <button type="button" class="rail-toggle" :class="{ 'is-open': chatOpen }" aria-label="Open chat" @click="toggleChat()">
+    <img class="fab-face" :src="current().art || '/art/captain.png'" width="32" height="32" alt="" />
+    <span class="fab-label">Chat</span>
+  </button>
+
+  <aside id="chat-drawer" class="chat-drawer" role="dialog" :aria-modal="wide ? 'false' : 'true'" aria-labelledby="chat-title"
+         :class="{ 'is-open': chatOpen, 'with-canvas': canvasShown() }" :aria-hidden="chatOpen ? 'false' : 'true'" :inert="!chatOpen">
+    <header class="chat-bar">
+      <div class="chat-who">
+        <span class="face-wrap">
+          <img class="portrait" x-show="current().art" :src="current().art" width="64" height="64" alt="" />
+          <span class="portrait portrait-initials" x-show="!current().art" x-text="initials(current())"></span>
+          <span class="ship-badge" x-show="!chatGroup && current().ship" :style="badgeStyle(current().ship)" x-text="badgeText(current().ship)" aria-hidden="true"></span>
+        </span>
         <div>
-          <h2 id="alice-title">Alice</h2>
+          <h2 id="chat-title" x-text="title()"></h2>
+          <p class="chat-desc" x-show="!chatGroup && current().description" x-text="current().description"></p>
           <p class="muted">
-            <span x-text="aliceConn"></span>
-            <span x-text="aliceSession"></span>
-            <span class="warn" x-show="aliceThinking">thinking…</span>
+            <span x-text="chatConn"></span>
+            <span x-text="chatMeta()"></span>
+            <span class="warn" x-show="chatThinking">thinking…</span>
           </p>
+          <p class="chat-activity muted" x-show="chatThinking && chatActivity"><span class="activity-icon" aria-hidden="true" x-text="activityIcon()"></span><span x-text="chatActivity"></span></p>
         </div>
       </div>
-      <button type="button" class="btn" @click="closeAlice()">Close</button>
+      <div class="row">
+        <button type="button" class="btn" x-show="!chatGroup && chatThinking && current().runtime === 'rpc'" @click="stopAgent()">Stop</button>
+        <button type="button" class="btn" x-show="!chatGroup && !chatThinking && current().persistentSession" x-cloak
+                title="Start this agent on an empty history. Long sessions make every turn re-send everything." @click="newAgentSession()">New session</button>
+        <button type="button" class="btn" :class="{ 'btn-ink': canvasOpen }" x-show="!chatGroup && canvasItems.length" x-cloak
+                :aria-pressed="canvasOpen" :data-fresh="canvasFresh ? '' : null" @click="toggleCanvas()" x-text="'Canvas · ' + canvasItems.length + (canvasFresh ? ' · new' : '')"></button>
+      </div>
+      <button type="button" class="btn icon-btn voice-toggle-phone" x-show="!chatGroup" :class="{ 'btn-ink': voiceReplies }" :aria-pressed="voiceReplies"
+                :aria-label="voiceReplies ? 'Voice replies on' : 'Voice replies off'" :title="voiceReplies ? 'Voice replies on: new replies are spoken (Esc stops)' : 'Voice replies off'"
+                @click="voiceSpeaking ? stopSpeaking() : toggleVoiceReplies()">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6h3l4-3v10L5 10H2z"/><path x-show="voiceReplies" fill="currentColor" d="M11 5h1v6h-1zM13 3h1v10h-1z"/><path x-show="!voiceReplies" fill="currentColor" d="M11 6l1-1 3 3-1 1zm0 4l3-3 1 1-3 3z"/></svg>
+        </button>
+      <button type="button" class="btn chat-close" @click="closeChat()" aria-label="Close chat">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2l3 3 2 2 2-2 3-3 1 1-3 3-2 2 2 2 3 3-1 1-3-3-2-2-2 2-3 3-1-1 3-3 2-2-2-2-3-3z"/></svg>
+        <span class="chat-close-label">Close</span>
+      </button>
     </header>
-    <div class="thread" x-ref="aliceLog" aria-live="polite">
-      <div class="bubble-row is-system" x-show="aliceEmpty" x-cloak>
-        <div class="bubble"><p>Alice is on the line.</p></div>
+    <div class="face-strip" aria-label="Switch chat">
+      <template x-for="g in groups" :key="'g-' + g.id">
+        <button type="button" class="rail-face rail-group" :class="{ 'is-open': chatGroup && chatGroup.id === g.id }"
+                :aria-label="'Open group ' + g.name" @click="openGroup(g.id)">
+          <template x-for="(f, i) in groupFaces(g)" :key="f.id">
+          <span class="stack-face" :style="'--i:' + i"><img x-show="f.art" :src="f.art" alt="" /><span x-show="!f.art" x-text="initials(f)"></span></span>
+          </template>
+        </button>
+      </template>
+      <template x-for="t in railList('agents').concat(railList('workers'))" :key="t.id">
+        <button type="button" class="rail-face" :class="{ 'is-open': !chatGroup && chatId === t.id, 'rail-worker': !t.art, 'is-waiting': t.waiting }"
+                :aria-label="'Chat with ' + t.label" @click="openChat(t.id)">
+          <img x-show="t.art" :src="t.art" width="36" height="36" alt="" />
+          <span x-show="!t.art" x-text="initials(t)"></span>
+          <span class="ship-badge" x-show="t.ship" :style="badgeStyle(t.ship)" x-text="badgeText(t.ship)" aria-hidden="true"></span>
+        </button>
+      </template>
+    </div>
+    <div class="group-to" x-show="chatGroup" x-cloak>
+      <span class="muted">To</span>
+      <template x-for="id in (chatGroup ? chatGroup.members : [])" :key="id">
+        <button type="button" class="btn" :class="{ 'btn-ink': groupTo === id }" @click="groupTo = id; focusComposer()"
+                x-text="id + (chatGroup && chatGroup.lead === id ? ' (lead)' : '')"></button>
+      </template>
+    </div>
+    <div class="chat-body" :class="{ 'has-canvas': canvasShown() }">
+    <section class="canvas-pane" aria-label="Canvas" x-show="canvasShown()" x-cloak>
+      <div class="canvas-tabs" role="tablist">
+        <template x-for="it in canvasItems" :key="it.id">
+          <button type="button" role="tab" class="chip" :aria-selected="canvasSel === it.id" :aria-pressed="canvasSel === it.id"
+                  @click="canvasSel = it.id" x-text="it.title"></button>
+        </template>
+      </div>
+      <template x-if="canvasItem()">
+        <div class="canvas-view">
+          <p class="canvas-caption" x-show="canvasItem().caption" x-text="canvasItem().caption"></p>
+          <template x-if="canvasItem().kind === 'image'">
+            <div class="canvas-images" :class="{ 'is-set': (canvasItem().images || []).length > 1 }">
+              <template x-for="img in (canvasItem().images || [])" :key="img.file">
+                <figure class="canvas-figure">
+                  <a :href="canvasSrc(canvasItem(), img.file)" target="_blank" rel="noopener"><img :src="canvasSrc(canvasItem(), img.file)" :alt="img.label" loading="lazy" /></a>
+                  <figcaption class="row">
+                    <span x-text="img.label"></span>
+                    <button type="button" class="btn btn-ink" x-show="canvasItem().choose" @click="pickCanvasImage(canvasItem(), img)">Pick</button>
+                  </figcaption>
+                </figure>
+              </template>
+            </div>
+          </template>
+          <template x-if="canvasItem().kind !== 'image'">
+            <div class="canvas-frame-wrap">
+              <div class="canvas-blocked" x-show="canvasItem().frameBlocked">
+                <p><strong>This page won't open inside the canvas:</strong> <span x-text="canvasItem().frameBlocked"></span>.</p>
+                <p><a class="btn btn-ink" :href="canvasItem().url" target="_blank" rel="noopener">Open it in a new tab</a></p>
+                <p class="muted">To review it here, the dev server has to allow framing from the dashboard (for Django in local settings: drop X-Frame-Options and send <code>frame-ancestors 'self' http://localhost:8787</code>).</p>
+              </div>
+              <iframe x-show="!canvasItem().frameBlocked" x-ref="canvasFrame" class="canvas-frame" :src="canvasFrameSrc(canvasItem())" :sandbox="canvasSandbox(canvasItem())"
+                      :title="canvasItem().title" referrerpolicy="no-referrer"></iframe>
+              <a class="canvas-open muted" x-show="!canvasItem().frameBlocked && (canvasItem().kind === 'url' || canvasItem().kind === 'html')" :href="canvasFrameSrc(canvasItem())" target="_blank" rel="noopener">Open in a new tab</a>
+            </div>
+          </template>
+        </div>
+      </template>
+    </section>
+    <div class="thread" x-ref="chatLog" aria-live="polite">
+      <div class="bubble-row is-system" x-show="chatEmpty" x-cloak>
+        <div class="bubble"><p x-text="title() + (chatGroup ? ' is on the line. Messages go to the lead unless you pick another member.' : ' is on the line.')"></p></div>
       </div>
     </div>
-    <form class="alice-compose" @submit.prevent="sendAlice">
+    </div>
+    <div class="route-panel" x-show="routeNote" x-cloak>
+      <p x-text="routeNote"></p>
+      <div class="row-wrap" x-show="routeChoices.length">
+        <template x-for="c in routeChoices" :key="c.key">
+          <button type="button" class="btn" @click="pickRoute(c.key)"
+                  x-text="c.label + (c.p != null ? ' · ' + Math.round(c.p * 100) + '%' : '')"></button>
+        </template>
+      </div>
+      <button type="button" class="btn" @click="routeNote = ''; routeChoices = []">Dismiss</button>
+    </div>
+    <form class="chat-compose" @submit.prevent="sendChat">
       <img class="avatar" src="/art/captain.png" width="48" height="48" alt="" />
       <div class="composer">
-        <input class="field" x-ref="aliceField" x-model="aliceDraft" placeholder="Message Alice" autocomplete="off" aria-label="Message Alice" />
+        <button type="button" class="btn" :class="{ 'btn-ink': autoRoute }" :aria-pressed="autoRoute"
+                title="Let Jev pick an agent, a group (its lead), or Firstmate" @click="autoRoute = !autoRoute">Auto</button>
+        <textarea class="field chat-field" x-ref="chatField" x-model="chatDraft" rows="1" @input="growComposer()" @keydown.enter="composerEnter($event)" :placeholder="autoRoute ? 'Message — Jev picks who' : 'Message ' + current().label" autocomplete="off" :aria-label="autoRoute ? 'Message, routed by Jev (Shift+Enter for a new line)' : 'Message ' + current().label + ' (Shift+Enter for a new line)'"></textarea>
+        <button type="button" class="btn icon-btn voice-toggle" x-show="!chatGroup" :class="{ 'btn-ink': voiceReplies }" :aria-pressed="voiceReplies"
+                :aria-label="voiceReplies ? 'Voice replies on' : 'Voice replies off'" :title="voiceReplies ? 'Voice replies on: new replies are spoken (Esc stops)' : 'Voice replies off'"
+                @click="voiceSpeaking ? stopSpeaking() : toggleVoiceReplies()">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6h3l4-3v10L5 10H2z"/><path x-show="voiceReplies" fill="currentColor" d="M11 5h1v6h-1zM13 3h1v10h-1z"/><path x-show="!voiceReplies" fill="currentColor" d="M11 6l1-1 3 3-1 1zm0 4l3-3 1 1-3 3z"/></svg>
+        </button>
+        <button type="button" class="btn icon-btn mic-btn" x-show="!chatGroup" :class="{ 'is-live': voiceState === 'listening', 'is-busy': voiceState === 'transcribing' }"
+                :aria-pressed="voiceState === 'listening'" :aria-label="voiceState === 'listening' ? 'Listening; tap or release to send' : 'Talk (tap, or hold with a mouse; Option+V)'"
+                title="Talk: tap to start (it sends when you pause), or hold with a mouse (Option+V)"
+                @pointerdown="micDown($event)" @pointerup="micUp()" @pointerleave="voiceState === 'listening' && !micToggled && micUp()" @click="micClick()">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M6 1h4v8H6zM4 7h1v2h6V7h1v3H9v2h2v2H5v-2h2v-2H4z"/></svg>
+        </button>
         <button class="btn btn-ink" type="submit">Send</button>
       </div>
+      <p class="voice-note" role="status" aria-live="polite" x-show="voiceNote || voiceSpeaking" x-cloak
+         x-text="voiceNote || 'Speaking… press Esc or the speaker to stop.'"></p>
     </form>
   </aside>
-
-  <button type="button" class="fab" :class="{ 'is-open': aliceOpen }" aria-label="Open Alice chat" @click="toggleAlice()">
-    <img class="fab-face" src="/art/alice.png" width="32" height="32" alt="" />
-    <span class="fab-label">Alice</span>
-  </button>
 
   <div class="palette-backdrop" x-show="paletteOpen" x-cloak @click="closePalette()"></div>
   <div class="palette" role="dialog" aria-label="Command palette" x-show="paletteOpen" x-cloak @click.stop>
@@ -116,24 +286,29 @@
   </div>
 
   <nav class="dock" aria-label="Fleet sections">
-    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'health' && !aliceOpen }" @click="openLeaf('health')">
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'needs' && !chatOpen, 'is-ring': needs.length }" @click="openLeaf('needs')">
+      <span class="dock-count" x-text="needs.length || '✓'" aria-hidden="true"></span>
+      Needs you
+    </button>
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'harbor' && !chatOpen, 'is-ring': anyWaiting() }" @click="openLeaf('harbor')">
+      <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M10 2h2v9h6l-2 4H6l-2-4h6zM2 17h18v2H2z"/></svg>
+      Harbor
+    </button>
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'health' && !chatOpen }" @click="openLeaf('health')">
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M9 2h4v7h7v4h-7v7H9v-7H2V9h7z"/></svg>
       Health
     </button>
-    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'fleet' && !aliceOpen }" @click="openLeaf('fleet')">
-      <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M10 2h2v3h5v2h-1l2 8H4l2-8H5V5h5V2zm-5 15h12v3H5z"/></svg>
-      Fleet
-    </button>
-    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'agents' && !aliceOpen, 'is-ring': waiting }" @click="openLeaf('agents')">
+    <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'agents' && !chatOpen, 'is-ring': anyWaiting() }" @click="openLeaf('agents')">
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M4 4h6v6H4zm8 0h6v6h-6zM4 12h6v6H4zm8 0h6v6h-6z"/></svg>
       Agents
     </button>
-    <button type="button" class="dock-btn" :class="{ 'is-open': aliceOpen }" :aria-expanded="aliceOpen" @click="toggleAlice()">
-      <img class="dock-face" src="/art/alice.png" width="22" height="22" alt="" />
-      Alice
+    <button type="button" class="dock-btn" :class="{ 'is-open': chatOpen }" aria-label="Open chat" @click="toggleChat()">
+      <img class="dock-face" :src="current().art || '/art/captain.png'" width="22" height="22" alt="" />
+      Chat
     </button>
   </nav>
 
+  <script src="/md.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

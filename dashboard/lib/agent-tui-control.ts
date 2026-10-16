@@ -16,7 +16,7 @@ import {
   paneRunShell,
   writeRuntime,
 } from "./herdr.ts";
-import { ROOT } from "./paths.ts";
+import { realFleet, ROOT } from "./paths.ts";
 import { pauseQuotaUntil } from "./quota.ts";
 import { dashLog } from "./log.ts";
 
@@ -121,6 +121,7 @@ function runStartJob(agentId: string): Promise<void> {
 }
 
 export function startAgentTui(agentId: string): AgentControlResult {
+  if (!realFleet()) return { ok: false, status: "error", message: "Test inbox: starting the captain's TUIs is off." };
   if (!isTuiAgent(agentId)) {
     return { ok: false, status: "error", message: "TUI start not supported for this agent" };
   }
@@ -188,6 +189,7 @@ function runStopJob(agentId: string): Promise<void> {
 }
 
 export function stopAgentTui(agentId: string): AgentControlResult {
+  if (!realFleet()) return { ok: false, status: "error", message: "Test inbox: stopping the captain's TUIs is off." };
   if (!isTuiAgent(agentId)) {
     return { ok: false, status: "error", message: "TUI stop not supported for this agent" };
   }
@@ -213,14 +215,6 @@ export function stopAgentTui(agentId: string): AgentControlResult {
     status: "stopping",
     message: `Stopping ${agentId}…`,
   };
-}
-
-export function startAlice(): AgentControlResult {
-  return startAgentTui("alice");
-}
-
-export function stopAlice(): AgentControlResult {
-  return stopAgentTui("alice");
 }
 
 export { TUI_AGENT_IDS };

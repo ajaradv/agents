@@ -1,6 +1,4 @@
 export {
-  startAlice,
-  stopAlice,
   startAgentTui,
   stopAgentTui,
   setLifecycleEmitter,

@@ -53,10 +53,47 @@ export async function loadFleetDotenv(): Promise<Record<string, string>> {
     } else {
       return {};
     }
-    return parseEnvLines(text);
+    const parsed = parseEnvLines(text);
+    // The secrets manager's pipe serves one reader at a time and can come back
+    // empty; fall back to the last read that had keys.
+    if (Object.keys(parsed).length) lastGood = parsed;
+    return { ...(Object.keys(parsed).length ? parsed : lastGood) };
   } catch {
-    return {};
+    return { ...lastGood };
   }
+}
+
+let lastGood: Record<string, string> = {};
+
+/** Keys bin/launch exports to agents (its ENV_ALLOWLIST). */
+const AGENT_KEYS = [
+  "TYPESAFE_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "OPENROUTER_API_KEY",
+  "HF_API_KEY",
+  "HF_TOKEN",
+  "CURSOR_API_KEY",
+  "ANTHROPIC_API_KEY",
+];
+
+/**
+ * Provider keys to hand an agent process directly, so a launch never depends on
+ * the pipe answering in that moment (bin/launch keeps keys already in its env).
+ * Retries an empty read once before giving up.
+ */
+export async function agentKeyEnv(): Promise<Record<string, string>> {
+  let dotenv = await loadFleetDotenv();
+  if (!Object.keys(dotenv).length) {
+    await Bun.sleep(500);
+    dotenv = await loadFleetDotenv();
+  }
+  applyHfKeyAlias(dotenv);
+  const out: Record<string, string> = {};
+  for (const k of AGENT_KEYS) {
+    const v = (process.env[k] ?? dotenv[k] ?? "").trim();
+    if (v) out[k] = v;
+  }
+  return out;
 }
 
 export function applyHfKeyAlias(dotenv: Record<string, string>): void {

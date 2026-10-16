@@ -1,0 +1,49 @@
+id: designer
+type: assistant
+# Can be deployed aboard ships as <ship>-designer (fleet/ships/<ship>.yaml crew:).
+crew: true
+role: designer
+harness: pi
+# Claude Sonnet 5.5 through OpenRouter (never Claude through Cursor) for
+# visual judgment and screenshots. Backup: DeepSeek Flash, which reads images,
+# when OpenRouter credits or the key fail that day.
+model: openrouter/anthropic/claude-sonnet-5.5
+fallback_model: deepseek/deepseek-flash
+workspace: ships
+# Live session in the dashboard's agent host (pi --mode rpc), shared with the
+# TUI (Start TUI on the dashboard, or just designer). turn_timeout only applies
+# if runtime is switched back to headless.
+runtime: rpc
+dashboard_session: persistent
+turn_timeout: 1800
+# Motion and 3D skills (vendor/), Designer only: GSAP (official), LottieFiles
+# motion-design (craft: timing, easing, choreography), Three.js and R3F.
+skill_paths:
+  - vendor/gsap-skills/skills/gsap-core
+  - vendor/gsap-skills/skills/gsap-timeline
+  - vendor/gsap-skills/skills/gsap-scrolltrigger
+  - vendor/gsap-skills/skills/gsap-plugins
+  - vendor/gsap-skills/skills/gsap-utils
+  - vendor/gsap-skills/skills/gsap-performance
+  - vendor/gsap-skills/skills/gsap-react
+  - vendor/gsap-skills/skills/gsap-frameworks
+  - vendor/motion-design-skill/skills/motion-design
+  - vendor/three-agent-skills/skills/three-best-practices
+  - vendor/three-agent-skills/skills/r3f-best-practices
+extra_prompts:
+  - prompts/system/sr_opus_5_system_prompt.md
+authority:
+  allow:
+    - status
+    - design-records
+    - design-review
+    - ui-code
+    - design-branch
+  deny:
+    - merge
+    - force-push
+    - secrets
+    - retire-home
+    - spawn
+    - push
+    - backend-code

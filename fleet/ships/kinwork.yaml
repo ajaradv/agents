@@ -1,0 +1,11 @@
+id: kinwork
+path: /Users/avega/Workspace/Kinwork
+orchestrator: firstmate
+# Crewmates: role templates from agents/<role>/ deployed aboard this ship as
+# <ship>-<role> (persistent session, cwd = path). crew_models overrides a role's model.
+crew:
+  - designer
+factory: null
+mode: no-mistakes-prod-only
+crew_budgets:
+  designer: 6

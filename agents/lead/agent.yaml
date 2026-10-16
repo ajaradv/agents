@@ -1,0 +1,11 @@
+id: lead
+type: assistant
+role: lead
+harness: pi
+# DeepSeek V4 Pro: the lead takes the most turns and keeps the longest
+# session, so it needs real prompt caching (not Cursor). Backup: the same
+# model through OpenRouter when DeepSeek's key or balance fails that day.
+model: deepseek/deepseek-v4-pro
+fallback_model: openrouter/deepseek/deepseek-v4-pro
+# crew: only — exists only aboard ships, as <ship>-lead.
+crew: only

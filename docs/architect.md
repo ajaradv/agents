@@ -11,7 +11,28 @@ Firstmate stays the router. Architect does not see every captain note. Mechanica
 5. **Firstmate — step 2:** for plan drafts, match a **planning** rule (Jev via `TYPESAFE_API_KEY` + `bin/fm-dispatch-resolve.sh` when enabled, else judgment on the same `when` text), rank profiles with **quota-axi**, then **`fm-spawn`** an Architect-role worker with the winning harness/model/effort.
 6. The worker writes **`fleet/plans/<category>/<slug>.md`** with **`status: draft`**, appends **`FLEET_INBOX/firstmate/events.jsonl`** (`kind: plan-draft`), and Firstmate logs **`FLEET_INBOX/architect/events.jsonl`** for the interactive Architect.
 7. Captain reviews in Obsidian (and optionally Lavish). Status: **`draft` → `reviewed` → `finalized`**. Only **`finalized`** is executable.
-8. On **`finalized`**, Architect (or captain via Architect) sends **`kind: plan-ready`** to Firstmate. Firstmate **`fm-brief`** + **`fm-spawn`** using **implementation** dispatch, not the planning profile array.
+8. On **`finalized`**, Architect (or captain via Architect) sends **`kind: plan-ready`** to Firstmate. Firstmate runs **`bun bin/plan-execution.ts <plan>`**, then **`fm-brief`** + quota + **`fm-spawn`** per task using that task's rule. Uncovered tasks fall back to Jev or judgment on **implementation** rules, not the planning profile array.
+
+## Model per task (execution block)
+
+The Architect assigns each task a **rule id** from `crew-dispatch.json`, never a model:
+
+```yaml
+execution:
+  - task: Rename the helpers
+    rule: mechanical
+  - task: Build the chat rail
+    rule: big-ship
+    effort: high
+```
+
+| Who | Decides |
+|---|---|
+| Architect | Task split, rule id per task, optional effort hint |
+| quota-axi + `fm-spawn` | Concrete harness/model from that rule's profiles |
+| Firstmate | Falls back to Jev or judgment only for tasks without a rule |
+
+`bin/plan-execution.ts` validates the block (unknown ids, model names, bad effort) and prints each task's profile array. Firstmate logs spawns and outcomes to `FLEET_INBOX/dispatch-outcomes.jsonl` so rules can be tuned from real results.
 
 ## Surfaces
 
@@ -31,7 +52,7 @@ fleet/requests/
 fleet/plans/{project,feature,bugfix,refactor,research,ops}/
 ```
 
-Plan frontmatter: `title`, `category`, `status`, `ship`, `created`, `source`. Optional `lavish:` when a board exists.
+Plan frontmatter: `title`, `category`, `status`, `ship`, `created`, `source`, `execution`. Optional `lavish:` when a board exists.
 
 ## Lavish
 

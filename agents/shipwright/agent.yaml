@@ -1,0 +1,27 @@
+id: shipwright
+type: assistant
+role: shipwright
+harness: pi
+# Composer on Cursor's included usage; DeepSeek V4 Pro when Cursor refuses that day.
+model: cursor/composer-2.5
+fallback_model: deepseek/deepseek-v4-pro
+workspace: repo
+extensions:
+  - cursor-sdk
+skill_paths:
+  - .claude/skills/sssf
+extra_prompts:
+  - prompts/system/sr_opus_5_system_prompt.md
+authority:
+  allow:
+    - status
+    - repo-edit
+    - new-agent
+    - stamp-ship-dry-run
+    - agent-portrait
+  deny:
+    - merge
+    - force-push
+    - secrets
+    - retire-home
+    - spawn

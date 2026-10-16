@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { envKeyValue, loadFleetDotenv } from "./fleet-env.ts";
 
 export type ApiLaneUsage = {
@@ -132,16 +134,20 @@ async function fetchOpenRouter(apiKey: string): Promise<ApiLaneUsage> {
       detail: "No key cap",
     };
   }
-  const left =
-    remaining === null || remaining === undefined
-      ? "unknown remaining"
-      : `${formatUsd(Number(remaining))} remaining`;
+  // The key's limit is a spending cap, not money: the account's credits are
+  // what runs out (a 402 "can only afford N tokens" means they are low).
+  const credits = await fetchJson("https://openrouter.ai/api/v1/credits", apiKey);
+  const c = (credits.body as { data?: { total_credits?: number; total_usage?: number } } | null)?.data;
+  const creditsLeft =
+    c && Number.isFinite(Number(c.total_credits)) ? Number(c.total_credits) - Number(c.total_usage ?? 0) : null;
+  const cap =
+    remaining === null || remaining === undefined ? "" : ` · key cap ${formatUsd(Number(remaining))} left`;
   return {
     provider: "openrouter",
     ok: true,
     at,
-    headline: `${spend} this month`,
-    detail: left,
+    headline: creditsLeft === null ? `${spend} this month` : `${formatUsd(creditsLeft)} credits left`,
+    detail: `${spend} this month${cap}`,
   };
 }
 

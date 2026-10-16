@@ -1,0 +1,101 @@
+#!/usr/bin/env bun
+// Fleet orders: queue work for Alice to carry out exactly as written
+// (vault fleet/orders/<yyyy-mm-dd>-<slug>.md; format in dashboard/lib/order-note.ts).
+//
+//   bin/order new --ship kinwork --by claude-code --title "Kinwork status round" < body.md
+//   bin/order check <slug | path/to/body-or-note.md>
+//   bin/order list [--status queued]
+//   bin/order approve <slug>      (the captain's Go; the dashboard's Go button does the same)
+//   bin/order cancel <slug>
+//
+// The body has ## Intent, ## Steps (numbered, one fleet tool call each, with an
+// indented expect: line), and optional ## Acceptance (read tools). `new` and
+// `check` print every problem with its line number.
+
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { approveOrder, cancelOrder, createOrder, listOrders, ORDER_STATUSES, parseOrder, readOrder, withMeta, type OrderMeta } from "../dashboard/lib/order-note.ts";
+import { NODE_PORT, nodeStateDir } from "../dashboard/lib/paths.ts";
+
+const [cmd, ...rest] = process.argv.slice(2);
+
+function flag(name: string): string {
+  const i = rest.indexOf(`--${name}`);
+  return i >= 0 ? (rest[i + 1] ?? "") : "";
+}
+
+function die(msg: string, code = 1): never {
+  console.error(msg);
+  process.exit(code);
+}
+
+/** Tell a running fleet node to look at the orders now (it also polls every 15s). */
+async function kick(): Promise<void> {
+  const path = join(nodeStateDir(), "token");
+  if (!existsSync(path)) return;
+  try {
+    await fetch(`http://127.0.0.1:${NODE_PORT}/v1/orders/kick`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${readFileSync(path, "utf8").trim()}` },
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch {
+    /* no node; the watcher picks it up when it starts */
+  }
+}
+
+async function main(): Promise<void> {
+  if (cmd === "new") {
+    const title = flag("title");
+    const ship = flag("ship") || "fleet";
+    const by = flag("by");
+    if (!title || !by) die('usage: bin/order new --ship <ship> --by <who> --title "..." < body.md');
+    const body = await new Response(Bun.stdin.stream()).text();
+    const r = await createOrder({ title, ship, by, body, status: by === "captain" ? "approved" : "queued" });
+    if (r.errors.length) die(`order not written:\n${r.errors.map((e) => `  ${e}`).join("\n")}`);
+    console.log(r.slug);
+    await kick();
+    return;
+  }
+  if (cmd === "check") {
+    const target = rest[0] ?? die("usage: bin/order check <slug | file>");
+    let text: string;
+    if (existsSync(target)) {
+      text = readFileSync(target, "utf8");
+      // A bare body (no frontmatter): check it as if submitted.
+      if (!text.startsWith("---")) {
+        const meta: OrderMeta = { title: "check", order: "2026-01-01-check", status: "queued", ship: "fleet", submitted_by: "check", created: "" };
+        text = withMeta(`\n${text}`, meta);
+      }
+    } else {
+      const r = await readOrder(target);
+      if (!r.text) die(r.errors.join("\n"));
+      text = r.text;
+    }
+    const { order, errors } = parseOrder(text);
+    if (errors.length) die(errors.map((e) => `  ${e}`).join("\n"));
+    console.log(`ok: ${order!.steps.filter((s) => s.phase === "step").length} step(s), ${order!.steps.filter((s) => s.phase === "acceptance").length} acceptance check(s)`);
+    return;
+  }
+  if (cmd === "list") {
+    const want = flag("status");
+    if (want && !ORDER_STATUSES.includes(want as never)) die(`--status is one of ${ORDER_STATUSES.join(", ")}`);
+    for (const o of await listOrders()) {
+      const status = o.meta?.status ?? "malformed";
+      if (want && status !== want) continue;
+      console.log(`${o.slug}\t${status}\t${o.meta?.submitted_by ?? ""}\t${o.meta?.title ?? o.errors[0] ?? ""}`);
+    }
+    return;
+  }
+  if (cmd === "approve" || cmd === "cancel") {
+    const slug = rest[0] ?? die(`usage: bin/order ${cmd} <slug>`);
+    const r = cmd === "approve" ? await approveOrder(slug) : await cancelOrder(slug);
+    if (!r.ok) die(r.message);
+    console.log(`${slug}: ${r.message}`);
+    await kick();
+    return;
+  }
+  die("usage: bin/order new|check|list|approve|cancel (see the header of bin/order)");
+}
+
+await main();

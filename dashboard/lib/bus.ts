@@ -78,5 +78,6 @@ export async function metricsStripHtml(): Promise<string> {
     plans === null
       ? "Plans: vault unreadable"
       : `Draft plans: ${plans}`;
-  return `<div class="kpis"><div class="kpi"><span class="muted">Bus events, 24h</span><b>${events}</b></div><div class="kpi"><span class="muted">Vault</span><b>${escapeHtml(plansBit)}</b></div></div>`;
+  // Diagnostics, not decisions: folded at the bottom of Health.
+  return `<details class="fold"><summary>Bus and vault · ${events} events in 24h · ${escapeHtml(plansBit)}</summary><div class="kpis"><div class="kpi"><span class="muted">Bus events, 24h</span><b>${events}</b></div><div class="kpi"><span class="muted">Vault</span><b>${escapeHtml(plansBit)}</b></div></div></details>`;
 }
