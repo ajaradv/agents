@@ -157,6 +157,11 @@ export function traceEvents(trace: string): { ts: string; kind: string; workflow
   return (open().query("SELECT ts, kind, workflow, data_json FROM events WHERE trace = ? ORDER BY id").all(trace) as { ts: string; kind: string; workflow: string | null; data_json: string }[]).map((r) => ({ ts: r.ts, kind: r.kind, workflow: r.workflow, data: JSON.parse(r.data_json || "{}") }));
 }
 
+/** The journal's database, for neighbours that keep their own tables in it (lib/notify.ts). */
+export function journalDb(): Database {
+  return open();
+}
+
 /** For tests: forget the open handle (a new FLEET_INBOX opens a new file). */
 export function _closeJournal(): void {
   db?.close();

@@ -4,6 +4,7 @@ import type { WaitHold } from "./captain-wait.ts";
 import { readCaptainChat, type ChatLine, type ChatQuestion } from "./chat.ts";
 import { listChatTargets, type ChatTarget } from "./chat-targets.ts";
 import { readGoRequests } from "./go-gate.ts";
+import { openNotices, type NoticeKind } from "./notify.ts";
 import { listOrders } from "./order-note.ts";
 import { fleetInboxRoot } from "./paths.ts";
 
@@ -17,6 +18,8 @@ import { fleetInboxRoot } from "./paths.ts";
  * - failed: the captain's last message to an agent did not go through.
  * - order: a fleet order waiting for the captain's Go, or paused for them.
  * - go: a fleet action an officer asked for, held until the captain says Go or No.
+ * - notice: something an agent told the captain through notify_captain (done,
+ *   blocked, decision, milestone) or a digest; "Got it" clears it.
  *
  * Questions that are no longer live and failed sends can be dismissed; holds
  * are answered or stay.
@@ -29,9 +32,10 @@ export type NeedItem =
   | { kind: "hold"; id: string; taskId: string; title: string; reason: string }
   | (Who & { kind: "failed"; id: string; ts: string; error: string; sentText: string; sentTs: string })
   | (Who & { kind: "go"; id: string; goId: string; ts: string; tool: string; summary: string })
+  | { kind: "notice"; id: string; noticeId: number; ts: string; from: string; noticeKind: NoticeKind; summary: string; detail: string; ref: string }
   | { kind: "order"; id: string; slug: string; ts: string; title: string; by: string; status: "queued" | "needs-captain"; steps: string[]; reason?: string; resume?: number };
 
-const KIND_ORDER = { go: 0, question: 0, order: 1, hold: 2, failed: 3 } as const;
+const KIND_ORDER = { go: 0, question: 0, notice: 1, order: 1, hold: 2, failed: 3 } as const;
 
 function who(t: ChatTarget): Who {
   return { agentId: t.id, label: t.label, art: t.art, ...(t.ship ? { ship: t.ship } : {}) };
@@ -143,5 +147,6 @@ export async function collectNeedsYou(opts: { waiting: (agentId: string) => bool
     const t = agents.find((a) => a.id === g.from);
     return { kind: "go", id: `go:${g.id}`, goId: g.id, ts: g.ts, tool: g.tool, summary: g.summary, agentId: g.from, label: t?.label ?? g.from, art: t?.art ?? null };
   });
-  return sortNeeds(items.concat(holdItems(opts.holds), await orderItems(), gos));
+  const notices: NeedItem[] = openNotices().map((n) => ({ kind: "notice", id: `notice:${n.id}`, noticeId: n.id, ts: n.ts, from: n.from, noticeKind: n.kind, summary: n.summary, detail: n.detail, ref: n.ref }));
+  return sortNeeds(items.concat(holdItems(opts.holds), await orderItems(), gos, notices));
 }

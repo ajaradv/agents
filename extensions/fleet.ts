@@ -126,6 +126,22 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerTool({
+    name: "notify_captain",
+    label: "Notify the captain",
+    description:
+      "The one way to tell the captain something outside a conversation they are in: work finished (done), stuck (blocked), a choice only they can make (decision), a named milestone (milestone), or anything else (info). Done, blocked, decision, and milestone interrupt them now (unless they snoozed); info waits for the morning digest. Use it for results of orders, delegations, and things the event router woke you for; not for replies in a live chat.",
+    parameters: Type.Object({
+      kind: StringEnum(["done", "blocked", "decision", "milestone", "info"] as const),
+      summary: Type.String({ description: "One sentence the captain reads (and hears): what happened and what, if anything, they need to do" }),
+      detail: Type.Optional(Type.String({ description: "Optional detail for the screen, a few lines" })),
+      ref: Type.Optional(Type.String({ description: "A path, order id, task number, or link they can open" })),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "notify", {}, { kind: p.kind, summary: p.summary, detail: p.detail ?? "", ref: p.ref ?? "" }));
+    },
+  });
+
   // Tier 2: fleet actions that change state. Outside an order the server holds
   // each one for the captain's Go and answers "waiting"; end the turn then.
   const action = (tool: string, args: Record<string, unknown>, p: { order?: string; step?: number }) =>

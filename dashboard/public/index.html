@@ -20,6 +20,9 @@
       <button type="button" class="needs-btn" :class="{ 'has-items': needs.length, 'is-open': leaf === 'needs' && !chatOpen }"
               :aria-label="needs.length ? needs.length + (needs.length === 1 ? ' thing needs' : ' things need') + ' you' : 'Nothing needs you'"
               @click="openLeaf('needs')">Needs you <span class="needs-count" x-text="needs.length"></span></button>
+      <button type="button" class="btn quiet-btn" :class="{ 'btn-ink': quiet.snoozed }" :aria-pressed="quiet.snoozed"
+              :title="quiet.snoozed ? 'Snoozed: interruptions are held. Wake to see them as a digest.' : 'Snooze: hold interruptions until you wake'"
+              @click="toggleQuiet()" x-text="quiet.snoozed ? 'Wake' + (quiet.held ? ' · ' + quiet.held : '') : 'Snooze'"></button>
       <p class="muted mast-hint"><kbd>⌘K</kbd> command</p>
     </div>
   </header>
@@ -39,7 +42,12 @@
   <main>
     <section id="leaf-needs" class="leaf" role="region" aria-labelledby="needs-title"
              :class="{ 'is-open': leaf === 'needs', 'is-hinge': hinge === 'needs' }">
-      <h2 id="needs-title">Needs you</h2>
+      <div class="between needs-head">
+        <h2 id="needs-title">Needs you</h2>
+        <button type="button" class="btn" :class="{ 'btn-ink': quiet.snoozed }" :aria-pressed="quiet.snoozed" @click="toggleQuiet()"
+                x-text="quiet.snoozed ? 'Wake' + (quiet.held ? ' · ' + quiet.held + ' held' : '') : 'Snooze'"></button>
+      </div>
+      <p class="muted" x-show="quiet.snoozed" x-cloak>Snoozed: agents' interruptions are held. Questions and Go requests still appear. Wake shows what was held as a digest.</p>
       <p class="muted needs-empty" x-show="!needs.length" x-cloak>Nobody needs you right now. Questions, holds, and messages that did not go through show up here.</p>
       <div id="needs-list" class="needs-list" aria-live="polite"></div>
     </section>

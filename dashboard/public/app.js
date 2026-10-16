@@ -72,6 +72,8 @@ function dashboardApp() {
     waitSummary: "",
     /** Everything waiting on the captain (/api/needs-you): questions, holds, failed sends. */
     needs: [],
+    /** Quiet hours: Snooze holds interruptions; Wake ends it with a digest of what was held. */
+    quiet: { snoozed: false, held: 0 },
     bus: null,
 
     rail: { agents: [], workers: [] },
@@ -520,9 +522,16 @@ function dashboardApp() {
       }
       this.needsBusy = true;
       try {
-        const r = await fetch("/api/needs-you");
+        const [r, q] = await Promise.all([fetch("/api/needs-you"), fetch("/api/quiet")]);
+        const prevNotices = new Set(this.needs.filter((i) => i.kind === "notice").map((i) => i.id));
         this.needs = (await r.json()).items || [];
+        this.quiet = await q.json().catch(() => this.quiet);
         this.renderNeeds();
+        // New interrupting notices are spoken when voice is on (once the first load has set the baseline).
+        if (this.needsLoaded && this.voiceReplies && !this.quiet.snoozed) {
+          for (const n of this.needs) if (n.kind === "notice" && !prevNotices.has(n.id)) this.queueSpeech(n.from === "fleet" ? "alice" : n.from, n.noticeKind === "digest" ? `${n.summary}. It is on Needs you.` : n.summary);
+        }
+        this.needsLoaded = true;
         document.title = this.needs.length ? `(${this.needs.length}) Fleet` : "Fleet";
       } catch {
         /* keep last */
@@ -563,6 +572,25 @@ function dashboardApp() {
           <div class="row question-actions"><button type="button" class="btn btn-ink" data-send>Send answer</button>${item.live ? '<button type="button" class="btn" data-skip>Skip</button>' : '<button type="button" class="btn" data-dismiss>Dismiss</button>'}${openChat}<span class="muted" data-note></span></div>
         </div>`;
         this.wireQuestion(card, item.agentId, item.live ? item.dialog : null, (text) => this.postCaptain(item.agentId, text, card));
+      } else if (item.kind === "notice") {
+        const who = this.findTarget(item.from) || { id: item.from, label: item.from === "fleet" ? "Fleet" : item.from, art: null };
+        const title = item.noticeKind === "digest" ? item.summary : `${who.label}: ${{ done: "done", blocked: "blocked", decision: "needs a decision", milestone: "milestone" }[item.noticeKind] || item.noticeKind}`;
+        card.classList.add(item.noticeKind === "blocked" || item.noticeKind === "decision" ? "is-question" : "is-notice");
+        card.innerHTML = `${this.faceHtml(who)}<div class="need-body">
+          <div class="need-head"><h3>${escapeHtml(title)}</h3>${when}</div>
+          ${item.noticeKind === "digest" ? "" : `<p class="need-reason">${escapeHtml(item.summary)}</p>`}
+          ${item.detail ? `<details class="fold" ${item.noticeKind === "digest" ? "open" : ""}><summary>${item.noticeKind === "digest" ? "The digest" : "More"}</summary><div class="md">${renderMarkdown(item.detail)}</div></details>` : ""}
+          ${item.ref ? `<p class="muted">${escapeHtml(item.ref)}</p>` : ""}
+          <div class="row question-actions"><button type="button" class="btn btn-ink" data-ack>Got it</button>${item.from !== "fleet" ? '<button type="button" class="btn" data-open-notice>Open chat</button>' : ""}<span class="muted" data-note></span></div>
+        </div>`;
+        card.querySelector("[data-ack]").addEventListener("click", async () => {
+          card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+          await fetch(`/api/notices/${item.noticeId}/ack`, { method: "POST" }).catch(() => {});
+          card.classList.add("is-done");
+          this.refreshNeeds();
+        });
+        const on = card.querySelector("[data-open-notice]");
+        if (on) on.addEventListener("click", () => this.openChat(item.from));
       } else if (item.kind === "go") {
         card.classList.add("is-question");
         card.innerHTML = `${face}<div class="need-body">
@@ -674,6 +702,17 @@ function dashboardApp() {
       } catch {
         if (note) note.textContent = "Not sent; try again.";
         el.querySelectorAll("[data-go]").forEach((b) => (b.disabled = false));
+      }
+    },
+
+    async toggleQuiet() {
+      try {
+        const r = await fetch("/api/quiet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snooze: !this.quiet.snoozed }) });
+        const j = await r.json();
+        this.quiet = { ...this.quiet, snoozed: !!j.snoozed, held: j.snoozed ? this.quiet.held : 0 };
+        this.refreshNeeds();
+      } catch {
+        /* stays as it was */
       }
     },
 

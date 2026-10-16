@@ -18,6 +18,7 @@ import {
 import { metricsStripHtml } from "./lib/bus.ts";
 import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fleet-snapshot.ts";
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
+import { ackNotice, quietState, snooze, wake } from "./lib/notify.ts";
 import { approveOrder, cancelOrder, checkOrderBody, createOrder, retryOrder } from "./lib/order-note.ts";
 import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
@@ -388,6 +389,26 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
 
     if (path === "/api/needs-you" && req.method === "GET") {
       return Response.json({ items: await collectNeedsYou({ waiting: hostWaiting, holds: currentHolds() }) });
+    }
+
+    // Quiet hours: Snooze holds interruptions; Wake ends it and compiles what was held into a digest.
+    if (path === "/api/quiet" && req.method === "GET") {
+      const { journalDb } = await import("./lib/journal.ts");
+      const held = (journalDb().query("SELECT COUNT(*) AS n FROM notices WHERE delivery = 'held' AND digest IS NULL").get() as { n: number } | null)?.n ?? 0;
+      return Response.json({ ...quietState(), held });
+    }
+    if (path === "/api/quiet" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { snooze?: boolean };
+      if (b.snooze) snooze();
+      else await wake();
+      needsChanged();
+      return Response.json({ ok: true, ...quietState() });
+    }
+    const noticeAck = path.match(/^\/api\/notices\/(\d+)\/ack$/);
+    if (noticeAck && req.method === "POST") {
+      const ok = ackNotice(Number(noticeAck[1]));
+      needsChanged();
+      return Response.json({ ok });
     }
 
     if (path === "/api/needs-you/dismiss" && req.method === "POST") {

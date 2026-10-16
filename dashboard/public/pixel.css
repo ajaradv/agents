@@ -775,6 +775,9 @@ body.chat-open { overflow: hidden; }
 .canvas-open { font-size: 0.7rem; align-self: flex-end; color: var(--ink); }
 .go-summary { font-family: var(--read); margin: 0; overflow-wrap: anywhere; }
 .bubble-row.is-go .bubble { border: 2px solid var(--vermilion); }
+.quiet-btn { font-size: 0.7rem; }
+.need.is-notice { border-color: var(--teal); box-shadow: 4px 4px 0 var(--teal); }
+@media (max-width: 640px) { .quiet-btn { display: none; } }
 .order-body { font-family: var(--read); font-size: 0.8rem; width: 100%; }
 .order-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
 .order-row { border: 1px solid var(--ink); background: var(--sheet); padding: 0.6rem 0.7rem; display: grid; gap: 0.35rem; min-width: 0; }

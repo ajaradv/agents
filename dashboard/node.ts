@@ -17,6 +17,7 @@ import { recoverManeuvers } from "./lib/crew-api.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
 import { dashLog } from "./lib/log.ts";
+import { notifyCaptain, onNoticesChange, startDigestClock, type NoticeKind } from "./lib/notify.ts";
 import { checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
 import { nodeToken, tokenMatches } from "./lib/node-auth.ts";
 import { NODE_CODE_VERSION } from "./lib/node-version.ts";
@@ -116,6 +117,9 @@ void startChatTargetRefresh(() => emit("rail", {})).then(() => {
   // The journal: finish Go decisions and re-attach maneuvers a restart interrupted (orders resume in the watcher).
   void recoverGos().catch((e) => console.error("[node] go recovery:", e));
   void recoverManeuvers().catch((e) => console.error("[node] maneuver recovery:", e));
+  // Captain notices: interruptions go to Needs you at once; the rest waits for the morning digest.
+  onNoticesChange(() => emit("go", {}));
+  startDigestClock();
   onFleetChange((what) => (what === "rail" ? emit("rail", {}) : what === "ship" ? emit("ship", "") : emit("go", {})));
 });
 
@@ -216,6 +220,14 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
     return reply(await orderFinish(String(b.order ?? ""), b.status === "done" ? "done" : "blocked", String(b.why ?? "")));
   }
 
+  if (what === "notify" && req.method === "POST") {
+    // Communication, not a fleet action: allowed during an order too.
+    const n = notifyCaptain({ from, kind: String(b.kind ?? "info") as NoticeKind, summary: String(b.summary ?? "").trim(), detail: String(b.detail ?? ""), ref: String(b.ref ?? "") });
+    if (!n.summary) return reply({ ok: false, message: "Give the notice a summary." });
+    const where = n.delivery === "interrupt" ? "shown to the captain now" : n.delivery === "held" ? "held: the captain is snoozed; it shows when they wake" : "saved for the morning digest";
+    return reply({ ok: true, message: `Notice ${n.id} (${n.kind}) ${where}. Do not repeat it in chat.` });
+  }
+
   if (what === "action" && req.method === "POST") {
     // Tier 2: inside an approved order it runs as that step; otherwise it waits for the captain's Go.
     const tool = String(b.tool ?? "");
@@ -256,7 +268,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const url = new URL(req.url);
   const path = url.pathname;
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action)$/);
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers)(?:\/(\d+))?$/);

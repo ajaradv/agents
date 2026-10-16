@@ -86,6 +86,8 @@ export async function fleetStatus(detail = false): Promise<Res> {
         ? { kind: n.kind, from: n.agentId, action: n.summary }
         : n.kind === "question"
           ? { kind: n.kind, agent: n.agentId, asked: n.ts, question: n.questions.map((q) => q.question).join(" / ") }
+          : n.kind === "notice"
+            ? { kind: n.kind, from: n.from, notice: n.noticeKind, summary: n.summary }
           : n.kind === "order"
             ? { kind: n.kind, order: n.slug, title: n.title, status: n.status, ...(n.reason ? { reason: n.reason } : {}) }
             : { kind: n.kind, agent: n.agentId, at: n.ts, message: n.sentText.slice(0, 160), error: humanizeError(n.error) },
