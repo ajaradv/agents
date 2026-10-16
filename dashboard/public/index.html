@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Fleet</title>
   <!-- Phone app (D6): installable, opens on Needs you, push notifications through sw.js. -->
   <link rel="manifest" href="/manifest.webmanifest" />
@@ -156,8 +156,11 @@
                 title="Start this agent on an empty history. Long sessions make every turn re-send everything." @click="newAgentSession()">New session</button>
         <button type="button" class="btn" :class="{ 'btn-ink': canvasOpen }" x-show="!chatGroup && canvasItems.length" x-cloak
                 :aria-pressed="canvasOpen" :data-fresh="canvasFresh ? '' : null" @click="toggleCanvas()" x-text="'Canvas · ' + canvasItems.length + (canvasFresh ? ' · new' : '')"></button>
-        <button type="button" class="btn" @click="closeChat()">Close</button>
       </div>
+      <button type="button" class="btn chat-close" @click="closeChat()" aria-label="Close chat">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2l3 3 2 2 2-2 3-3 1 1-3 3-2 2 2 2 3 3-1 1-3-3-2-2-2 2-3 3-1-1 3-3 2-2-2-2-3-3z"/></svg>
+        <span class="chat-close-label">Close</span>
+      </button>
     </header>
     <div class="face-strip" aria-label="Switch chat">
       <template x-for="g in groups" :key="'g-' + g.id">
@@ -293,6 +296,10 @@
     <button type="button" class="dock-btn" :class="{ 'is-open': leaf === 'agents' && !chatOpen, 'is-ring': anyWaiting() }" @click="openLeaf('agents')">
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M4 4h6v6H4zm8 0h6v6h-6zM4 12h6v6H4zm8 0h6v6h-6z"/></svg>
       Agents
+    </button>
+    <button type="button" class="dock-btn" :class="{ 'is-open': chatOpen }" aria-label="Open chat" @click="toggleChat()">
+      <img class="dock-face" :src="current().art || '/art/captain.png'" width="22" height="22" alt="" />
+      Chat
     </button>
   </nav>
 
