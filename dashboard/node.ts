@@ -13,7 +13,8 @@ import { abortHost, answerDialog, crewCaller, hostAlive, hostIds, hostRunning, h
 import { allChatTargetIds, chatAllowed, chatTarget, refreshAgentTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import type { ChatLine } from "./lib/chat.ts";
 import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
-import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks } from "./lib/fleet-api.ts";
+import { recoverManeuvers } from "./lib/crew-api.ts";
+import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
 import { dashLog } from "./lib/log.ts";
 import { checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
@@ -112,6 +113,9 @@ void startChatTargetRefresh(() => emit("rail", {})).then(() => {
   startOrderWatcher(() => emit("orders", {}));
   // Bus lines wake their owner (Firstmate through its TUI, live agents through their thread).
   startEventRouter();
+  // The journal: finish Go decisions and re-attach maneuvers a restart interrupted (orders resume in the watcher).
+  void recoverGos().catch((e) => console.error("[node] go recovery:", e));
+  void recoverManeuvers().catch((e) => console.error("[node] maneuver recovery:", e));
   onFleetChange((what) => (what === "rail" ? emit("rail", {}) : what === "ship" ? emit("ship", "") : emit("go", {})));
 });
 

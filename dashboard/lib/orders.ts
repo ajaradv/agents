@@ -4,8 +4,9 @@ import { hostRunning, hostWaiting } from "./agent-host.ts";
 import { acceptCrewLine } from "./chat-bridge.ts";
 import { chatTarget } from "./chat-targets.ts";
 import { dashLog } from "./log.ts";
-import { callMismatch, listOrders, ordersDir, updateOrder, type Order, type OrderStep } from "./order-note.ts";
+import { callMismatch, listOrders, ORDER_TOOLS, ordersDir, updateOrder, type Order, type OrderStep } from "./order-note.ts";
 import { postBus } from "./bus-post.ts";
+import { getWorkflow, resetSteps, stepFinished, stepStarted, steps as journalSteps, updateWorkflow, upsertWorkflow } from "./journal.ts";
 import { logShipEvent, recentShipEvents } from "./ship-log.ts";
 import { officerBudgetRefusal } from "./shipyard.ts";
 
@@ -16,6 +17,12 @@ import { officerBudgetRefusal } from "./shipyard.ts";
  *   running ──order_finish done, every step and check ok──▶ done
  *   running ──blocked / unplanned call / turn ended unfinished──▶ needs-captain
  *   needs-captain ──Retry (from the paused step)──▶ approved      any ──Cancel──▶ cancelled
+ *
+ * Durable: every run is a journal workflow (lib/journal.ts). Each step's call
+ * and its logged result are checkpoints, so after a node restart the watcher
+ * resumes the order at the next unlogged step and sends Alice a resume brief.
+ * An action cut off mid-call (it may or may not have happened) pauses for the
+ * captain instead of being repeated or guessed.
  *
  * One order at a time: Alice has one session. While an order runs, every
  * fleet call that is part of it must name the order and step and match that
@@ -123,6 +130,7 @@ async function pause(reason: string, byWatcher = true): Promise<void> {
   const r = running;
   if (!r) return;
   running = null;
+  updateWorkflow(r.slug, { status: "waiting", data: { next: r.next, reason } });
   await updateOrder(r.slug, { status: "needs-captain", reason, resume: r.next }, report(r, `paused for the captain at step ${r.next}: ${reason}`));
   log(r.order, "order-finish", `Paused at step ${r.next}: ${reason}`, { ok: false, step: r.next, reason });
   await dashLog("orders", `${r.slug} needs the captain: ${reason}`);
@@ -133,10 +141,17 @@ async function pause(reason: string, byWatcher = true): Promise<void> {
   onChange();
 }
 
+/** Step number from a journal key ("call:3", "step:3"). */
+const keyStep = (key: string) => Number(key.split(":")[1]) || 0;
+
 async function start(order: Order): Promise<void> {
   const from = Math.min(order.meta.resume ?? 1, order.steps.length);
   running = { slug: order.meta.order, order, next: from, called: new Set(), unplannedReads: [], refused: [], lastActive: Date.now() };
   for (let n = 1; n < from; n++) running.called.add(n);
+  // The journal keeps checkpoints for steps before the resume point; later ones start over.
+  upsertWorkflow("order", order.meta.order, { title: order.meta.title, next: from });
+  resetSteps(order.meta.order, (key) => keyStep(key) < from);
+  updateWorkflow(order.meta.order, { status: "running", data: { next: from } });
   await updateOrder(order.meta.order, { status: "running", started: new Date().toISOString(), reason: undefined, resume: undefined });
   log(order, "order-start", `Started "${order.meta.title}"${from > 1 ? ` at step ${from}` : ""}`, { step: from });
   await dashLog("orders", `${order.meta.order} started (step ${from})`);
@@ -144,12 +159,47 @@ async function start(order: Order): Promise<void> {
   onChange();
 }
 
+/**
+ * Pick a running order back up after a restart: the next step is the first
+ * without a logged result. A step whose call started but never finished is
+ * redone when it only reads; when it acts, the order pauses for the captain.
+ */
+async function resume(order: Order): Promise<void> {
+  const slug = order.meta.order;
+  const w = getWorkflow(slug);
+  if (!w) {
+    await updateOrder(slug, { status: "needs-captain", reason: "interrupted: the fleet node restarted mid-order and has no record of its progress", resume: order.meta.resume ?? 1 });
+    return;
+  }
+  const done = new Set(journalSteps(slug).filter((s) => s.key.startsWith("step:") && s.status === "done").map((s) => keyStep(s.key)));
+  let next = 1;
+  while (done.has(next)) next += 1;
+  if (next > order.steps.length) {
+    // Every item was logged; only order_finish was lost.
+    running = { slug, order, next, called: new Set(order.steps.map((s) => s.n)), unplannedReads: [], refused: [], lastActive: Date.now() };
+    await orderFinish(slug, "done", "");
+    return;
+  }
+  const call = journalSteps(slug).find((s) => s.key === `call:${next}`);
+  const step = order.steps.find((s) => s.n === next)!;
+  running = { slug, order, next, called: new Set(order.steps.filter((s) => s.n < next).map((s) => s.n)), unplannedReads: [], refused: [], lastActive: Date.now() };
+  if (call?.status === "done") running.called.add(next);
+  if (call?.status === "started" && !ORDER_TOOLS[step.tool]?.read) {
+    await pause(`the fleet node restarted while step ${next}'s ${step.tool} was running; check whether it happened before Retry`);
+    return;
+  }
+  log(order, "order-start", `Resumed "${order.meta.title}" at step ${next} after a node restart`, { step: next, resumed: true });
+  await dashLog("orders", `${slug} resumed at step ${next}`);
+  await acceptCrewLine(EXECUTOR, "orders", `${brief(order, next)}\n\n(Resuming after a fleet node restart: steps before ${next} are done and logged.)`);
+  onChange();
+}
+
 async function tick(): Promise<void> {
   const all = await listOrders();
   if (!booted) {
     booted = true;
-    // A node restart loses the run's state; say so instead of guessing.
-    for (const o of all) if (o.meta?.status === "running") await updateOrder(o.slug, { status: "needs-captain", reason: "interrupted: the fleet node restarted mid-order", resume: o.meta.resume ?? 1 });
+    // A node restart: resume running orders from their journal checkpoints.
+    for (const o of all) if (o.meta?.status === "running" && o.order) await resume(o.order);
   }
   for (const o of all) {
     if (!o.meta) continue;
@@ -166,6 +216,7 @@ async function tick(): Promise<void> {
     const note = all.find((o) => o.slug === running!.slug);
     if (note?.meta?.status !== "running") {
       // Cancelled or edited from outside: stop tracking it.
+      updateWorkflow(running.slug, { status: note?.meta?.status === "cancelled" ? "cancelled" : "waiting" });
       running = null;
       onChange();
     } else if (!hostRunning(EXECUTOR) && !hostWaiting(EXECUTOR) && Date.now() - running.lastActive > STALL_MS) {
@@ -238,6 +289,7 @@ export async function checkOrderCall(tool: string, args: Record<string, string>,
     return { ok: false, message: `Refused: ${why}. The order is paused for the captain; end your turn.` };
   }
   r.called.add(step!.n);
+  stepStarted(r.slug, `call:${step!.n}`); // a checkpoint before the side effect
   return { ok: true, step: step!.n };
 }
 
@@ -246,6 +298,7 @@ export function recordOrderCall(n: number, tool: string, args: Record<string, st
   const r = running;
   if (!r) return;
   r.lastActive = Date.now();
+  stepFinished(r.slug, `call:${n}`, { tool, result: result.slice(0, 500) });
   log(r.order, "order-call", `Step ${n}: ${tool}`, { step: n, tool, args, result: result.slice(0, 500) });
 }
 
@@ -257,7 +310,10 @@ export async function orderStep(order: string, n: number, ok: boolean, result: s
   const step = r.order.steps.find((s) => s.n === n)!;
   if (ok && !r.called.has(n)) return { ok: false, message: `Call step ${n}'s tool first (${stepLabel(step)} with order and step), then log it.` };
   const event = log(r.order, "order-step", `Step ${n} ${ok ? "ok" : "blocked"}: ${result.slice(0, 200)}`, { step: n, tool: step.tool, ok, result: result.slice(0, 1000), evidence: evidence.slice(0, 300) });
+  stepStarted(r.slug, `step:${n}`);
+  stepFinished(r.slug, `step:${n}`, { result: result.slice(0, 500), evidence: evidence.slice(0, 300), event }, ok);
   if (ok) r.next += 1;
+  updateWorkflow(r.slug, { data: { next: r.next } });
   const left = r.order.steps.length - r.next + 1;
   return {
     ok: true,
@@ -286,6 +342,7 @@ export async function orderFinish(order: string, status: "done" | "blocked", why
     return { ok: true, message: "The order is paused for the captain with your reason. End your turn." };
   }
   running = null;
+  updateWorkflow(r.slug, { status: "done" });
   await updateOrder(r.slug, { status: "done", ended: new Date().toISOString() }, report(r, "done: every step and acceptance check logged ok"));
   log(r.order, "order-finish", `Done: "${r.order.meta.title}"`, { ok: true });
   await dashLog("orders", `${r.slug} done`);

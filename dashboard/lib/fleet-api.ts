@@ -3,7 +3,8 @@ import { acceptCrewLine, FLEET_OFFICERS, postCaptainLine, postLine } from "./cha
 import { readCaptainChat } from "./chat.ts";
 import { chatAllowed, chatTarget, listChatTargets, refreshAgentTargets } from "./chat-targets.ts";
 import { crewStartManeuver } from "./crew-api.ts";
-import { describeAction, readGoRequests, tier2ArgError, writeGoRequests, type GoRequest } from "./go-gate.ts";
+import { describeAction, holdGoRequest, tier2ArgError, type GoRequest } from "./go-gate.ts";
+import { getWorkflow, journalEvent, listWorkflows, once, updateWorkflow } from "./journal.ts";
 import { newSession } from "./session-rotate.ts";
 import { readShips } from "./fleet-layers.ts";
 import { collectCaptainHolds, lastFleetSnapshot } from "./fleet-snapshot.ts";
@@ -277,26 +278,54 @@ export async function requestGo(from: string, tool: string, a: Record<string, st
     questions: [{ id: `go-${id}`, question: summary, options: ["Go", "No"] }],
     go: { id, tool },
   });
-  const list = await readGoRequests();
-  list.push({ id, tool, args: a, from, ts: line.ts, lineTs: line.ts, summary });
-  await writeGoRequests(list);
+  holdGoRequest({ id, tool, args: a, from, ts: line.ts, lineTs: line.ts, summary, trace: `go-${id}` });
   fleetChanged("go");
   return { ok: true, message: `Waiting for the captain's Go on: ${summary} End your turn now; the result arrives as a message. Do not ask again or retry.` };
 }
 
-/** The captain's answer to a held action. */
+/** The captain's answer to a held action. Every side effect is a journal step, so it happens at most once. */
 export async function decideGo(id: string, go: boolean): Promise<Res> {
-  const list = await readGoRequests();
-  const req: GoRequest | undefined = list.find((r) => r.id === id);
-  if (!req) return { ok: false, message: "That request is no longer waiting." };
-  await writeGoRequests(list.filter((r) => r.id !== id));
-  await postLine(req.from, { ts: new Date().toISOString(), from: "captain", kind: "answer", text: go ? "Go" : "No", ref: req.lineTs });
+  const w = getWorkflow<GoRequest>(id);
+  if (!w || w.kind !== "go" || w.status !== "waiting") return { ok: false, message: "That request is no longer waiting." };
+  updateWorkflow(id, { status: "running", data: { decision: go ? "go" : "no" } });
   fleetChanged("go");
+  return finishGo(id);
+}
+
+/** Carry a decided request through to the end; also what a restarted node calls for unfinished ones. */
+export async function finishGo(id: string): Promise<Res> {
+  const w = getWorkflow<GoRequest & { decision?: "go" | "no" }>(id);
+  if (!w) return { ok: false, message: "No such request." };
+  const req = w.data;
+  const go = req.decision === "go";
+  await once(id, "answer", async () => (await postLine(req.from, { ts: new Date().toISOString(), from: "captain", kind: "answer", text: go ? "Go" : "No", ref: req.lineTs })).ts);
   if (!go) {
-    await acceptCrewLine(req.from, "go", `The captain said No to: ${req.summary} Nothing was done. Do not retry it unless the captain asks.`);
+    await once(id, "tell", async () => (await acceptCrewLine(req.from, "go", `The captain said No to: ${req.summary} Nothing was done. Do not retry it unless the captain asks.`)).ts);
+    updateWorkflow(id, { status: "cancelled" });
     return { ok: true, message: "Declined; Alice was told." };
   }
-  const res = await runFleetAction(req.tool, req.args);
-  await acceptCrewLine(req.from, "go", `The captain said Go: ${req.summary}\nResult: ${res.ok ? "done" : "failed"}: ${res.message}`);
+  const run = await once(id, "run", () => runFleetAction(req.tool, req.args), (r) => r.ok);
+  if ("uncertain" in run) {
+    // The node stopped in the middle of the action: it may or may not have happened. Never guess; never repeat.
+    const msg = `The node restarted while running "${req.summary}", so it is not known whether it happened. Check before asking again.`;
+    await once(id, "tell", async () => (await acceptCrewLine(req.from, "go", msg)).ts);
+    updateWorkflow(id, { status: "failed", data: { error: "interrupted mid-action" } });
+    journalEvent(w.trace, "go-uncertain", { id, tool: req.tool });
+    return { ok: false, message: msg };
+  }
+  const res = run.result;
+  await once(id, "tell", async () => (await acceptCrewLine(req.from, "go", `The captain said Go: ${req.summary}\nResult: ${res.ok ? "done" : "failed"}: ${res.message}`)).ts);
+  updateWorkflow(id, { status: res.ok ? "done" : "failed", data: { result: res.message.slice(0, 500) } });
   return { ok: res.ok, message: res.message };
+}
+
+/** After a node restart: finish every request the captain had already decided. */
+export async function recoverGos(): Promise<void> {
+  for (const w of listWorkflows("go", "running")) {
+    try {
+      await finishGo(w.id);
+    } catch (e) {
+      console.error("[node] go recovery:", e);
+    }
+  }
 }

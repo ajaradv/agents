@@ -3,6 +3,8 @@ import { closeSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { hostRunning } from "./agent-host.ts";
 import { postBus } from "./bus-post.ts";
+import { listWorkflows, once, updateWorkflow, upsertWorkflow } from "./journal.ts";
+import { pidAlive } from "./session.ts";
 import { acceptCrewLine } from "./chat-bridge.ts";
 import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { fleetInboxRoot } from "./paths.ts";
@@ -166,16 +168,19 @@ export async function crewStartManeuver(shipId: string, b: { from: string; adw?:
   const fd = openSync(log, "a");
   let proc: ReturnType<typeof Bun.spawn>;
   try {
-    proc = Bun.spawn(["uv", "run", `adws/${adw}.py`, prompt, "--adw-id", adwId], { cwd: a.ship.path, stdout: fd, stderr: fd, stdin: "ignore" });
+    // Detached (its own process group): a fleet node restart must not take the maneuver down with it.
+    proc = Bun.spawn(["uv", "run", `adws/${adw}.py`, prompt, "--adw-id", adwId], { cwd: a.ship.path, stdout: fd, stderr: fd, stdin: "ignore", detached: true });
   } finally {
     // The child has its own copy of the log descriptor; keeping ours leaks one per maneuver.
     closeSync(fd);
   }
   running.set(adwId, { taskId: task.id, ship: shipId });
-  logShipEvent(shipId, b.from, "maneuver", `${adw} launched (${adwId})`, { adw, adwId, task: task.id, log });
+  // A journal workflow, so a restarted node can find it again by pid and settle it.
+  upsertWorkflow("maneuver", adwId, { ship: shipId, taskId: task.id, adw, pid: proc.pid, log }, { trace: `maneuver-${adwId}` });
+  logShipEvent(shipId, b.from, "maneuver", `${adw} launched (${adwId})`, { adw, adwId, task: task.id, log, trace: `maneuver-${adwId}` });
   void proc.exited.then(async (code) => {
     running.delete(adwId);
-    await settleManeuver(a.ship, task.id, adwId, code);
+    await settleOnce(a.ship, task.id, adwId, code);
   });
   return { ok: true, message: `Maneuver ${adw} launched as ${adwId} (task #${task.id}). You get a crew message when it finishes; voyage_status shows its phases meanwhile.`, adwId, task: task.id };
 }
@@ -212,10 +217,48 @@ async function settleManeuver(ship: ShipRow, taskId: number, adwId: string, exit
 }
 
 /** After a dashboard restart the exit callback is gone; settle from the trace db. */
+/** Settle at most once (the exit handler and a restarted node's watcher can both get here). */
+async function settleOnce(ship: ShipRow, taskId: number, adwId: string, exitCode: number | null): Promise<void> {
+  await once(adwId, "settle", async () => {
+    await settleManeuver(ship, taskId, adwId, exitCode);
+    return { exitCode };
+  });
+  updateWorkflow(adwId, { status: exitCode === 0 ? "done" : "failed" });
+}
+
+/**
+ * After a node restart: maneuvers still running are watched by pid until they
+ * end; ones that ended while the node was down are settled from their trace.
+ */
+export async function recoverManeuvers(): Promise<void> {
+  const ships = await readShips();
+  for (const w of listWorkflows<{ ship: string; taskId: number; pid: number }>("maneuver", "running")) {
+    const ship = ships.find((s) => s.id === w.data.ship);
+    if (!ship) {
+      updateWorkflow(w.id, { status: "failed", data: { error: "ship no longer registered" } });
+      continue;
+    }
+    running.set(w.id, { taskId: w.data.taskId, ship: ship.id });
+    const settleFromTrace = async () => {
+      running.delete(w.id);
+      const t = traceStatus(ship.path, w.id);
+      const ok = t.status === "pass" || t.status === "ok" || t.status === "done";
+      await settleOnce(ship, w.data.taskId, w.id, ok ? 0 : t.ended ? 1 : null);
+    };
+    if (w.data.pid && pidAlive(w.data.pid)) {
+      const timer = setInterval(() => {
+        if (pidAlive(w.data.pid)) return;
+        clearInterval(timer);
+        void settleFromTrace();
+      }, 15_000);
+    } else await settleFromTrace();
+  }
+}
+
 async function reconcileManeuvers(ship: ShipRow, v: Voyage): Promise<void> {
   for (const t of listTasks(ship.id, v.file)) {
     if (t.kind !== "maneuver" || t.status !== "working" || !t.adwId || running.has(t.adwId)) continue;
     const s = traceStatus(ship.path, t.adwId);
-    if (s.ended) await settleManeuver(ship, t.id, t.adwId, s.status === "pass" || s.status === "ok" || s.status === "done" ? 0 : 1);
+    if (s.ended) await settleOnce(ship, t.id, t.adwId, s.status === "pass" || s.status === "ok" || s.status === "done" ? 0 : 1);
   }
 }

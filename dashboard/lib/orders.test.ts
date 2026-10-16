@@ -103,3 +103,33 @@ describe("order watcher", () => {
     expect(readFileSync(join(inbox, "alice", "captain-chat.jsonl"), "utf8")).toContain(`Fleet order ${slug}`);
   });
 });
+
+describe("orders survive a node restart", () => {
+  let slug = "";
+  test("a running order resumes at the next unlogged step", async () => {
+    orders._resetOrdersForTest();
+    const r = await notes.createOrder({ title: "Restart check", ship: "kinwork", by: "captain", body: BODY, status: "approved" });
+    slug = r.slug;
+    await orders.kickOrders();
+    expect(orders.runningOrder()?.slug).toBe(slug);
+    expect((await orders.checkOrderCall("ship_tasks", { ship: "kinwork" }, true, { order: slug, step: 1 })).ok).toBe(true);
+    orders.recordOrderCall(1, "ship_tasks", { ship: "kinwork" }, "no voyage");
+    expect((await orders.orderStep(slug, 1, true, "no voyage", "")).ok).toBe(true);
+    // The node dies here; a new one boots.
+    orders._resetOrdersForTest();
+    await orders.kickOrders();
+    expect(orders.runningOrder()?.slug).toBe(slug);
+    expect(orders.runningOrder()?.next).toBe(2);
+    expect(readFileSync(join(inbox, "alice", "captain-chat.jsonl"), "utf8")).toContain("Resuming after a fleet node restart: steps before 2 are done");
+  });
+  test("an action cut off mid-call pauses for the captain instead of repeating", async () => {
+    expect((await orders.checkOrderCall("fleet_chat", { to: "kinwork-designer", text: "Status, please." }, false, { order: slug, step: 2 })).ok).toBe(true);
+    // No recordOrderCall: the node died while fleet_chat was running.
+    orders._resetOrdersForTest();
+    await orders.kickOrders();
+    expect(orders.runningOrder()).toBeNull();
+    const n = await notes.readOrder(slug);
+    expect(n.meta!.status).toBe("needs-captain");
+    expect(n.meta!.reason).toContain("check whether it happened");
+  });
+});

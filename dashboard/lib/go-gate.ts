@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { listWorkflows, upsertWorkflow } from "./journal.ts";
 import { nodeStateDir } from "./paths.ts";
 
 /**
@@ -9,8 +10,9 @@ import { nodeStateDir } from "./paths.ts";
  * captain says Go (dashboard button, Needs you). The model cannot talk itself
  * into one; the gate is in the server, not the prompt.
  *
- * Pending requests live in fleet/inbox/.node/go-pending.json so the dashboard
- * (Needs you) can list them and a node restart does not lose them.
+ * Requests are journal workflows (lib/journal.ts): a node restart keeps the
+ * waiting ones, and a Go'd action runs at most once (its run is a checkpointed
+ * step), so a crash can neither lose a decision nor repeat an action.
  */
 
 /** Fleet actions that change state; each needs the captain's Go (or an approved order step). */
@@ -35,25 +37,35 @@ export type GoRequest = {
   lineTs: string;
   /** One sentence the captain reads. */
   summary: string;
+  /** Follows this request through the journal and ship logs. */
+  trace?: string;
 };
 
-function storePath(): string {
+/** The old file store (before the journal); imported once, then removed. */
+function legacyStorePath(): string {
   return join(nodeStateDir(), "go-pending.json");
 }
 
-export async function readGoRequests(): Promise<GoRequest[]> {
+async function importLegacy(): Promise<void> {
+  let list: GoRequest[] = [];
   try {
-    const j = JSON.parse(await readFile(storePath(), "utf8")) as unknown;
-    return Array.isArray(j) ? (j as GoRequest[]) : [];
+    list = JSON.parse(await readFile(legacyStorePath(), "utf8")) as GoRequest[];
   } catch {
-    return [];
+    return;
   }
+  for (const g of Array.isArray(list) ? list : []) upsertWorkflow("go", g.id, g as unknown as Record<string, unknown>, { status: "waiting" });
+  await rm(legacyStorePath(), { force: true });
 }
 
-export async function writeGoRequests(list: GoRequest[]): Promise<void> {
-  await mkdir(nodeStateDir(), { recursive: true });
-  await writeFile(storePath() + ".tmp", JSON.stringify(list, null, 1) + "\n", "utf8");
-  await rename(storePath() + ".tmp", storePath());
+/** Fleet actions held for the captain's Go (journal workflows of kind "go", status waiting). */
+export async function readGoRequests(): Promise<GoRequest[]> {
+  await importLegacy();
+  return listWorkflows<GoRequest>("go", "waiting").map((w) => w.data);
+}
+
+/** Hold a new request for the captain. */
+export function holdGoRequest(req: GoRequest): void {
+  upsertWorkflow("go", req.id, req as unknown as Record<string, unknown>, { status: "waiting", trace: req.trace ?? req.id });
 }
 
 /** What the captain is asked to approve, in words. */
