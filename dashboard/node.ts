@@ -14,6 +14,7 @@ import { allChatTargetIds, chatAllowed, chatTarget, refreshAgentTargets, startCh
 import type { ChatLine } from "./lib/chat.ts";
 import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks } from "./lib/fleet-api.ts";
+import { startEventRouter } from "./lib/event-router.ts";
 import { dashLog } from "./lib/log.ts";
 import { checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
 import { nodeToken, tokenMatches } from "./lib/node-auth.ts";
@@ -109,6 +110,8 @@ void startChatTargetRefresh(() => emit("rail", {})).then(() => {
   startChatBridge();
   // Orders tell the dashboard when they change, so the fleet deck and Needs you refresh.
   startOrderWatcher(() => emit("orders", {}));
+  // Bus lines wake their owner (Firstmate through its TUI, live agents through their thread).
+  startEventRouter();
   onFleetChange((what) => (what === "rail" ? emit("rail", {}) : what === "ship" ? emit("ship", "") : emit("go", {})));
 });
 

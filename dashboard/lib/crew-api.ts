@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { hostRunning } from "./agent-host.ts";
+import { postBus } from "./bus-post.ts";
 import { acceptCrewLine } from "./chat-bridge.ts";
 import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { fleetInboxRoot } from "./paths.ts";
@@ -206,6 +207,8 @@ async function settleManeuver(ship: ShipRow, taskId: number, adwId: string, exit
   await updateTask(ship.id, taskId, { status: ok ? "done" : "blocked", note, by: "sssf" });
   const lead = leadOf(ship);
   if (lead) await acceptCrewLine(lead, "sssf", `Maneuver ${adwId} (task #${taskId}) ${ok ? "finished" : "failed"}. ${note}`);
+  // Alice keeps the fleet picture: the event router wakes her with this (batched).
+  await postBus("alice", { from: "sssf", kind: ok ? "maneuver-finished" : "maneuver-failed", ship: ship.id, summary: `Maneuver ${adwId} (task #${taskId}) on ${ship.id} ${ok ? "finished" : "failed"}. ${note}`.slice(0, 400), ref: adwId });
 }
 
 /** After a dashboard restart the exit callback is gone; settle from the trace db. */

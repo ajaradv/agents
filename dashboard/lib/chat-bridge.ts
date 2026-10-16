@@ -143,7 +143,7 @@ function parseChatLine(raw: string): ChatLine | null {
 export const FLEET_OFFICERS = new Set(["alice"]);
 
 /** Senders whose messages explain themselves (the order watcher, the Go gate): no "message from" prefix. */
-const SYSTEM_SENDERS = new Set(["orders", "go"]);
+const SYSTEM_SENDERS = new Set(["orders", "go", "router"]);
 
 /** A captain line written by the node on the captain's behalf (a voyage brief after their Go): saved, shown, and run. */
 export async function postCaptainLine(agentId: string, text: string): Promise<ChatLine> {
@@ -353,7 +353,7 @@ async function drainQueue(agentId: string): Promise<void> {
           const who = FLEET_OFFICERS.has(line.from) ? "fleet officer" : "crewmate aboard";
           await submitToHost(agentId, { ...line, text: `Message from ${line.from} (${who}, not the captain):\n\n${line.text}` });
         } else await submitToHost(agentId, line);
-      } else if (line.kind === "crew" && !FLEET_OFFICERS.has(line.from)) {
+      } else if (line.kind === "crew" && !FLEET_OFFICERS.has(line.from) && !SYSTEM_SENDERS.has(line.from)) {
         await failTurn(agentId, line, "error", 0, `${agentId} only takes crew messages as a live crewmate.`);
       }
       else await runHeadlessTurn(agentId, line);

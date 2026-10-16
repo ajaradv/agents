@@ -13,6 +13,7 @@ import { fleetInboxRoot } from "./paths.ts";
 /** Same pattern as chat-targets; kept here to avoid an import cycle. */
 const CHAT_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 import { escapeHtml } from "./quota.ts";
+import { recentShipEvents } from "./ship-log.ts";
 
 export type FirstmateHeartbeat = {
   ts: string;
@@ -312,6 +313,19 @@ function workList(title: string, rows: WorkRow[], empty: string, chat = false): 
   return `<h4>${escapeHtml(title)}</h4><ul class="task-list">${items}</ul>`;
 }
 
+/** The event router's latest wakes (fleet ship log, kind "router"), as a fold on Health. */
+function routerFold(): string {
+  const wakes = recentShipEvents("fleet", 400).filter((e) => e.kind === "router").slice(0, 8);
+  const rows = wakes
+    .map((e) => `<li class="${e.payload?.ok === false ? "warn" : ""}"><span class="muted">${escapeHtml(new Date(e.ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</span> ${escapeHtml(e.summary)}</li>`)
+    .join("");
+  return `<details class="fold">
+    <summary>Event router · ${wakes.length ? `last wake ${escapeHtml(new Date(wakes[0]!.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}` : "no wakes yet"}</summary>
+    <p class="muted">New lines on an agent's bus wake it: Firstmate through its TUI, live agents through their thread. Batched, at most six wakes an hour per agent.</p>
+    ${rows ? `<ul class="meter-list">${rows}</ul>` : ""}
+  </details>`;
+}
+
 function firstmateCard(opts: {
   home: HomeSummary | null;
   heartbeat: FirstmateHeartbeat | null;
@@ -395,6 +409,8 @@ export async function fleetStripHtml(): Promise<string> {
   if (!snap.ok) {
     return `<div class="stack">
       ${firstmateCard({ home, heartbeat, tui, holds })}
+    ${routerFold()}
+      ${routerFold()}
       <p class="muted">Firstmate's queue is unavailable right now (${escapeHtml(snap.error ?? "no snapshot")}).</p>
       <details class="fold registry">
         <summary>Ships and initiatives</summary>

@@ -5,6 +5,7 @@ import { acceptCrewLine } from "./chat-bridge.ts";
 import { chatTarget } from "./chat-targets.ts";
 import { dashLog } from "./log.ts";
 import { callMismatch, listOrders, ordersDir, updateOrder, type Order, type OrderStep } from "./order-note.ts";
+import { postBus } from "./bus-post.ts";
 import { logShipEvent, recentShipEvents } from "./ship-log.ts";
 import { officerBudgetRefusal } from "./shipyard.ts";
 
@@ -118,13 +119,17 @@ function report(r: Running, outcome: string): string {
   ].join("\n");
 }
 
-async function pause(reason: string): Promise<void> {
+async function pause(reason: string, byWatcher = true): Promise<void> {
   const r = running;
   if (!r) return;
   running = null;
   await updateOrder(r.slug, { status: "needs-captain", reason, resume: r.next }, report(r, `paused for the captain at step ${r.next}: ${reason}`));
   log(r.order, "order-finish", `Paused at step ${r.next}: ${reason}`, { ok: false, step: r.next, reason });
   await dashLog("orders", `${r.slug} needs the captain: ${reason}`);
+  // Paused by the watcher (stall, refusal), not by Alice's own blocked report: let her know.
+  if (byWatcher) {
+    await postBus(EXECUTOR, { from: "orders", kind: "order-paused", summary: `Order ${r.slug} ("${r.order.meta.title}") paused at step ${r.next}: ${reason}. The captain decides Retry or Cancel; do not continue it yourself.`, ref: r.slug });
+  }
   onChange();
 }
 
@@ -271,13 +276,13 @@ export async function orderFinish(order: string, status: "done" | "blocked", why
   const r = running;
   if (!r || r.slug !== order) return { ok: false, message: `No order ${order} is running.` };
   if (status === "done" && r.next <= r.order.steps.length) {
-    await pause(`order_finish said done at step ${r.next} of ${r.order.steps.length}`);
+    await pause(`order_finish said done at step ${r.next} of ${r.order.steps.length}`, false);
     return { ok: true, message: `Not every item was logged ok, so the order is paused for the captain at step ${r.next}.` };
   }
   if (status === "blocked") {
     // No reason given: use what was logged for the blocked step.
     const logged = recentShipEvents("fleet", 200).find((e) => e.kind === "order-step" && e.payload?.order === r.slug && e.payload?.ok === false && e.payload?.step === r.next);
-    await pause(why || (logged ? `step ${r.next}: ${String(logged.payload?.result ?? "")}`.slice(0, 300) : `blocked at step ${r.next}`));
+    await pause(why || (logged ? `step ${r.next}: ${String(logged.payload?.result ?? "")}`.slice(0, 300) : `blocked at step ${r.next}`), false);
     return { ok: true, message: "The order is paused for the captain with your reason. End your turn." };
   }
   running = null;
