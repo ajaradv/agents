@@ -429,16 +429,15 @@ export async function submitToHost(agentId: string, line: ChatLine): Promise<voi
   p.lastCaptainTs = line.ts;
   p.streamRetries = 0;
   p.lastActive = Date.now();
-  if (p.running) {
-    const r = await send(p, { type: "prompt", message: line.text, streamingBehavior: "steer" });
-    if (r.success) {
-      hooks.event(agentId, { kind: "notice", text: "Sent while it works; it reads this before its next step.", level: "info" });
-      return;
-    }
-    hooks.line(agentId, await appendChatError(agentId, String(r.error ?? "steer failed"), line.ts));
+  // Always "steer": an idle agent starts a turn, a busy one reads it before its
+  // next step. Deciding from p.running raced: messages sent in quick succession
+  // ("Let's start a task", "for project", "test") reached a turn that had been
+  // prompted but had not reported agent_start yet, and pi rejected them.
+  const r = await send(p, { type: "prompt", message: line.text, streamingBehavior: "steer" });
+  if (r.success && (r.data as { disposition?: string } | undefined)?.disposition === "queued") {
+    hooks.event(agentId, { kind: "notice", text: "Sent while it works; it reads this before its next step.", level: "info" });
     return;
   }
-  const r = await send(p, { type: "prompt", message: line.text });
   if (!r.success) {
     const error = String(r.error ?? "prompt rejected");
     if (/No API key found/i.test(error)) {
