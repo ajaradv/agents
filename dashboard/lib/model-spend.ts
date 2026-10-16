@@ -27,6 +27,9 @@ export type SpendRow = {
   todayTokens: number;
   weekTokens: number;
   estimated: boolean;
+  /** Prompt tokens over the week, and how many of them the provider read from its cache. */
+  weekPrompt?: number;
+  weekCacheRead?: number;
 };
 
 const DAY_MS = 86_400_000;
@@ -69,12 +72,16 @@ async function filesUnder(dir: string, depth: number, since: number): Promise<st
 
 type Acc = Map<string, SpendRow>;
 
-function add(acc: Acc, who: string, lane: string, estimated: boolean, ts: number, now: number, usd: number, tokens: number) {
+function add(acc: Acc, who: string, lane: string, estimated: boolean, ts: number, now: number, usd: number, tokens: number, cache?: { prompt: number; read: number }) {
   if (now - ts > 7 * DAY_MS) return;
   const key = `${who}\u0000${lane}`;
   const row = acc.get(key) ?? { who, lane, todayUsd: 0, weekUsd: 0, todayTokens: 0, weekTokens: 0, estimated };
   row.weekUsd += usd;
   row.weekTokens += tokens;
+  if (cache) {
+    row.weekPrompt = (row.weekPrompt ?? 0) + cache.prompt;
+    row.weekCacheRead = (row.weekCacheRead ?? 0) + cache.read;
+  }
   if (now - ts < DAY_MS) {
     row.todayUsd += usd;
     row.todayTokens += tokens;
@@ -97,8 +104,14 @@ export function addPiSession(acc: Acc, who: string, text: string, now: number) {
     const u = m.usage as { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } };
     const tokens = (u.input ?? 0) + (u.output ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
     const ts = Date.parse(e.timestamp ?? "") || now;
-    add(acc, who, `${m.provider}/${m.model ?? "?"}`, false, ts, now, u.cost?.total ?? 0, tokens);
+    const prompt = (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
+    add(acc, who, `${m.provider}/${m.model ?? "?"}`, false, ts, now, u.cost?.total ?? 0, tokens, { prompt, read: u.cacheRead ?? 0 });
   }
+}
+
+/** Share of prompt tokens read from cache, or null with too little to judge. */
+export function cacheShare(r: SpendRow): number | null {
+  return r.weekPrompt && r.weekPrompt >= 20_000 ? (r.weekCacheRead ?? 0) / r.weekPrompt : null;
 }
 
 /** Cursor agent transcript: estimated input, each assistant step carrying the context so far. */
@@ -199,14 +212,16 @@ export async function modelSpendHtml(): Promise<string> {
   return `<div class="stack">
       <h3>Model spend · last 7 days</h3>
       <table class="spend-table">
-        <thead><tr><th>Who</th><th>Model</th><th>24h</th><th>7 days</th></tr></thead>
+        <thead><tr><th>Who</th><th>Model</th><th>24h</th><th>7 days</th><th title="Share of prompt tokens served from the provider's cache over 7 days. Long-running agents should sit well above half; low means cache bugs or a provider that does not cache.">Cached</th></tr></thead>
         <tbody>${rows
           .map((r, i) => {
             const first = i === 0 || rows[i - 1]!.who !== r.who;
-            return `<tr class="${first ? "spend-group" : ""}"><td>${first ? escapeHtml(r.who) : ""}</td><td>${escapeHtml(r.lane)}</td><td>${cell(r, true)}</td><td>${cell(r, false)}</td></tr>`;
+            const share = cacheShare(r);
+            const cached = share === null ? `<span class="muted">${r.lane.startsWith("cursor") ? "no cache" : "–"}</span>` : `<span class="${share < 0.5 ? "warn" : ""}">${Math.round(share * 100)}%</span>`;
+            return `<tr class="${first ? "spend-group" : ""}"><td>${first ? escapeHtml(r.who) : ""}</td><td>${escapeHtml(r.lane)}</td><td>${cell(r, true)}</td><td>${cell(r, false)}</td><td>${cached}</td></tr>`;
           })
           .join("")}</tbody>
-        <tfoot><tr><th colspan="2">Billed total (API keys)</th><th>${usd(sum(true))}</th><th>${usd(sum(false))}</th></tr></tfoot>
+        <tfoot><tr><th colspan="2">Billed total (API keys)</th><th>${usd(sum(true))}</th><th>${usd(sum(false))}</th><th></th></tr></tfoot>
       </table>
       <p class="muted spend-note">API rows are billed cost from Pi's session logs. Cursor rows are estimated input tokens from Cursor's transcripts (upper bound, before caching); Cursor's dashboard has the billed figures. Headless turns without a saved session are not counted.</p>
     </div>`;

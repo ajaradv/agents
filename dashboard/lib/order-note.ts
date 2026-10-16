@@ -32,7 +32,7 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 /** Tools an order step may name, with their parameters: reads, fleet_chat, and the tier 2 fleet actions (the order's Go covers them). */
 export const ORDER_TOOLS: Record<string, { params: string[]; required: string[]; read: boolean }> = {
   ...Object.fromEntries(Object.entries(TIER2_TOOLS).map(([k, v]) => [k, { ...v, read: false }])),
-  fleet_status: { params: [], required: [], read: true },
+  fleet_status: { params: ["detail"], required: [], read: true },
   ship_log: { params: ["ship", "limit", "kind"], required: ["ship"], read: true },
   ship_tasks: { params: ["ship"], required: ["ship"], read: true },
   ship_maneuvers: { params: ["ship"], required: ["ship"], read: true },

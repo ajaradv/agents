@@ -12,6 +12,8 @@ extensions:
   # Compact between tasks once context passes 65%, after running /stow
   # (extensions/context-guard.ts), instead of at the edge of the window.
   - context-guard
+  # Prompt-cache checks (prefix hash, miss alerts) and the repeated-read guard.
+  - cache-watch
 # Fewer, larger supervision wakes (vendor/firstmate/docs/configuration.md):
 # escalation digests buffer 10 min (default 90s), a working-but-idle pane
 # escalates after 15 min (default 240s), nearby signals coalesce for 2 min (30s).

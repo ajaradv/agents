@@ -187,7 +187,7 @@ function fleetCall(what: string, method: string, q: URLSearchParams, b: Record<s
   const pick = (src: (k: string) => unknown, keys: string[]) =>
     Object.fromEntries(keys.map((k) => [k, src(k)]).filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => [k, String(v)]));
   const fromQ = (keys: string[]) => pick((k) => q.get(k), keys);
-  if (method === "GET" && what === "status") return { tool: "fleet_status", read: true, args: {} };
+  if (method === "GET" && what === "status") return { tool: "fleet_status", read: true, args: fromQ(["detail"]) };
   if (method === "GET" && what === "log") return { tool: "ship_log", read: true, args: fromQ(["ship", "limit", "kind"]) };
   if (method === "GET" && what === "tasks") return { tool: "ship_tasks", read: true, args: fromQ(["ship"]) };
   if (method === "GET" && what === "maneuvers") return { tool: "ship_maneuvers", read: true, args: fromQ(["ship"]) };
@@ -232,7 +232,7 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
 
   const a = call.args;
   let res: { ok: boolean; message: string };
-  if (call.tool === "fleet_status") res = await fleetStatus();
+  if (call.tool === "fleet_status") res = await fleetStatus(a.detail === "true");
   else if (call.tool === "ship_log") res = shipLog(a.ship ?? "", Number(a.limit) || 40, a.kind || undefined);
   else if (call.tool === "ship_tasks") res = await shipTasks(a.ship ?? "");
   else if (call.tool === "ship_maneuvers") res = await shipManeuvers(a.ship ?? "");

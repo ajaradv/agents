@@ -59,6 +59,17 @@ architect:
 dashboard:
     cd "{{root}}" && bun run dashboard/server.ts
 
+# Background services (launchd): node and dashboard start at login and restart
+# if they die. Stop a dashboard running in a terminal before installing.
+services-install:
+    cd "{{root}}" && bin/fleet-services install
+
+services-uninstall:
+    cd "{{root}}" && bin/fleet-services uninstall
+
+services-status:
+    cd "{{root}}" && bin/fleet-services status
+
 # The fleet node runs the agents; the dashboard starts it when it is missing.
 # Run it here instead to watch its log in the foreground.
 node:

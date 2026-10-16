@@ -50,7 +50,7 @@ export function logCrewEvent(agentId: string, ev: HostEvent): void {
   else if (ev.kind === "notice" && ev.level !== "info") logShipEvent(ship, agentId, "notice", ev.text, { level: ev.level });
 }
 
-export function logCrewTurn(agentId: string, outcome: { ok: boolean; ms: number; error?: string; cost: number; tokens: number }): void {
+export function logCrewTurn(agentId: string, outcome: { ok: boolean; ms: number; error?: string; cost: number; tokens: number; cacheRead?: number; prompt?: number }): void {
   const ship = shipOf(agentId);
   if (!ship) return;
   const took = formatDuration(outcome.ms);
@@ -59,6 +59,7 @@ export function logCrewTurn(agentId: string, outcome: { ok: boolean; ms: number;
     ms: outcome.ms,
     cost: outcome.cost,
     tokens: outcome.tokens,
+    ...(outcome.prompt ? { cacheRead: outcome.cacheRead ?? 0, prompt: outcome.prompt } : {}),
     ...(outcome.error ? { error: outcome.error } : {}),
   });
 }

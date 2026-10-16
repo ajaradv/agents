@@ -43,7 +43,13 @@ export function fleetCallerAllowed(from: string | null): from is string {
 }
 
 /** One compact picture of the fleet: ships and voyages, who works, who waits on the captain, today's spend. */
-export async function fleetStatus(): Promise<Res> {
+/**
+ * One compact picture of the fleet. The default is a summary sized for an
+ * orchestrator's context (ships in a line each, what waits on the captain, who
+ * works, spend); `detail` adds each crewmate's activity, officers, and
+ * Firstmate's workers. Keeping the default small keeps Alice's context sparse.
+ */
+export async function fleetStatus(detail = false): Promise<Res> {
   const ships = await readShips();
   const since = midnightIso();
   const shipRows = await Promise.all(
@@ -72,31 +78,48 @@ export async function fleetStatus(): Promise<Res> {
   for (const id of new Set(ships.map((s) => s.id).concat(OFFICER_SHIP))) {
     for (const [agent, t] of Object.entries(shipTurnTotals(id, since))) spend[agent] = Math.round(((spend[agent] ?? 0) + t.cost) * 1000) / 1000;
   }
-  return {
-    ok: true,
-    message: `${ships.length} ships, ${working.length} agent(s) working, ${needs.length} item(s) waiting on the captain.`,
-    ships: shipRows,
-    officers: agents.filter((t) => !t.ship).map((t) => ({ id: t.id, model: t.model, working: hostRunning(t.id) })),
-    firstmateWorkers: workers.map((w) => ({ id: w.id, title: w.label, state: w.state, project: w.project })),
-    working,
-    needsCaptain: needs.map((n) =>
-      n.kind === "hold"
-        ? { kind: n.kind, task: n.taskId, title: n.title, reason: n.reason }
-        : n.kind === "go"
-          ? { kind: n.kind, from: n.agentId, action: n.summary }
-          : n.kind === "question"
+  const needsCaptain = needs.map((n) =>
+    n.kind === "hold"
+      ? { kind: n.kind, task: n.taskId, title: n.title, reason: n.reason }
+      : n.kind === "go"
+        ? { kind: n.kind, from: n.agentId, action: n.summary }
+        : n.kind === "question"
           ? { kind: n.kind, agent: n.agentId, asked: n.ts, question: n.questions.map((q) => q.question).join(" / ") }
           : n.kind === "order"
             ? { kind: n.kind, order: n.slug, title: n.title, status: n.status, ...(n.reason ? { reason: n.reason } : {}) }
             : { kind: n.kind, agent: n.agentId, at: n.ts, message: n.sentText.slice(0, 160), error: humanizeError(n.error) },
-    ),
+  );
+  const message = `${ships.length} ships, ${working.length} agent(s) working, ${needs.length} item(s) waiting on the captain.`;
+  if (!detail) {
+    const total = Object.values(spend).reduce((a, b) => a + b, 0);
+    return {
+      ok: true,
+      message,
+      ships: shipRows.map((s) => {
+        const busy = s.crew.filter((c) => c.status === "working" || c.status === "waiting").map((c) => `${c.id} ${c.status}`);
+        return `${s.id}: ${s.voyage ? `under sail "${s.voyage.goal.slice(0, 90)}" ${s.voyage.progress.done}/${s.voyage.progress.total} tasks` : "no voyage"}; ${s.crew.length} crew${busy.length ? ` (${busy.join(", ")})` : s.crew.length ? " idle" : ""}; orchestrator ${s.orchestrator}`;
+      }),
+      working,
+      needsCaptain,
+      spendTodayUsd: Math.round(total * 100) / 100,
+      more: "fleet_status with detail=true adds each crewmate's activity, officers, Firstmate's workers, and spend per agent.",
+    };
+  }
+  return {
+    ok: true,
+    message,
+    ships: shipRows,
+    officers: agents.filter((t) => !t.ship).map((t) => ({ id: t.id, model: t.model, working: hostRunning(t.id) })),
+    firstmateWorkers: workers.map((w) => ({ id: w.id, title: w.label, state: w.state, project: w.project })),
+    working,
+    needsCaptain,
     spendTodayUsd: spend,
   };
 }
 
 export function shipLog(ship: string, limit: number, kind?: string): Res {
   if (!SHIP_RE.test(ship)) return { ok: false, message: "Bad ship id." };
-  const events = recentShipEvents(ship, 400).filter((e) => !kind || e.kind === kind).slice(0, Math.max(1, Math.min(200, limit || 40)));
+  const events = recentShipEvents(ship, 400).filter((e) => !kind || e.kind === kind).slice(0, Math.max(1, Math.min(200, limit || 20)));
   return {
     ok: true,
     message: `${events.length} event(s) from the ${ship} log, newest first.`,
@@ -105,7 +128,7 @@ export function shipLog(ship: string, limit: number, kind?: string): Res {
       ts: e.ts,
       actor: e.actor,
       kind: e.kind,
-      summary: (e.kind === "turn-end" && e.payload?.error ? humanizeError(e.summary) : plainSummary(e.summary)).slice(0, 400),
+      summary: (e.kind === "turn-end" && e.payload?.error ? humanizeError(e.summary) : plainSummary(e.summary)).slice(0, 200),
       ...(typeof e.payload?.cost === "number" ? { cost: e.payload.cost } : {}),
     })),
   };
@@ -146,11 +169,11 @@ export async function shipManeuvers(ship: string): Promise<Res> {
 
 export async function agentChatRead(agent: string, n: number): Promise<Res> {
   if (!chatAllowed(agent)) return { ok: false, message: `${agent} is not on the rail.` };
-  const lines = await readCaptainChat(agent, Math.max(1, Math.min(60, n || 12)));
+  const lines = await readCaptainChat(agent, Math.max(1, Math.min(60, n || 8)));
   return {
     ok: true,
     message: `Last ${lines.length} line(s) of the captain's thread with ${agent}.`,
-    lines: lines.map((l) => ({ ts: l.ts, from: l.from, kind: l.kind, text: l.kind === "error" ? humanizeError(l.text) : l.text.slice(0, 2000) })),
+    lines: lines.map((l) => ({ ts: l.ts, from: l.from, kind: l.kind, text: l.kind === "error" ? humanizeError(l.text) : l.text.length > 600 ? `${l.text.slice(0, 600)}… (${l.text.length} chars; ask for fewer lines to see more)` : l.text })),
   };
 }
 

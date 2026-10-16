@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# fleet-services - run the fleet node and the dashboard as macOS background
+# services (launchd LaunchAgents): they start at login and restart if they die.
+#
+# Usage:
+#   bin/fleet-services install     write ~/Library/LaunchAgents/*.plist and start both
+#   bin/fleet-services uninstall   stop both and remove the plists
+#   bin/fleet-services status      show each job and its pid
+#   bin/fleet-services restart     restart both (agents stop; sessions resume on the next message)
+#
+# The node job (com.fleet.node) owns the agents; launchd restarts it when it
+# exits, including when the dashboard stops a node that runs older code. The
+# dashboard job (com.fleet.dashboard) serves the page; it finds the running node
+# instead of starting its own.
+#
+# Logs: fleet/inbox/.node/node.log and fleet/inbox/.node/dashboard.log.
+# PATH is captured from the shell that runs install, so bun, pi, python3, and uv
+# resolve the same way they do in your terminal. Re-run install after moving
+# those tools.
+#
+# Testing overrides (not for daily use): FLEET_SERVICE_SUFFIX names a second pair
+# of jobs (com.fleet.node.<suffix>), and DASHBOARD_PORT / FLEET_INBOX / ALICE_VAULT
+# are passed through to both jobs when set.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SUFFIX="${FLEET_SERVICE_SUFFIX:-}"
+LABEL_NODE="com.fleet.node${SUFFIX:+.$SUFFIX}"
+LABEL_DASH="com.fleet.dashboard${SUFFIX:+.$SUFFIX}"
+AGENTS_DIR="$HOME/Library/LaunchAgents"
+INBOX="${FLEET_INBOX:-$ROOT/fleet/inbox}"
+LOGS="$INBOX/.node"
+PORT="${DASHBOARD_PORT:-8787}"
+DOMAIN="gui/$(id -u)"
+BUN="$(command -v bun || true)"
+
+die() { printf 'error: %s\n' "$1" >&2; exit 1; }
+xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+env_block() {
+  printf '    <key>EnvironmentVariables</key>\n    <dict>\n'
+  printf '      <key>PATH</key><string>%s</string>\n' "$(xml "$PATH")"
+  printf '      <key>HOME</key><string>%s</string>\n' "$(xml "$HOME")"
+  for k in DASHBOARD_PORT FLEET_INBOX ALICE_VAULT FLEET_NODE_PORT; do
+    if [ -n "${!k:-}" ]; then printf '      <key>%s</key><string>%s</string>\n' "$k" "$(xml "${!k}")"; fi
+  done
+  printf '    </dict>\n'
+}
+
+plist() { # label, script, log
+  cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key><string>$1</string>
+    <key>ProgramArguments</key>
+    <array><string>$(xml "$BUN")</string><string>run</string><string>$(xml "$ROOT/$2")</string></array>
+    <key>WorkingDirectory</key><string>$(xml "$ROOT")</string>
+$(env_block)
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>ThrottleInterval</key><integer>5</integer>
+    <key>ProcessType</key><string>Interactive</string>
+    <key>StandardOutPath</key><string>$(xml "$LOGS/$3")</string>
+    <key>StandardErrorPath</key><string>$(xml "$LOGS/$3")</string>
+  </dict>
+</plist>
+EOF
+}
+
+stop_job() {
+  launchctl bootout "$DOMAIN/$1" 2>/dev/null || true
+}
+
+case "${1:-}" in
+  install)
+    [ -n "$BUN" ] || die "bun is not on PATH"
+    if lsof -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && ! launchctl print "$DOMAIN/$LABEL_DASH" >/dev/null 2>&1; then
+      die "port $PORT is in use (a dashboard running in a terminal?). Stop it first, then run install again."
+    fi
+    mkdir -p "$AGENTS_DIR" "$LOGS"
+    for pair in "$LABEL_NODE:dashboard/node.ts:node.log" "$LABEL_DASH:dashboard/server.ts:dashboard.log"; do
+      IFS=: read -r label script log <<<"$pair"
+      plist "$label" "$script" "$log" > "$AGENTS_DIR/$label.plist"
+      plutil -lint -s "$AGENTS_DIR/$label.plist" || die "bad plist for $label"
+      stop_job "$label"
+      launchctl bootstrap "$DOMAIN" "$AGENTS_DIR/$label.plist"
+      echo "started $label"
+    done
+    ;;
+  uninstall)
+    for label in "$LABEL_DASH" "$LABEL_NODE"; do
+      stop_job "$label"
+      rm -f "$AGENTS_DIR/$label.plist"
+      echo "removed $label"
+    done
+    ;;
+  restart)
+    for label in "$LABEL_NODE" "$LABEL_DASH"; do launchctl kickstart -k "$DOMAIN/$label" && echo "restarted $label"; done
+    ;;
+  status)
+    for label in "$LABEL_NODE" "$LABEL_DASH"; do
+      if launchctl print "$DOMAIN/$label" >/dev/null 2>&1; then
+        pid=$(launchctl print "$DOMAIN/$label" | awk '/^\tpid = /{print $3}')
+        echo "$label: running${pid:+ (pid $pid)}"
+      else
+        echo "$label: not installed"
+      fi
+    done
+    ;;
+  *)
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+    exit 2
+    ;;
+esac

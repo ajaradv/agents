@@ -4,11 +4,11 @@
  * A designer reads screenshots all session long, and every turn re-sends every
  * image still in the transcript: one Kinwork session reached 52 images (86 MB),
  * past the provider's 32 MB request limit, and paid for all of them each turn.
- * Before each model call this keeps the newest images (by count and by size)
- * and swaps older ones for a one-line note. The session file is untouched, so
+ * Before each model call this keeps this turn's images and recent ones, and
+ * swaps older ones for a one-line note, in batches so the prompt cache holds. The session file is untouched, so
  * nothing is lost; the agent can re-read a file if it needs the picture again.
  *
- * Tune with FLEET_IMAGE_KEEP (earlier-turn count, default 6) and FLEET_IMAGE_MB
+ * Tune with FLEET_IMAGE_KEEP (earlier-turn batch size, default 6) and FLEET_IMAGE_MB
  * (total cap, default 20; providers refuse requests over 32 MB).
  */
 
@@ -26,7 +26,15 @@ type Msg = { role?: string; content?: string | Block[] };
  *
  * Images since the captain's last message (this turn) are all kept, up to the
  * byte cap: dropping one mid-task made an agent re-read screenshots in a loop
- * (2026-10-14). From earlier turns, only the newest `keep` images stay.
+ * (2026-10-14).
+ *
+ * Earlier-turn images are dropped in batches, oldest first, so the start of
+ * the conversation changes rarely. A sliding window (always the newest 6)
+ * edited an early message on every new screenshot and every new captain
+ * message, which broke the provider's prefix cache each time. Now nothing is
+ * dropped until there are 2×keep earlier images; then the oldest are dropped
+ * in multiples of `keep`, so the dropped set (and the cached prefix) changes
+ * once per `keep` new images. The byte cap also drops in batches of `keep`.
  */
 export function windowImages<T extends Msg>(messages: T[], keep = KEEP, maxBytes = MAX_BYTES): T[] | null {
   let lastUser = -1;
@@ -36,39 +44,34 @@ export function windowImages<T extends Msg>(messages: T[], keep = KEEP, maxBytes
       break;
     }
   }
-  let kept = 0;
-  let bytes = 0;
-  let changed = false;
-  const out = messages.slice();
-  for (let i = out.length - 1; i >= 0; i--) {
-    const m = out[i]!;
-    if (!Array.isArray(m.content) || !m.content.some((b) => b?.type === "image")) continue;
-    const thisTurn = i >= lastUser;
-    let dropped = false;
-    const content: Block[] = [];
-    // Newest last within a message too: walk it backwards, then restore order.
-    for (let j = m.content.length - 1; j >= 0; j--) {
-      const b = m.content[j]!;
-      if (b?.type !== "image") {
-        content.unshift(b);
-        continue;
-      }
-      const size = b.data?.length ?? 0;
-      if ((thisTurn || kept < keep) && bytes + size <= maxBytes) {
-        if (!thisTurn) kept += 1;
-        bytes += size;
-        content.unshift(b);
-      } else {
-        dropped = true;
-        content.unshift({ type: "text", text: NOTE });
-      }
-    }
-    if (dropped) {
-      out[i] = { ...m, content };
-      changed = true;
-    }
+  // Every image, oldest first, with where it lives.
+  const images: { i: number; j: number; size: number; thisTurn: boolean }[] = [];
+  messages.forEach((m, i) => {
+    if (!Array.isArray(m.content)) return;
+    m.content.forEach((b, j) => {
+      if (b?.type === "image") images.push({ i, j, size: b.data?.length ?? 0, thisTurn: i >= lastUser });
+    });
+  });
+  const earlier = images.filter((x) => !x.thisTurn);
+  const current = images.filter((x) => x.thisTurn);
+  let dropEarlier = keep <= 0 ? earlier.length : earlier.length <= 2 * keep ? 0 : Math.floor((earlier.length - keep) / keep) * keep;
+  const bytesKept = () => earlier.slice(dropEarlier).reduce((n, x) => n + x.size, 0) + current.reduce((n, x) => n + x.size, 0);
+  while (dropEarlier < earlier.length && bytesKept() > maxBytes) dropEarlier = Math.min(earlier.length, dropEarlier + Math.max(1, keep));
+  const drop = new Set(earlier.slice(0, dropEarlier).map((x) => `${x.i}:${x.j}`));
+  // Still over the cap with this turn's images alone (rare): drop this turn's oldest one by one.
+  let total = bytesKept();
+  for (const x of current) {
+    if (total <= maxBytes) break;
+    drop.add(`${x.i}:${x.j}`);
+    total -= x.size;
   }
-  return changed ? out : null;
+  if (!drop.size) return null;
+  const out = messages.slice();
+  for (const key of new Set([...drop].map((k) => Number(k.split(":")[0])))) {
+    const m = out[key]!;
+    out[key] = { ...m, content: (m.content as Block[]).map((b, j) => (drop.has(`${key}:${j}`) ? { type: "text", text: NOTE } : b)) };
+  }
+  return out;
 }
 
 export default function (pi: ExtensionAPI) {

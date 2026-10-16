@@ -53,9 +53,12 @@ export default function (pi: ExtensionAPI) {
     label: "Fleet status",
     description:
       "One picture of the whole fleet: every ship (voyage goal and task progress, crew status), officers, Firstmate's workers, who is working now, everything waiting on the captain (questions, holds, failed messages), and today's spend per agent. Call it first when a message is about the fleet.",
-    parameters: Type.Object({ ...OrderArgs }),
+    parameters: Type.Object({
+      detail: Type.Optional(Type.Boolean({ description: "Add each crewmate's activity, officers, Firstmate's workers, and spend per agent. Leave off for the usual summary." })),
+      ...OrderArgs,
+    }),
     async execute(_id, p) {
-      return text(await call("GET", "status", { order: p.order, step: p.step }));
+      return text(await call("GET", "status", { detail: p.detail ? "true" : undefined, order: p.order, step: p.step }));
     },
   });
 
@@ -65,7 +68,7 @@ export default function (pi: ExtensionAPI) {
     description: "A ship's log, newest first: chat in and out, questions, tool steps, turn results with cost, tasks, maneuvers. Officers (you, the Architect, the Designer) are logged on the ship `fleet`. Filter by kind (chat-in, chat-out, question, answer, tool, turn-end, notice, task, maneuver).",
     parameters: Type.Object({
       ship: Type.String({ description: "Ship id, e.g. kinwork, or fleet for officers" }),
-      limit: Type.Optional(Type.Number({ description: "Rows, default 40, max 200" })),
+      limit: Type.Optional(Type.Number({ description: "Rows, default 20, max 200" })),
       kind: Type.Optional(Type.String()),
       ...OrderArgs,
     }),
@@ -100,7 +103,7 @@ export default function (pi: ExtensionAPI) {
     description: "The newest lines of the captain's chat thread with any agent on the rail (including replies to your fleet_chat messages).",
     parameters: Type.Object({
       agent: Type.String({ description: "Agent id, e.g. kinwork-designer, architect, firstmate" }),
-      n: Type.Optional(Type.Number({ description: "Lines, default 12, max 60" })),
+      n: Type.Optional(Type.Number({ description: "Lines, default 8, max 60 (long lines are shortened)" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {

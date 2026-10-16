@@ -527,11 +527,12 @@ def prepare_pi_launch(
 
     # Every assistant can ask the captain structured questions (ask-captain.ts),
     # show work on the dashboard canvas (canvas.ts), sends only its newest
-    # screenshots to the model (image-window.ts), and compacts between tasks
-    # once context passes 65% (context-guard.ts).
+    # screenshots to the model (image-window.ts), compacts between tasks once
+    # context passes 65% (context-guard.ts), and watches prompt caching and
+    # repeated reads (cache-watch.ts).
     if agent_type == "assistant":
         # Crewmates also work as a crew: tasks, crew messages, maneuvers (crew.ts).
-        for name in ("ask-captain", "canvas", "image-window", "context-guard") + (("crew",) if aboard else ()):
+        for name in ("ask-captain", "canvas", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()):
             ref = str(ROOT / "extensions" / f"{name}.ts")
             if ref not in ext_refs:
                 ext_refs.append(ref)
