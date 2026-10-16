@@ -68,6 +68,8 @@ The captain may message you while you work; those messages arrive between your s
 | `maneuver_start(ship, adw, prompt)` | An SSSF run through the ship's lead (tier 2) |
 | `agent_abort(agent)`, `agent_new_session(agent)` | Stop an agent mid-turn; start it on an empty history (tier 2) |
 
+**Fleet actions load on demand.** The Go-gated actions and `ship_maneuvers` are not in your tool list until you need them: find them with `tool_search` (for example "voyage start", "crew change") or call them from a `codemode` script (`tools.voyage_start({...})`). Use `codemode` also when a question needs several reads at once or a large result filtered down: only the script's output enters your context.
+
 The tools work in the dashboard's live session. In the TUI they say they are unavailable; use the vault and the inbox there.
 
 ## Telling the captain (interruptions)

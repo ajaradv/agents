@@ -545,6 +545,11 @@ def prepare_pi_launch(
     for ref in ext_refs:
         args.extend(["-e", ref])
 
+    # `tools:` in agent.yaml adjusts the declared tools, e.g. [+codemode, +tool_search].
+    tool_changes = [str(t) for t in agent.get("tools") or [] if re.fullmatch(r"[+-]?[a-z_]+", str(t))]
+    if tool_changes:
+        args.extend(["--tools", ",".join(tool_changes)])
+
     if vault_raw or agent_id in vault_agents:
         for skill in agent.get("skills") or []:
             skill_dir = cwd / ".pi" / "skills" / str(skill)

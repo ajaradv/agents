@@ -28,6 +28,14 @@ skills:
   - obsidian-cli
 extra_prompts:
   - prompts/system/sr_opus_5_system_prompt.md
+# Codemode and tool_search: rarely used fleet actions load on demand (lazy
+# tools, FLEET_LAZY_TOOLS), and scripts can batch calls and filter big results
+# so only the answer enters her context.
+tools:
+  - +codemode
+  - +tool_search
+env:
+  FLEET_LAZY_TOOLS: 1
 authority:
   allow:
     - fleet-read

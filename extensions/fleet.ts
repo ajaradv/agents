@@ -41,6 +41,15 @@ async function call(method: "GET" | "POST", what: string, params: Record<string,
   }
 }
 
+/**
+ * Rarely used tools stay out of the declared tool list (lazy loading): they are
+ * listed compactly by codemode, callable from codemode scripts, and declared on
+ * demand with tool_search. Only for agents that run with codemode (agent.yaml
+ * `tools: [+codemode, +tool_search]`); for others they stay ordinary tools.
+ */
+const LAZY = process.env.FLEET_LAZY_TOOLS === "1";
+const RARE = LAZY ? ({ exposure: "codemode", namespace: { name: "fleet_actions", description: "Fleet actions that change state (each waits for the captain's Go outside an order) and maneuver history" } } as const) : {};
+
 /** Every fleet tool can be a step of a running order. */
 const OrderArgs = {
   order: Type.Optional(Type.String({ description: "Only while running a fleet order: its id" })),
@@ -89,6 +98,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "ship_maneuvers",
+    ...RARE,
     label: "Ship maneuvers",
     description: "A ship's recent SSSF maneuvers (ADW runs): status, phases, errors, cost; plus the ADWs it has.",
     parameters: Type.Object({ ship: Type.String(), ...OrderArgs }),
@@ -164,6 +174,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "voyage_start",
+    ...RARE,
     label: "Set sail",
     description: "Start a voyage on a ship: a goal sent to the crewmate (or Firstmate) who runs it; they get the brief." + GO,
     parameters: Type.Object({
@@ -179,6 +190,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "voyage_dock",
+    ...RARE,
     label: "Dock a voyage",
     description: "Close a ship's open voyage, with an optional summary for its record." + GO,
     parameters: Type.Object({ ship: Type.String(), summary: Type.Optional(Type.String()), ...OrderArgs }),
@@ -189,6 +201,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "crew_change",
+    ...RARE,
     label: "Change a crew",
     description: "Change one thing about a ship's crew: add a role, send one ashore (remove), set a role's daily budget (role + budget in dollars, or none), or a role's model (role + model id, or default)." + GO,
     parameters: Type.Object({
@@ -207,6 +220,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "orchestrator_set",
+    ...RARE,
     label: "Set who runs voyages",
     description: "Choose who runs a ship's voyages: firstmate or lead (its own crew)." + GO,
     parameters: Type.Object({ ship: Type.String(), orchestrator: StringEnum(["firstmate", "lead"] as const), ...OrderArgs }),
@@ -217,6 +231,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "maneuver_start",
+    ...RARE,
     label: "Launch a maneuver",
     description: "Launch an SSSF maneuver (ADW) on a ship under sail, through its lead. The prompt is the full brief: intent, files, what done means." + GO,
     parameters: Type.Object({ ship: Type.String(), adw: Type.String({ description: "One of the ship's ADWs (ship_maneuvers lists them)" }), prompt: Type.String(), ...OrderArgs }),
@@ -227,6 +242,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "agent_abort",
+    ...RARE,
     label: "Stop an agent",
     description: "Stop a live agent mid-turn (its work so far stays in its session)." + GO,
     parameters: Type.Object({ agent: Type.String(), ...OrderArgs }),
@@ -237,6 +253,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "agent_new_session",
+    ...RARE,
     label: "New session for an agent",
     description: "Start an agent with a shared session on a new, empty history (long sessions make every turn expensive)." + GO,
     parameters: Type.Object({ agent: Type.String(), ...OrderArgs }),
