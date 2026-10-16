@@ -157,6 +157,11 @@
         <button type="button" class="btn" :class="{ 'btn-ink': canvasOpen }" x-show="!chatGroup && canvasItems.length" x-cloak
                 :aria-pressed="canvasOpen" :data-fresh="canvasFresh ? '' : null" @click="toggleCanvas()" x-text="'Canvas · ' + canvasItems.length + (canvasFresh ? ' · new' : '')"></button>
       </div>
+      <button type="button" class="btn icon-btn voice-toggle-phone" x-show="!chatGroup" :class="{ 'btn-ink': voiceReplies }" :aria-pressed="voiceReplies"
+                :aria-label="voiceReplies ? 'Voice replies on' : 'Voice replies off'" :title="voiceReplies ? 'Voice replies on: new replies are spoken (Esc stops)' : 'Voice replies off'"
+                @click="voiceSpeaking ? stopSpeaking() : toggleVoiceReplies()">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6h3l4-3v10L5 10H2z"/><path x-show="voiceReplies" fill="currentColor" d="M11 5h1v6h-1zM13 3h1v10h-1z"/><path x-show="!voiceReplies" fill="currentColor" d="M11 6l1-1 3 3-1 1zm0 4l3-3 1 1-3 3z"/></svg>
+        </button>
       <button type="button" class="btn chat-close" @click="closeChat()" aria-label="Close chat">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2l3 3 2 2 2-2 3-3 1 1-3 3-2 2 2 2 3 3-1 1-3-3-2-2-2 2-3 3-1-1 3-3 2-2-2-2-3-3z"/></svg>
         <span class="chat-close-label">Close</span>
@@ -248,7 +253,7 @@
         <button type="button" class="btn" :class="{ 'btn-ink': autoRoute }" :aria-pressed="autoRoute"
                 title="Let Jev pick an agent, a group (its lead), or Firstmate" @click="autoRoute = !autoRoute">Auto</button>
         <textarea class="field chat-field" x-ref="chatField" x-model="chatDraft" rows="1" @input="growComposer()" @keydown.enter="composerEnter($event)" :placeholder="autoRoute ? 'Message — Jev picks who' : 'Message ' + current().label" autocomplete="off" :aria-label="autoRoute ? 'Message, routed by Jev (Shift+Enter for a new line)' : 'Message ' + current().label + ' (Shift+Enter for a new line)'"></textarea>
-        <button type="button" class="btn icon-btn" x-show="!chatGroup" :class="{ 'btn-ink': voiceReplies }" :aria-pressed="voiceReplies"
+        <button type="button" class="btn icon-btn voice-toggle" x-show="!chatGroup" :class="{ 'btn-ink': voiceReplies }" :aria-pressed="voiceReplies"
                 :aria-label="voiceReplies ? 'Voice replies on' : 'Voice replies off'" :title="voiceReplies ? 'Voice replies on: new replies are spoken (Esc stops)' : 'Voice replies off'"
                 @click="voiceSpeaking ? stopSpeaking() : toggleVoiceReplies()">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6h3l4-3v10L5 10H2z"/><path x-show="voiceReplies" fill="currentColor" d="M11 5h1v6h-1zM13 3h1v10h-1z"/><path x-show="!voiceReplies" fill="currentColor" d="M11 6l1-1 3 3-1 1zm0 4l3-3 1 1-3 3z"/></svg>

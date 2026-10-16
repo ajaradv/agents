@@ -660,6 +660,7 @@ details.raw pre { margin: 0.3rem 0 0; max-height: 12rem; overflow: auto; white-s
 
 .dock { display: none; }
 .chat-close svg { display: none; }
+.voice-toggle-phone { display: none; }
 
 .dock-btn {
   appearance: none;
@@ -970,6 +971,8 @@ body.chat-open { overflow: hidden; }
   .chat-bar .chat-who { flex: 1 1 0; }
   .chat-bar .chat-who > div { min-width: 0; }
   .chat-bar .chat-who p.muted { max-width: none; }
+  .voice-toggle { display: none; }
+  .chat-bar .voice-toggle-phone { display: grid; place-items: center; flex: none; width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; }
   .chat-bar > .row { order: 3; flex: 1 0 100%; flex-wrap: nowrap; gap: 0.4rem; }
   .chat-bar > .row:not(:has(.btn:not([style*="display: none"]))) { display: none; }
   .chat-bar > .row .btn { flex: 1 1 0; min-height: 40px; }
@@ -986,7 +989,18 @@ body.chat-open { overflow: hidden; }
   .chat-compose { padding: 0.45rem 0.5rem; }
   .chat-compose .composer { flex-wrap: nowrap; align-items: flex-end; gap: 0.3rem; }
   .chat-compose .composer > .btn:first-child { display: none; } /* Auto: desktop only */
-  .chat-compose .chat-field { flex: 1 1 auto; order: 0; min-height: 2.4rem; }
+  .chat-compose .chat-field { flex: 1 1 auto; order: 0; min-height: 48px; }
+  .bubble .md table { width: max-content; }
+  .bubble .md th, .bubble .md td { max-width: 18rem; min-width: 4.5rem; overflow-wrap: normal; word-break: normal; }
+  .bubble .md td code { white-space: nowrap; }
+  /* Edge shadows say the table scrolls sideways. */
+  .bubble:not(.is-captain) .md-table {
+    background:
+      linear-gradient(90deg, var(--sheet) 30%, transparent) left / 24px 100% local no-repeat,
+      linear-gradient(270deg, var(--sheet) 30%, transparent) right / 24px 100% local no-repeat,
+      linear-gradient(90deg, rgb(26 26 26 / 0.28), transparent) left / 12px 100% scroll no-repeat,
+      linear-gradient(270deg, rgb(26 26 26 / 0.28), transparent) right / 12px 100% scroll no-repeat;
+  }
   .chat-compose .btn { padding-inline: 0.5rem; }
   .thread .bubble-row { max-width: 100%; }
   .thread .bubble-row.is-captain { max-width: 88%; }
