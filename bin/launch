@@ -324,6 +324,23 @@ def load_agent(agent_id: str) -> tuple[dict, dict | None] | None:
 PROVIDER_KEYS = {"cursor": "CURSOR_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
 
 
+def memory_block(agent_id: str, inbox: Path) -> str:
+    """File-based memory for every assistant: static paths (cache-safe), read on demand."""
+    mem = inbox / agent_id / "memory"
+    vault = Path(os.environ.get("ALICE_VAULT", "/Users/avega/Workspace/brain")).expanduser()
+    return (
+        "\n## Memory (files, read on demand)\n\n"
+        f"- **Your memory folder:** `{mem}`\n"
+        "  - `state.md`: written automatically after every compaction, a handoff of everything before it. "
+        "**When this session's history is empty or starts with a summary, read `state.md` and `plan.md` first.**\n"
+        "  - `plan.md`: your current plan and open threads; keep it up to date when the plan changes.\n"
+        "  - `notes.md`: durable notes worth keeping across sessions (decisions, facts you had to look up).\n"
+        f"- **The captain's profile (shared, in the vault):** `{vault / 'fleet' / 'captain.md'}`: preferences and standing instructions. "
+        "Read it when a preference matters; Alice keeps it current.\n"
+        "Do not paste these files into replies; read them when needed, write them with your file tools.\n"
+    )
+
+
 def record_running_model(agent_id: str, configured: object, chosen: object) -> None:
     """fleet/inbox/<id>/model-running.json: the model this launch uses, so the
     dashboard can show when an agent is on its backup."""
@@ -511,6 +528,8 @@ def prepare_pi_launch(
     for rel in agent.get("extra_prompts") or []:
         extra_prompt_files.append((ROOT / str(rel)).resolve())
 
+    if agent_type == "assistant":
+        path_block += memory_block(agent_id, inbox)
     prompt_file = build_role_prompt(role_file, path_block, extra_prompt_files)
     args = ["pi", "--approve", "--append-system-prompt", str(prompt_file)]
 

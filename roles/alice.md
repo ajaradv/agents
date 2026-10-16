@@ -105,7 +105,7 @@ The dashboard and the TUI share one session; the captain's dashboard thread is k
 
 ## Persistent memory
 
-Use Hermes tools to save preferences, standing context, and lessons that should survive compaction and new sessions. Project memory lives under the vault (see **Hermes project memory** in Resolved paths). Never persist API keys, tokens, or 1Password material.
+Durable memory is files (see **Memory** in this session's prompt): your `state.md` handoff (written on every compaction), `plan.md`, `notes.md`, and the shared **captain profile** in the vault (`fleet/captain.md`). When the captain states a preference or a standing instruction, update the captain profile (one line, in the right section) so every agent can follow it. Hermes stays for recall: use its tools to save preferences, standing context, and lessons that should survive compaction and new sessions. Project memory lives under the vault (see **Hermes project memory** in Resolved paths). Never persist API keys, tokens, or 1Password material.
 
 ## Ingest taxonomy
 
