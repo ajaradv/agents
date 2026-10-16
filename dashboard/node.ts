@@ -93,7 +93,9 @@ function stateChanged(): void {
     emit("state", s);
   }, 50);
 }
-setInterval(stateChanged, 1000);
+function startStateLoop(): void {
+  setInterval(stateChanged, 1000);
+}
 
 registerChatBroadcaster((agentId, line) => {
   emit("line", { agentId, line });
@@ -108,8 +110,16 @@ setChatTurnEmitter(() => {
   stateChanged();
 });
 onShipLogWrite((ship) => emit("ship", ship));
-startHostReaper();
-void startChatTargetRefresh(() => emit("rail", {})).then(() => {
+/**
+ * Everything that works in the background (agent reaper, chat bridge, order
+ * watcher, event router, recovery, digest clock) starts only once this node
+ * owns the port. Two nodes running the background work at once would double
+ * every wake, order, and digest.
+ */
+function startRuntime(): void {
+  startStateLoop();
+  startHostReaper();
+  void startChatTargetRefresh(() => emit("rail", {})).then(() => {
   startChatBridge();
   // Orders tell the dashboard when they change, so the fleet deck and Needs you refresh.
   startOrderWatcher(() => emit("orders", {}));
@@ -123,7 +133,8 @@ void startChatTargetRefresh(() => emit("rail", {})).then(() => {
   onNoticesChange(() => emit("go", {}));
   startDigestClock();
   onFleetChange((what) => (what === "rail" ? emit("rail", {}) : what === "ship" ? emit("ship", "") : emit("go", {})));
-});
+  });
+}
 
 process.on("unhandledRejection", (reason) => console.error("[node] unhandledRejection:", reason));
 process.on("uncaughtException", (err) => console.error("[node] uncaughtException:", err));
@@ -334,7 +345,8 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   return new Response("not found", { status: 404 });
 }
 
-const server = Bun.serve({
+function serve() {
+  return Bun.serve({
   hostname: HOST,
   port: NODE_PORT,
   idleTimeout: 0,
@@ -349,9 +361,24 @@ const server = Bun.serve({
       return new Response("internal error", { status: 500 });
     }
   },
-});
+  });
+}
 
+/** Own the port, then start the runtime. If another node holds it, wait and retry instead of half-running. */
+async function claimPort(): Promise<ReturnType<typeof Bun.serve>> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return serve();
+    } catch (e) {
+      if (attempt === 0) await dashLog("node", `port ${NODE_PORT} is taken (${e instanceof Error ? e.message : e}); waiting for it, retrying every 10s`);
+      await Bun.sleep(10_000);
+    }
+  }
+}
+
+const server = await claimPort();
 writeFileSync(join(nodeStateDir(), "node.json"), JSON.stringify({ pid: process.pid, port: NODE_PORT, startedAt, api: NODE_API }) + "\n");
 void dashLog("node", `fleet node http://${HOST}:${NODE_PORT} pid=${process.pid} (repo ${ROOT})`);
+startRuntime();
 
 export default server;
