@@ -991,7 +991,7 @@ body.chat-open { overflow: hidden; }
   .chat-compose .composer > .btn:first-child { display: none; } /* Auto: desktop only */
   .chat-compose .chat-field { flex: 1 1 auto; order: 0; min-height: 48px; }
   .bubble .md table { width: max-content; }
-  .bubble .md th, .bubble .md td { max-width: 18rem; min-width: 4.5rem; overflow-wrap: normal; word-break: normal; }
+  .bubble .md th, .bubble .md td { max-width: 14rem; min-width: 4.5rem; overflow-wrap: normal; word-break: normal; }
   .bubble .md td code { white-space: nowrap; }
   /* Edge shadows say the table scrolls sideways. */
   .bubble:not(.is-captain) .md-table {
@@ -1126,4 +1126,17 @@ body.chat-open { overflow: hidden; }
   .mic-btn svg { width: 28px; height: 28px; }
   .chat-compose .btn[type="submit"] { min-height: 48px; }
   .chat-compose .composer { align-items: center; }
+}
+
+/* Phone density (F5): a slim mast, shorter titles, one-glance cards. */
+@media (max-width: 640px) {
+  .mast { margin-bottom: 0.5rem; align-items: center; }
+  .mast-face { width: 40px; height: 40px; }
+  h1 { font-size: 1.15rem; }
+  main > .leaf > h2, .leaf > h2 { font-size: 1.1rem; margin-bottom: 0.55rem; }
+  .agent-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .agent > p.muted[title] { display: none; } /* last-message sample: on the chat, not the card */
+  .agent .avatar { width: 40px; height: 40px; }
+  .agent .btn, .agent .row .btn { min-height: 44px; }
+  .ship-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
