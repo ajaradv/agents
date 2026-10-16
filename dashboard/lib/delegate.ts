@@ -30,6 +30,8 @@ const MAX_RUNNING = Math.max(1, Number(process.env.FLEET_HELPERS_MAX) || 2);
 const TIMEOUT_MS = Math.max(1, Number(process.env.FLEET_HELPER_MINUTES) || 15) * 60_000;
 const BUDGET = Math.max(0, Number(process.env.FLEET_HELPER_BUDGET_USD ?? 2));
 const HELPER_PROMPT = join(ROOT, "prompts", "system", "helper.md");
+/** In the vault the helper is a librarian: it also gets the vault's map and conventions. */
+const LIBRARIAN_PROMPT = join(ROOT, "prompts", "system", "librarian.md");
 
 type Data = { from: string; task: string; where: string; cwd: string; model: string; dir: string; pid: number; started: string; cost?: number; summary?: string };
 type Res = { ok: boolean; message: string; [k: string]: unknown };
@@ -57,7 +59,7 @@ export function summaryOf(text: string): string {
   const m = text.match(/Summary:\s*([\s\S]*?)(?:\n\s*\n|$)/i);
   const s = (m ? m[1]! : text).replace(/\s+/g, " ").trim();
   if (m) return s.slice(0, 600);
-  return (s.match(/[^.!?]+[.!?]+/g) ?? [s]).slice(0, 3).join(" ").trim().slice(0, 600);
+  return (s.match(/[^.!?]+[.!?]+/g) ?? [s]).slice(0, 3).map((x) => x.trim()).join(" ").slice(0, 600);
 }
 
 /** Parse a helper's JSON event stream: its final answer and what it cost. */
@@ -102,7 +104,7 @@ export async function startDelegation(from: string, task: string, where = "vault
   let pid = 0;
   try {
     const proc = Bun.spawn(
-      ["pi", "--mode", "json", "-p", "--no-session", "--model", MODEL, "--tools", "read,grep,find,ls", "--append-system-prompt", HELPER_PROMPT, "-e", join(ROOT, "extensions", "cache-watch.ts"), t],
+      ["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--model", MODEL, "--tools", "read,grep,find,ls", "--append-system-prompt", HELPER_PROMPT, ...(where === "vault" || !where ? ["--append-system-prompt", LIBRARIAN_PROMPT] : []), "-e", join(ROOT, "extensions", "cache-watch.ts"), t],
       { cwd, stdin: "ignore", stdout: out, stderr: out, detached: true, env: { ...process.env, ...(await agentKeyEnv()), FLEET_AGENT_ID: `${from}-helper` } },
     );
     pid = proc.pid;

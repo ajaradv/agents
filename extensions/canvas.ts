@@ -96,10 +96,8 @@ export default function (pi: ExtensionAPI) {
     name: "canvas_show",
     label: "Show on canvas",
     description:
-      "Show work on the captain's dashboard canvas: images or an image set (comps, screenshots), an html page, markdown, a table, or a local URL (a decision board, the dev server). " +
-      "Use it whenever the captain should look at something rather than read a path. Re-use an id to update an item. " +
-      "An html page can send the captain's choice back to you as a chat message with parent.postMessage({type: 'fleet-canvas', text: '...'}, '*') from a click handler (never on load). " +
-      "html runs sandboxed: no network except cdn.jsdelivr.net, cdnjs.cloudflare.com, unpkg.com and Google Fonts.",
+      "Show the captain something to look at on the dashboard canvas: images or an image set, html, markdown, a table, or a local URL. Re-use an id to update. " +
+      "html can send a choice back as a chat message with parent.postMessage({type: 'fleet-canvas', text: '...'}, '*') from a click handler (never on load); it is sandboxed, network only to cdn.jsdelivr.net, cdnjs.cloudflare.com, unpkg.com, Google Fonts.",
     parameters: ShowParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {

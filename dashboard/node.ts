@@ -18,6 +18,7 @@ import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, on
 import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
 import { dashLog } from "./lib/log.ts";
+import { recall, startRecallIndexer } from "./lib/recall.ts";
 import { notifyCaptain, onNoticesChange, startDigestClock, type NoticeKind } from "./lib/notify.ts";
 import { checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
 import { nodeToken, tokenMatches } from "./lib/node-auth.ts";
@@ -132,6 +133,8 @@ function startRuntime(): void {
   // Captain notices: interruptions go to Needs you at once; the rest waits for the morning digest.
   onNoticesChange(() => emit("go", {}));
   startDigestClock();
+  // recall: keep the full-text index of chats, helper results, digests, and notices current.
+  startRecallIndexer();
   onFleetChange((what) => (what === "rail" ? emit("rail", {}) : what === "ship" ? emit("ship", "") : emit("go", {})));
   });
 }
@@ -216,6 +219,7 @@ function fleetCall(what: string, method: string, q: URLSearchParams, b: Record<s
   if (method === "GET" && what === "tasks") return { tool: "ship_tasks", read: true, args: fromQ(["ship"]) };
   if (method === "GET" && what === "maneuvers") return { tool: "ship_maneuvers", read: true, args: fromQ(["ship"]) };
   if (method === "GET" && what === "chat") return { tool: "agent_chat_read", read: true, args: fromQ(["agent", "n"]) };
+  if (method === "GET" && what === "recall") return { tool: "recall", read: true, args: fromQ(["query", "limit"]) };
   if (method === "POST" && what === "chat") return { tool: "fleet_chat", read: false, args: pick((k) => b[k], ["to", "text"]) };
   return null;
 }
@@ -273,6 +277,10 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
   else if (call.tool === "ship_tasks") res = await shipTasks(a.ship ?? "");
   else if (call.tool === "ship_maneuvers") res = await shipManeuvers(a.ship ?? "");
   else if (call.tool === "agent_chat_read") res = await agentChatRead(a.agent ?? "", Number(a.n) || 12);
+  else if (call.tool === "recall") {
+    const hits = recall(a.query ?? "", Number(a.limit) || 8);
+    res = { ok: true, message: hits.length ? `${hits.length} match(es), best first.` : "No matches. Try other words, or delegate a deeper search.", hits };
+  }
   else res = await fleetChat(from, a.to ?? "", a.text ?? "");
   if (gate.step) {
     recordOrderCall(gate.step, call.tool, call.args, res.message);
@@ -285,7 +293,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const url = new URL(req.url);
   const path = url.pathname;
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate)$/);
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|recall)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers)(?:\/(\d+))?$/);

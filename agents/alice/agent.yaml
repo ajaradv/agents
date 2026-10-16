@@ -16,16 +16,19 @@ dashboard_session: persistent
 daily_budget_usd: 6
 vault: /Users/avega/Workspace/brain
 vault_inbox: fleet/inbox
+# A light delegator: no Hermes (durable memory is files: captain profile,
+# state/plan/notes, and recall), no Obsidian extension (built-in file tools
+# cover the vault; deep vault work goes to a librarian helper). cursor-sdk is
+# for her Composer backup.
 extensions:
   - cursor-sdk
-  - hermes-memory
-  - obsidian
   - fleet
 skills:
   - obsidian-markdown
   - obsidian-bases
-  - json-canvas
-  - obsidian-cli
+# Only the skills above: the globally installed ones (AWS, archify, ...) were
+# half her system prompt.
+discover_skills: false
 extra_prompts:
   - prompts/system/sr_opus_5_system_prompt.md
 # Codemode and tool_search: rarely used fleet actions load on demand (lazy

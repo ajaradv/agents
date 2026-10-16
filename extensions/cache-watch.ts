@@ -20,7 +20,11 @@
  *    already in its context. A designer once re-read the same screenshots in a
  *    loop until its credits ran out. Any edit, write, or shell command resets
  *    the count (the world may have changed), so re-reading after a change and
- *    re-running tests stay allowed.
+ *    re-running tests stay allowed;
+ * 4. two strikes: when the same tool fails twice in a row (an error result, or
+ *    the fleet node not answering), the second failure tells the agent to stop
+ *    calling it and to report blocked or work around it, instead of retrying
+ *    until the budget runs out.
  *
  * Warnings go out as notices, which the fleet node writes to the ship's log.
  * Providers that never cache (Cursor replays sessions) are skipped for (2).
@@ -40,6 +44,15 @@ const NO_CACHE_PROVIDERS = new Set(["cursor"]);
 export function isReadTool(name: string): boolean {
   return /^(read|grep|find|ls|glob|view_image)$/.test(name) || /^obsidian_(read|search|list)/.test(name) || /_(read|status|log|tasks|maneuvers)$/.test(name);
 }
+
+/** Did this tool call fail? An error result, or a fleet tool whose node did not answer. */
+export function toolFailed(isError: boolean, content: { type: string; text?: string }[]): boolean {
+  if (isError) return true;
+  const first = content.find((c) => c.type === "text")?.text ?? "";
+  return first.startsWith("The fleet node did not answer");
+}
+
+export const STRIKE_NOTE = "\n\nThis tool has now failed twice in a row. Do not call it again in this run: work around it, or tell the captain you are blocked (notify_captain kind blocked, or say so in the chat) with what failed.";
 
 /** JSON with sorted object keys and no whitespace, so the same value always serializes the same way. */
 export function stableJson(v: unknown): string {
@@ -81,6 +94,8 @@ export default function (pi: ExtensionAPI) {
   /** Caching seen working in this session (some reply read from cache). */
   let cacheSeen = false;
   const calls = new Map<string, number>();
+  /** Consecutive failures per tool. */
+  const strikes = new Map<string, number>();
 
   const currentHash = (ctx: ExtensionContext): string | null => {
     try {
@@ -94,6 +109,21 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_start", async () => {
     calls.clear();
+    strikes.clear();
+  });
+
+  pi.on("tool_result", async (event) => {
+    const e = event as { toolName?: string; isError?: boolean; content?: { type: string; text?: string }[] };
+    if (!e.toolName) return;
+    const content = e.content ?? [];
+    if (!toolFailed(Boolean(e.isError), content)) {
+      strikes.delete(e.toolName);
+      return;
+    }
+    const n = (strikes.get(e.toolName) ?? 0) + 1;
+    strikes.set(e.toolName, n);
+    if (n !== 2) return;
+    return { content: [...content, { type: "text" as const, text: STRIKE_NOTE }] };
   });
 
   pi.on("message_end", async (event, ctx) => {

@@ -52,8 +52,8 @@ const RARE = LAZY ? ({ exposure: "codemode", namespace: { name: "fleet_actions",
 
 /** Every fleet tool can be a step of a running order. */
 const OrderArgs = {
-  order: Type.Optional(Type.String({ description: "Only while running a fleet order: its id" })),
-  step: Type.Optional(Type.Number({ description: "Only while running a fleet order: the step number this call is" })),
+  order: Type.Optional(Type.String({ description: "Running order's id, if any" })),
+  step: Type.Optional(Type.Number({ description: "Its step number" })),
 };
 
 export default function (pi: ExtensionAPI) {
@@ -61,9 +61,9 @@ export default function (pi: ExtensionAPI) {
     name: "fleet_status",
     label: "Fleet status",
     description:
-      "One picture of the whole fleet: every ship (voyage goal and task progress, crew status), officers, Firstmate's workers, who is working now, everything waiting on the captain (questions, holds, failed messages), and today's spend per agent. Call it first when a message is about the fleet.",
+      "The whole fleet at a glance: ships (voyage, tasks, crew), who is working, what waits on the captain, today's spend. Call it first for fleet questions.",
     parameters: Type.Object({
-      detail: Type.Optional(Type.Boolean({ description: "Add each crewmate's activity, officers, Firstmate's workers, and spend per agent. Leave off for the usual summary." })),
+      detail: Type.Optional(Type.Boolean({ description: "Add per-crewmate activity, officers, workers, spend per agent" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
@@ -74,11 +74,11 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "ship_log",
     label: "Ship log",
-    description: "A ship's log, newest first: chat in and out, questions, tool steps, turn results with cost, tasks, maneuvers. Officers (you, the Architect, the Designer) are logged on the ship `fleet`. Filter by kind (chat-in, chat-out, question, answer, tool, turn-end, notice, task, maneuver).",
+    description: "A ship's log, newest first. Officers are on ship `fleet`.",
     parameters: Type.Object({
       ship: Type.String({ description: "Ship id, e.g. kinwork, or fleet for officers" }),
       limit: Type.Optional(Type.Number({ description: "Rows, default 20, max 200" })),
-      kind: Type.Optional(Type.String()),
+      kind: Type.Optional(Type.String({ description: "chat-in, chat-out, question, answer, tool, turn-end, notice, task, maneuver" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
@@ -89,7 +89,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "ship_tasks",
     label: "Ship tasks",
-    description: "A ship's open voyage: goal, who it was sent to, and every task with assignee, status, and note.",
+    description: "A ship's open voyage: goal and every task with assignee and status.",
     parameters: Type.Object({ ship: Type.String(), ...OrderArgs }),
     async execute(_id, p) {
       return text(await call("GET", "tasks", { ship: p.ship, order: p.order, step: p.step }));
@@ -110,7 +110,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "agent_chat_read",
     label: "Read an agent's thread",
-    description: "The newest lines of the captain's chat thread with any agent on the rail (including replies to your fleet_chat messages).",
+    description: "Newest lines of any agent's captain thread (where replies to your fleet_chat land).",
     parameters: Type.Object({
       agent: Type.String({ description: "Agent id, e.g. kinwork-designer, architect, firstmate" }),
       n: Type.Optional(Type.Number({ description: "Lines, default 8, max 60 (long lines are shortened)" })),
@@ -122,10 +122,24 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "recall",
+    label: "Recall",
+    description: "Full-text search of past fleet talk: every agent's captain thread, helper results, digests, and notices. Use it before asking the captain something they may already have said. Returns snippets with source and time. Not the vault (delegate where=vault for that).",
+    parameters: Type.Object({
+      query: Type.String({ description: "Words to find; \"quoted phrase\" for exact" }),
+      limit: Type.Optional(Type.Number({ description: "Hits, default 8, max 20" })),
+      ...OrderArgs,
+    }),
+    async execute(_id, p) {
+      return text(await call("GET", "recall", { query: p.query, limit: p.limit, order: p.order, step: p.step }));
+    },
+  });
+
+  pi.registerTool({
     name: "fleet_chat",
     label: "Message an agent",
     description:
-      "Send a message to any agent on the rail (a crewmate, an officer, or Firstmate). It starts that agent's turn; the agent sees it is from you, not the captain. Use it to ask, relay, or hand over context. It does not change fleet state by itself: never phrase it as the captain's order unless the captain asked you to relay one.",
+      "Message any agent on the rail; starts its turn, marked as from you. Never phrase it as the captain's order unless asked to relay one.",
     parameters: Type.Object({
       to: Type.String({ description: "Agent id" }),
       text: Type.String(),
@@ -140,7 +154,7 @@ export default function (pi: ExtensionAPI) {
     name: "delegate",
     label: "Hand a task to a helper",
     description:
-      "Hand a self-contained reading or research task to a short-lived helper (cheap model, read-only tools: read, grep, find, ls) so your own context stays small: summarising many notes, surveying a repo, collecting facts across files. It runs in the background; you are woken with a two-to-three sentence summary, and the full result is in a file you can read if needed. Write the task so it stands alone: what to find, where, and what the answer must contain. Not for changes (helpers cannot write) or for anything needing the captain.",
+      "Hand a self-contained read-only task (summarise notes, survey a repo, collect facts) to a cheap background helper; in the vault it is a librarian. You are woken with a short summary; the full result is in a file. State what to find, where, and what the answer must contain. Helpers cannot write.",
     parameters: Type.Object({
       task: Type.String({ description: "The complete task, self-contained" }),
       where: Type.Optional(Type.String({ description: "vault (default), fleet (the agents repo), or a ship id (its repo)" })),
@@ -154,12 +168,12 @@ export default function (pi: ExtensionAPI) {
     name: "notify_captain",
     label: "Notify the captain",
     description:
-      "The one way to tell the captain something outside a conversation they are in: work finished (done), stuck (blocked), a choice only they can make (decision), a named milestone (milestone), or anything else (info). Done, blocked, decision, and milestone interrupt them now (unless they snoozed); info waits for the morning digest. Use it for results of orders, delegations, and things the event router woke you for; not for replies in a live chat.",
+      "Tell the captain something outside a live chat. done, blocked, decision, milestone interrupt now (unless snoozed); info waits for the morning digest. For results of orders, delegations, and router wakes.",
     parameters: Type.Object({
       kind: StringEnum(["done", "blocked", "decision", "milestone", "info"] as const),
-      summary: Type.String({ description: "One sentence the captain reads (and hears): what happened and what, if anything, they need to do" }),
-      detail: Type.Optional(Type.String({ description: "Optional detail for the screen, a few lines" })),
-      ref: Type.Optional(Type.String({ description: "A path, order id, task number, or link they can open" })),
+      summary: Type.String({ description: "One spoken sentence: what happened, what they need to do" }),
+      detail: Type.Optional(Type.String({ description: "A few lines for the screen" })),
+      ref: Type.Optional(Type.String({ description: "Path, order id, or link" })),
     }),
     async execute(_id, p) {
       return text(await call("POST", "notify", {}, { kind: p.kind, summary: p.summary, detail: p.detail ?? "", ref: p.ref ?? "" }));
@@ -170,7 +184,7 @@ export default function (pi: ExtensionAPI) {
   // each one for the captain's Go and answers "waiting"; end the turn then.
   const action = (tool: string, args: Record<string, unknown>, p: { order?: string; step?: number }) =>
     call("POST", "action", {}, { tool, args: Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined)), order: p.order, step: p.step });
-  const GO = " Needs the captain's Go: outside an approved order the call returns \"waiting for the captain's Go\"; end your turn then, and the result arrives as a message.";
+  const GO = " Outside an order it waits for the captain's Go: end your turn; the result arrives as a message.";
 
   pi.registerTool({
     name: "voyage_start",

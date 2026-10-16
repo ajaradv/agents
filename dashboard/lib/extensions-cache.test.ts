@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cacheMiss, isReadTool, prefixHash, stableJson } from "../../extensions/cache-watch.ts";
+import { cacheMiss, isReadTool, prefixHash, stableJson, toolFailed } from "../../extensions/cache-watch.ts";
 import { windowImages } from "../../extensions/image-window.ts";
 
 const img = (n: number) => ({ type: "image", data: "x".repeat(n) });
@@ -77,5 +77,13 @@ describe("context-guard", () => {
     expect(stateFile({ FLEET_AGENT_ID: "alice", FLEET_INBOX: "/x/inbox" })).toBe("/x/inbox/alice/memory/state.md");
     expect(stateFile({ FLEET_AGENT_ID: "../etc", FLEET_INBOX: "/x" })).toBeNull();
     expect(stateFile({})).toBeNull();
+  });
+});
+
+describe("cache-watch two strikes", () => {
+  test("an error result or an unanswered fleet call is a failure", () => {
+    expect(toolFailed(true, [])).toBe(true);
+    expect(toolFailed(false, [{ type: "text", text: "The fleet node did not answer (timeout). Tell the captain." }])).toBe(true);
+    expect(toolFailed(false, [{ type: "text", text: "{\"ok\":true}" }])).toBe(false);
   });
 });

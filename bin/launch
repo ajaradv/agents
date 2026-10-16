@@ -396,6 +396,7 @@ def prepare_pi_launch(
         return None
     agent, aboard = loaded
     agent_type = str(agent.get("type") or "")
+    uses_hermes = "hermes-memory" in [str(e) for e in agent.get("extensions") or []]
     harness = str(agent.get("harness") or "pi")
     role = str(agent.get("role") or agent_id)
     model = agent.get("model")
@@ -459,11 +460,11 @@ def prepare_pi_launch(
             f"- Vault human inbox: `{vault_path / 'fleet' / 'inbox'}/`\n"
             f"- Plans: `{vault_path / 'fleet' / 'plans'}/`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
-            f"- Hermes project memory: `{vault_path / '.pi' / 'agent' / 'pi-hermes-memory'}/`\n"
+            + (f"- Hermes project memory: `{vault_path / '.pi' / 'agent' / 'pi-hermes-memory'}/`\n" if uses_hermes else "")
             + dashboard_chat_block()
         )
-        hermes_dir = vault_path / ".pi" / "agent" / "pi-hermes-memory"
-        hermes_dir.mkdir(parents=True, exist_ok=True)
+        if uses_hermes:
+            (vault_path / ".pi" / "agent" / "pi-hermes-memory").mkdir(parents=True, exist_ok=True)
         for skill in agent.get("skills") or []:
             skill_dir = cwd / ".pi" / "skills" / str(skill)
             if skill_dir.is_dir():
@@ -574,6 +575,11 @@ def prepare_pi_launch(
             skill_dir = cwd / ".pi" / "skills" / str(skill)
             if skill_dir.is_dir():
                 args.extend(["--skill", str(skill_dir)])
+
+    # `discover_skills: false`: only the skills named here, none found on disk (a
+    # skill list in the system prompt costs every turn; Alice's global skills were 28k chars).
+    if str(agent.get("discover_skills")).lower() == "false":
+        args.append("--no-skills")
 
     # Repo-relative skill folders (each holds a SKILL.md), for any agent type.
     for rel in agent.get("skill_paths") or []:

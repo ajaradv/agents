@@ -70,9 +70,8 @@ export default function (pi: ExtensionAPI) {
     name: "ask_captain",
     label: "Ask captain",
     description:
-      "Ask the captain clarifying questions when a decision is theirs to make (direction, naming, scope, a pick between options, anything you would otherwise assume). " +
-      "This is the structured question tool: use it instead of choosing a default. Give 2-5 concrete options per question and mark one recommended when you have a view. " +
-      "In a dashboard turn the questions are posted and you must end your turn right after; the answer arrives as the captain's next message.",
+      "Ask the captain when a decision is theirs (direction, naming, scope, a pick) instead of assuming a default. 2-5 options each, one recommended if you have a view. " +
+      "In a dashboard turn, end your turn right after; the answer arrives as their next message.",
     parameters: AskParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {

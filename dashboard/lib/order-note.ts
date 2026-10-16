@@ -37,6 +37,7 @@ export const ORDER_TOOLS: Record<string, { params: string[]; required: string[];
   ship_tasks: { params: ["ship"], required: ["ship"], read: true },
   ship_maneuvers: { params: ["ship"], required: ["ship"], read: true },
   agent_chat_read: { params: ["agent", "n"], required: ["agent"], read: true },
+  recall: { params: ["query", "limit"], required: ["query"], read: true },
   fleet_chat: { params: ["to", "text"], required: ["to", "text"], read: false },
 };
 

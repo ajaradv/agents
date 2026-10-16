@@ -299,6 +299,8 @@ export async function finishGo(id: string): Promise<Res> {
   const w = getWorkflow<GoRequest & { decision?: "go" | "no" }>(id);
   if (!w) return { ok: false, message: "No such request." };
   const req = w.data;
+  // Already finished (done, failed, or declined): never run the action again, even when it failed.
+  if (w.status !== "running") return { ok: w.status === "done", message: String((w.data as { result?: string }).result ?? `Already ${w.status}.`) };
   const go = req.decision === "go";
   await once(id, "answer", async () => (await postLine(req.from, { ts: new Date().toISOString(), from: "captain", kind: "answer", text: go ? "Go" : "No", ref: req.lineTs })).ts);
   if (!go) {
