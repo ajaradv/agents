@@ -190,6 +190,12 @@ function dashboardApp() {
       this.connectBus();
       this.applyUrl();
       this.initPush();
+      // The first tap anywhere unlocks audio playback on phones (see unlockAudio).
+      const unlock = () => {
+        this.unlockAudio();
+        if (this.audioUnlocked) ["click", "touchend"].forEach((t) => document.removeEventListener(t, unlock, true));
+      };
+      ["click", "touchend"].forEach((t) => document.addEventListener(t, unlock, true));
       // Old hash links (#chat/<id>, #group/<id>, #alice) still open their drawer.
       const m = location.hash.match(/^#chat\/([a-z][a-z0-9_-]*)$/);
       if (m) this.openChat(m[1]);
@@ -1261,15 +1267,64 @@ function dashboardApp() {
 
     // ------------------------------------------------------------ voice
 
+    /**
+     * iPhones play sound only on an audio element first started inside a tap:
+     * a new Audio() made after a fetch stays silent. So speech and
+     * acknowledgements each reuse one element, unlocked by the first tap.
+     */
+    players() {
+      if (!this._players) this._players = { ack: new Audio(), speech: new Audio() };
+      return this._players;
+    },
+
+    unlockAudio() {
+      if (this.audioUnlocked) return;
+      this.audioUnlocked = true;
+      // A tenth of a second of silence (16-bit mono WAV at 8 kHz).
+      const n = 800;
+      const buf = new ArrayBuffer(44 + n * 2);
+      const v = new DataView(buf);
+      const str = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+      str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, 8000, true); v.setUint32(28, 16000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, n * 2, true);
+      const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+      for (const a of Object.values(this.players())) {
+        a.src = url;
+        a.play().then(() => a.pause()).catch(() => (this.audioUnlocked = false));
+      }
+    },
+
+    /** Play a clip on one of the reusable players; resolves when it ends (or fails). */
+    playOn(audio, blob) {
+      return new Promise((resolve) => {
+        const url = URL.createObjectURL(blob);
+        const done = () => {
+          audio.onended = audio.onerror = null;
+          URL.revokeObjectURL(url);
+          resolve();
+        };
+        audio.onended = done;
+        audio.onerror = done;
+        audio.src = url;
+        audio.play().catch(done);
+      });
+    },
+
     /** Hold to talk (pointerdown/up); a quick click toggles instead. */
     micDown(ev) {
+      this.micPointer = ev.pointerType;
+      // On a touchscreen the mic is tap to talk (a held finger drifts, and iOS turns long presses into selection).
+      if (ev.pointerType === "touch") return;
       ev.preventDefault();
+      this.micHolding = true;
       this.micPressedAt = Date.now();
       if (this.voiceState === "listening") return;
       this.startListening();
     },
 
     micUp() {
+      if (this.micPointer === "touch") return;
+      this.micHolding = false;
       if (this.voiceState !== "listening") return;
       if (Date.now() - (this.micPressedAt || 0) < 350) {
         this.voiceNote = "Listening… click the mic again to send.";
@@ -1280,6 +1335,11 @@ function dashboardApp() {
     },
 
     micClick() {
+      this.unlockAudio();
+      if (this.micPointer === "touch") {
+        if (this.voiceState === "idle") this.voiceNote = "Listening… tap again to send, or just pause.";
+        return this.toggleListening();
+      }
       if (this.micToggled && this.voiceState === "listening" && Date.now() - (this.micPressedAt || 0) > 400) {
         this.micToggled = false;
         this.stopListening(true);
@@ -1299,15 +1359,32 @@ function dashboardApp() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === "suspended") await ctx.resume().catch(() => {});
         const src = ctx.createMediaStreamSource(stream);
         const node = ctx.createScriptProcessor(4096, 1, 1);
         const chunks = [];
-        node.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+        // End of speech: once the captain has spoken, about 1.3 s of quiet sends it (unless the mic is being held).
+        let heard = false;
+        let lastLoud = Date.now();
+        node.onaudioprocess = (e) => {
+          const d = e.inputBuffer.getChannelData(0);
+          chunks.push(new Float32Array(d));
+          let sum = 0;
+          for (let i = 0; i < d.length; i += 4) sum += d[i] * d[i];
+          if (Math.sqrt(sum / (d.length / 4)) > 0.015) {
+            heard = true;
+            lastLoud = Date.now();
+          } else if (heard && !this.micHolding && Date.now() - lastLoud > 1300 && this.rec && this.rec.node === node) {
+            this.stopListening(true);
+          }
+        };
         src.connect(node);
         node.connect(ctx.destination);
         this.rec = { stream, ctx, src, node, chunks, started: Date.now() };
         this.voiceState = "listening";
         if (!this.voiceNote) this.voiceNote = "Listening… release to send.";
+        // Talking to an agent means wanting to hear it back.
+        if (!this.voiceReplies) this.toggleVoiceReplies();
         this.recTimer = setTimeout(() => this.stopListening(true), 60_000);
       } catch (e) {
         this.voiceState = "idle";
@@ -1451,18 +1528,10 @@ function dashboardApp() {
       if (!ready.length) return void this.preloadAcks(agent);
       const line = ready[Math.floor(Math.random() * ready.length)];
       this.lastAck = line;
-      const url = URL.createObjectURL(this.ackCache.get(`${agent}|${line}`));
-      const audio = new Audio(url);
+      const audio = this.players().ack;
       this.ackAudio = audio;
-      this.ackDone = new Promise((resolve) => {
-        const done = () => {
-          URL.revokeObjectURL(url);
-          if (this.ackAudio === audio) this.ackAudio = null;
-          resolve();
-        };
-        audio.onended = done;
-        audio.onerror = done;
-        audio.play().catch(done);
+      this.ackDone = this.playOn(audio, this.ackCache.get(`${agent}|${line}`)).then(() => {
+        if (this.ackAudio === audio) this.ackAudio = null;
       });
     },
 
@@ -1565,19 +1634,9 @@ function dashboardApp() {
     async playBlob(blob, gen) {
       // Let a playing acknowledgement finish first (it is about a second).
       if (this.ackDone) await this.ackDone;
-      return new Promise((resolve) => {
-        if (gen !== this.speechGen) return resolve();
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        this.speechAudio = audio;
-        const done = () => {
-          URL.revokeObjectURL(url);
-          resolve();
-        };
-        audio.onended = done;
-        audio.onerror = done;
-        audio.play().catch(done);
-      });
+      if (gen !== this.speechGen) return;
+      this.speechAudio = this.players().speech;
+      await this.playOn(this.speechAudio, blob);
     },
 
     /** Fallback when local voice is not set up: the browser's own speech. */
@@ -1594,15 +1653,15 @@ function dashboardApp() {
     stopSpeaking() {
       this.speechGen = (this.speechGen || 0) + 1;
       this.speechQueue = [];
-      if (this.ackAudio) {
-        this.ackAudio.pause();
-        this.ackAudio = null;
+      // Pause the players and settle their clips (a paused clip never fires "ended").
+      for (const a of [this.ackAudio, this.speechAudio]) {
+        if (!a) continue;
+        a.pause();
+        if (a.onended) a.onended();
       }
+      this.ackAudio = null;
       this.ackDone = null;
-      if (this.speechAudio) {
-        this.speechAudio.pause();
-        this.speechAudio = null;
-      }
+      this.speechAudio = null;
       if (window.speechSynthesis) speechSynthesis.cancel();
       this.voiceSpeaking = false;
     },

@@ -1090,3 +1090,14 @@ body.chat-open { overflow: hidden; }
 .chat-who .face-wrap .ship-badge { font-size: 0.6rem; padding: 3px 3px 2px; }
 .need > .face-wrap { width: 48px; height: 48px; }
 @media (max-width: 640px) { .need > .face-wrap { display: none; } }
+
+/* Touchscreens (D6 phone): fingers need bigger targets than a mouse. The mic is
+   tap to talk there, so it gets the biggest one. */
+@media (pointer: coarse) {
+  .icon-btn { min-width: 48px; min-height: 48px; }
+  .icon-btn svg { width: 22px; height: 22px; }
+  .mic-btn { min-width: 60px; min-height: 52px; }
+  .mic-btn svg { width: 28px; height: 28px; }
+  .chat-compose .btn[type="submit"] { min-height: 48px; }
+  .chat-compose .composer { align-items: center; }
+}
