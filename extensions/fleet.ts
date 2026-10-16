@@ -127,6 +127,20 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "delegate",
+    label: "Hand a task to a helper",
+    description:
+      "Hand a self-contained reading or research task to a short-lived helper (cheap model, read-only tools: read, grep, find, ls) so your own context stays small: summarising many notes, surveying a repo, collecting facts across files. It runs in the background; you are woken with a two-to-three sentence summary, and the full result is in a file you can read if needed. Write the task so it stands alone: what to find, where, and what the answer must contain. Not for changes (helpers cannot write) or for anything needing the captain.",
+    parameters: Type.Object({
+      task: Type.String({ description: "The complete task, self-contained" }),
+      where: Type.Optional(Type.String({ description: "vault (default), fleet (the agents repo), or a ship id (its repo)" })),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "delegate", {}, { task: p.task, where: p.where ?? "vault" }));
+    },
+  });
+
+  pi.registerTool({
     name: "notify_captain",
     label: "Notify the captain",
     description:

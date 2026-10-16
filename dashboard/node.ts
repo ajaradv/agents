@@ -16,6 +16,7 @@ import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStat
 import { recoverManeuvers } from "./lib/crew-api.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
+import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
 import { dashLog } from "./lib/log.ts";
 import { notifyCaptain, onNoticesChange, startDigestClock, type NoticeKind } from "./lib/notify.ts";
 import { checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
@@ -117,6 +118,7 @@ void startChatTargetRefresh(() => emit("rail", {})).then(() => {
   // The journal: finish Go decisions and re-attach maneuvers a restart interrupted (orders resume in the watcher).
   void recoverGos().catch((e) => console.error("[node] go recovery:", e));
   void recoverManeuvers().catch((e) => console.error("[node] maneuver recovery:", e));
+  void recoverDelegations().catch((e) => console.error("[node] delegation recovery:", e));
   // Captain notices: interruptions go to Needs you at once; the rest waits for the morning digest.
   onNoticesChange(() => emit("go", {}));
   startDigestClock();
@@ -220,6 +222,10 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
     return reply(await orderFinish(String(b.order ?? ""), b.status === "done" ? "done" : "blocked", String(b.why ?? "")));
   }
 
+  if (what === "delegate" && req.method === "POST") {
+    return reply(await startDelegation(from, String(b.task ?? ""), String(b.where ?? "vault")));
+  }
+
   if (what === "notify" && req.method === "POST") {
     // Communication, not a fleet action: allowed during an order too.
     const n = notifyCaptain({ from, kind: String(b.kind ?? "info") as NoticeKind, summary: String(b.summary ?? "").trim(), detail: String(b.detail ?? ""), ref: String(b.ref ?? "") });
@@ -268,7 +274,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const url = new URL(req.url);
   const path = url.pathname;
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify)$/);
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers)(?:\/(\d+))?$/);
