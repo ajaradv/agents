@@ -26,14 +26,14 @@ const STT_MODEL = "google/gemini-3.1-flash-lite";
 /** Kokoro voice per role, matched to the portraits; agent.yaml `voice:` overrides. */
 const ROLE_VOICES: Record<string, string> = {
   firstmate: "am_michael",
-  alice: "bf_emma", // young, polite, British
+  alice: "bf_isabella", // young, polite, British
   architect: "bm_george",
   shipwright: "am_adam",
   designer: "af_heart",
   lead: "bm_fable",
   scout: "am_puck",
 };
-const POOL = ["am_eric", "bf_emma", "am_liam", "af_nova", "bm_lewis", "af_sarah", "am_onyx", "bf_isabella", "bm_daniel", "af_river"];
+const POOL = ["am_eric", "bf_emma", "am_liam", "af_nova", "bm_lewis", "af_sarah", "am_onyx", "bf_lily", "bm_daniel", "af_river"];
 
 export function voiceFor(id: string, role?: string, override?: string): string {
   if (override && /^[ab][fm]_[a-z]+$/.test(override)) return override;
