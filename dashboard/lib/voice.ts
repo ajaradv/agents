@@ -26,7 +26,7 @@ const STT_MODEL = "google/gemini-3.1-flash-lite";
 /** Kokoro voice per role, matched to the portraits; agent.yaml `voice:` overrides. */
 const ROLE_VOICES: Record<string, string> = {
   firstmate: "am_michael",
-  alice: "af_bella",
+  alice: "bf_emma", // young, polite, British
   architect: "bm_george",
   shipwright: "am_adam",
   designer: "af_heart",

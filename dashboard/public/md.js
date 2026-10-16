@@ -186,15 +186,16 @@
   }
 
   /**
-   * How much of a reply to say out loud: the opening, up to the first list,
-   * table, heading, or code block, and at most about `budget` characters
+   * How much of a reply to say out loud: the opening paragraph, up to the first
+   * blank line, list, table, heading, or code block, and at most about `budget` characters
    * (cut at a sentence end, always at least the first sentence). Long or
    * structured replies are read on screen; voice gives the gist.
    * Returns {limit, cut}: speak text.slice(0, limit); cut means more follows.
    */
-  function spokenLimit(text, budget = 350, final = true) {
+  function spokenLimit(text, budget = 260, final = true) {
     const t = String(text);
-    const structure = t.search(/\n[ \t]*([-*+][ \t]|\d+[.)][ \t]|\||#{1,6}[ \t]|```)/);
+    // The first paragraph is the spoken one (an acknowledgement and a short summary); the rest is for the screen.
+    const structure = t.search(/\n[ \t]*(\n|[-*+][ \t]|\d+[.)][ \t]|\||#{1,6}[ \t]|```)/);
     let limit = structure < 0 ? t.length : structure;
     if (limit > budget) {
       const ends = [...t.slice(0, limit).matchAll(/[.!?](?=\s|$)/g)].map((m) => m.index + 1);

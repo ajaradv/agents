@@ -107,13 +107,19 @@ describe("speechChunk", () => {
 });
 
 describe("spokenLimit", () => {
+  test("only the first paragraph is spoken", () => {
+    const t = "Right away, Captain. You dropped Junie on the fifteenth.\n\nFrom your thread, Oct 15: \"remove junie from the list of apis\". The key can go too.";
+    const r = g.spokenLimit(t);
+    expect(t.slice(0, r.limit)).toBe("Right away, Captain. You dropped Junie on the fifteenth.");
+    expect(r.cut).toBe(true);
+  });
   test("a short prose reply is spoken whole", () => {
     expect(g.spokenLimit("Kinwork is docked. The designer is idle.")).toEqual({ limit: 40, cut: false });
   });
   test("speech stops where a table, list, or heading starts", () => {
     const t = "Here you go, Captain: four ships, and Kinwork is the busiest.\n\n| Ship | State |\n|---|---|\n| kinwork | docked |";
     const r = g.spokenLimit(t);
-    expect(t.slice(0, r.limit)).toBe("Here you go, Captain: four ships, and Kinwork is the busiest.\n");
+    expect(t.slice(0, r.limit)).toBe("Here you go, Captain: four ships, and Kinwork is the busiest.");
     expect(r.cut).toBe(true);
     const d = "Done.\n- one\n- two";
     expect(d.slice(0, g.spokenLimit(d).limit)).toBe("Done.");

@@ -1441,7 +1441,7 @@ function dashboardApp() {
       cur.raw = text;
       if (cur.done) return;
       const speak = (t) => !cur.muted && this.voiceState === "idle" && t.trim() && this.queueSpeech(tid, t);
-      const { limit, cut } = spokenLimit(text, 350, false);
+      const { limit, cut } = spokenLimit(text, undefined, false);
       for (let c = speechChunk(text, cur.next); c && c.next <= limit; c = speechChunk(text, cur.next)) {
         cur.next = c.next;
         speak(c.chunk);
