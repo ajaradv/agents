@@ -659,6 +659,8 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
         const wav = await synthesize(parts[part]!, voice);
         return new Response(wav, { headers: { "Content-Type": "audio/wav", "X-Parts": String(parts.length), "X-Voice": voice, "Cache-Control": "no-store" } });
       } catch (e) {
+        // The page falls back to the browser's own (robotic) voice on a 503: log why.
+        void dashLog("voice", `tts failed for ${agentId} (${voice}): ${e instanceof Error ? e.message : String(e)}`);
         return Response.json({ ok: false, message: e instanceof Error ? e.message : "speech failed" }, { status: 503 });
       }
     }
