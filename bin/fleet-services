@@ -42,7 +42,7 @@ env_block() { # extra KEY=VALUE pairs for this job
   printf '      <key>PATH</key><string>%s</string>\n' "$(xml "$PATH")"
   for kv in "$@"; do printf '      <key>%s</key><string>%s</string>\n' "${kv%%=*}" "$(xml "${kv#*=}")"; done
   printf '      <key>HOME</key><string>%s</string>\n' "$(xml "$HOME")"
-  for k in DASHBOARD_PORT FLEET_INBOX ALICE_VAULT FLEET_NODE_PORT; do
+  for k in DASHBOARD_PORT FLEET_INBOX ALICE_VAULT FLEET_NODE_PORT FLEET_TAILNET_USERS; do
     if [ -n "${!k:-}" ]; then printf '      <key>%s</key><string>%s</string>\n' "$k" "$(xml "${!k}")"; fi
   done
   printf '    </dict>\n'

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# fleet-phone - reach the dashboard from your phone over Tailscale (D6).
+#
+# Usage:
+#   bin/fleet-phone on      share the dashboard on your tailnet over HTTPS (Tailscale Serve)
+#   bin/fleet-phone off     stop sharing
+#   bin/fleet-phone status  show what Tailscale Serve shares
+#
+# The dashboard keeps listening on 127.0.0.1 only; Tailscale Serve proxies
+# https://<this-mac>.<tailnet>.ts.net to it, reachable only from devices signed
+# in to your tailnet (never the internet: that would be Funnel, which this
+# never turns on). HTTPS is what lets the phone install the app and receive
+# push notifications. See docs/phone.md.
+set -euo pipefail
+
+PORT="${DASHBOARD_PORT:-8787}"
+TS="$(command -v tailscale || true)"
+[ -n "$TS" ] || [ ! -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ] || TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+[ -n "$TS" ] || { echo "Tailscale is not installed. Install it (https://tailscale.com/download/mac), sign in, then run this again." >&2; exit 1; }
+
+case "${1:-}" in
+  on)
+    "$TS" serve --bg --https=443 "http://127.0.0.1:$PORT"
+    host="$("$TS" status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
+    echo "Open https://$host/needs on your phone, then Share > Add to Home Screen (iPhone) or Install app (Android)."
+    ;;
+  off)
+    "$TS" serve --https=443 off
+    echo "Stopped sharing the dashboard."
+    ;;
+  status)
+    "$TS" serve status
+    ;;
+  *)
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+    exit 2
+    ;;
+esac

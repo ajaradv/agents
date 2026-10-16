@@ -4,6 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Fleet</title>
+  <!-- Phone app (D6): installable, opens on Needs you, push notifications through sw.js. -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#071018" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Fleet" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
   <link rel="stylesheet" href="/pixel.css" />
   <!-- Served locally (public/vendor/README.md): no CDN wait, works offline and over Tailscale. -->
   <script src="/vendor/htmx-4.0.0.min.js" integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc"></script>
@@ -44,10 +50,15 @@
              :class="{ 'is-open': leaf === 'needs', 'is-hinge': hinge === 'needs' }">
       <div class="between needs-head">
         <h2 id="needs-title">Needs you</h2>
+        <span class="row">
+        <button type="button" class="btn" x-show="push !== 'unsupported'" x-cloak :disabled="push === 'busy' || push === 'denied'" :aria-pressed="push === 'on'" @click="togglePush()"
+                :title="push === 'denied' ? 'Notifications are blocked for this site in the browser settings' : 'Push what needs you to this device'"
+                x-text="push === 'on' ? 'Notifying this device' : push === 'denied' ? 'Notifications blocked' : 'Notify this device'"></button>
         <button type="button" class="btn" :class="{ 'btn-ink': quiet.snoozed }" :aria-pressed="quiet.snoozed" @click="toggleQuiet()"
                 x-text="quiet.snoozed ? 'Wake' + (quiet.held ? ' · ' + quiet.held + ' held' : '') : 'Snooze'"></button>
+        </span>
       </div>
-      <p class="muted" x-show="quiet.snoozed" x-cloak>Snoozed: agents' interruptions are held. Questions and Go requests still appear. Wake shows what was held as a digest.</p>
+      <p class="muted" x-show="quiet.snoozed" x-cloak>Snoozed: agents' interruptions and phone notifications are held. Questions and Go requests still appear here. Wake shows what was held as a digest.</p>
       <p class="muted needs-empty" x-show="!needs.length" x-cloak>Nobody needs you right now. Questions, holds, and messages that did not go through show up here.</p>
       <div id="needs-list" class="needs-list" aria-live="polite"></div>
     </section>

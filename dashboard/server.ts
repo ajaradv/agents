@@ -18,6 +18,7 @@ import {
 import { metricsStripHtml } from "./lib/bus.ts";
 import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fleet-snapshot.ts";
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
+import { addSubscription, pushNewNeeds, removeSubscription, sendToAll, subscriptions, validSub, vapidKeys } from "./lib/push.ts";
 import { ackNotice, quietState, snooze, wake } from "./lib/notify.ts";
 import { approveOrder, cancelOrder, checkOrderBody, createOrder, retryOrder } from "./lib/order-note.ts";
 import { answerCaptainHold } from "./lib/hold-answer.ts";
@@ -124,8 +125,24 @@ function needsChanged() {
   needsTimer = setTimeout(() => {
     needsTimer = null;
     sseBroadcast("needs");
+    void pushNeeds();
   }, 300);
 }
+// Phone push (D6): anything new in Needs you goes to every subscribed device.
+let pushing = false;
+async function pushNeeds() {
+  if (pushing) return;
+  pushing = true;
+  try {
+    await pushNewNeeds(await collectNeedsYou({ waiting: hostWaiting, holds: currentHolds() }));
+  } catch (e) {
+    void dashLog("push", `needs push failed: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    pushing = false;
+  }
+}
+// A safety net for changes that arrive without a signal (notices written by the node).
+setInterval(() => void pushNeeds(), 20_000);
 function currentHolds() {
   const snap = lastFleetSnapshot();
   return snap ? collectCaptainHolds(snap) : [];
@@ -385,6 +402,25 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
         agents: await Promise.all(agents.map(withTurn)),
         workers: await Promise.all(workers.map(withTurn)),
       });
+    }
+
+    // Phone push (lib/push.ts): the page subscribes a device with the VAPID public key.
+    if (path === "/api/push/key" && req.method === "GET") {
+      return Response.json({ publicKey: vapidKeys().publicKey, devices: subscriptions().length });
+    }
+    if (path === "/api/push/subscribe" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { sub?: unknown; label?: string };
+      if (!validSub(b.sub)) return Response.json({ ok: false, message: "Not a push subscription." }, { status: 400 });
+      addSubscription(b.sub, String(b.label ?? ""));
+      return Response.json({ ok: true, devices: subscriptions().length });
+    }
+    if (path === "/api/push/unsubscribe" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { endpoint?: string };
+      return Response.json({ ok: removeSubscription(String(b.endpoint ?? "")), devices: subscriptions().length });
+    }
+    if (path === "/api/push/test" && req.method === "POST") {
+      const r = await sendToAll({ title: "Fleet", body: "Notifications are on for this device, Captain.", tag: "test", url: "/needs" });
+      return Response.json({ ok: r.sent > 0, ...r });
     }
 
     if (path === "/api/needs-you" && req.method === "GET") {

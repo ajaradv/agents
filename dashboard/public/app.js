@@ -74,6 +74,8 @@ function dashboardApp() {
     needs: [],
     /** Quiet hours: Snooze holds interruptions; Wake ends it with a digest of what was held. */
     quiet: { snoozed: false, held: 0 },
+    /** Phone push on this device: "unsupported" | "off" | "on" | "denied" | "busy". */
+    push: "unsupported",
     bus: null,
 
     rail: { agents: [], workers: [] },
@@ -123,6 +125,55 @@ function dashboardApp() {
       return base.concat(chats, groupItems, this.chatOpen ? [{ id: "chat-close", label: "Close chat", run: () => this.closeChat() }] : []);
     },
 
+    /** Phone app (D6): the service worker, and whether this device gets push notifications. */
+    async initPush() {
+      if (!("serviceWorker" in navigator)) return;
+      try {
+        const reg = await navigator.serviceWorker.register("/sw.js");
+        if (!("PushManager" in window) || !("Notification" in window)) return;
+        if (Notification.permission === "denied") return void (this.push = "denied");
+        const sub = await reg.pushManager.getSubscription();
+        this.push = sub ? "on" : "off";
+        // Re-register on every load: the server drops a device the push service reports gone.
+        if (sub) fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sub: sub.toJSON(), label: this.deviceLabel() }) });
+      } catch {
+        /* not a secure origin (plain http on another host): no app features */
+      }
+    },
+
+    deviceLabel() {
+      return /iPhone|iPad|Android/.test(navigator.userAgent) ? "phone" : "desktop";
+    },
+
+    async togglePush() {
+      if (this.push === "busy" || this.push === "unsupported") return;
+      const was = this.push;
+      this.push = "busy";
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const cur = await reg.pushManager.getSubscription();
+        if (was === "on" && cur) {
+          await fetch("/api/push/unsubscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: cur.endpoint }) });
+          await cur.unsubscribe();
+          this.push = "off";
+          return;
+        }
+        if ((await Notification.requestPermission()) !== "granted") return void (this.push = "denied");
+        const { publicKey } = await (await fetch("/api/push/key")).json();
+        const raw = atob(publicKey.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (publicKey.length % 4)) % 4));
+        const key = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+        // Always a fresh subscription: an old one may have expired at the push service.
+        if (cur) await cur.unsubscribe().catch(() => {});
+        const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+        const r = await fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sub: sub.toJSON(), label: this.deviceLabel() }) });
+        if (!r.ok) throw new Error("subscribe failed");
+        this.push = "on";
+        fetch("/api/push/test", { method: "POST" });
+      } catch {
+        this.push = was;
+      }
+    },
+
     init() {
       try {
         this.voiceReplies = localStorage.getItem("fleet.voiceReplies") === "1";
@@ -138,6 +189,7 @@ function dashboardApp() {
       this.refreshNeeds();
       this.connectBus();
       this.applyUrl();
+      this.initPush();
       // Old hash links (#chat/<id>, #group/<id>, #alice) still open their drawer.
       const m = location.hash.match(/^#chat\/([a-z][a-z0-9_-]*)$/);
       if (m) this.openChat(m[1]);
