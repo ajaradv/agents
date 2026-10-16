@@ -559,6 +559,7 @@ pre, .raw {
 }
 
 .chat-bar h2 { margin: 0; }
+.chat-bar > .row { margin-left: auto; }
 .chat-who { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
 .chat-who p { margin: 0; }
 .chat-desc { font-size: 0.85em; overflow-wrap: anywhere; }
@@ -970,7 +971,6 @@ body.chat-open { overflow: hidden; }
   .chat-bar { padding: calc(0.4rem + env(safe-area-inset-top)) calc(0.6rem + env(safe-area-inset-right)) 0.4rem calc(0.6rem + env(safe-area-inset-left)); gap: 0.4rem 0.5rem; flex-wrap: wrap; }
   .chat-bar .chat-who { flex: 1 1 0; }
   .chat-bar .chat-who > div { min-width: 0; }
-  .chat-bar .chat-who p.muted { max-width: none; }
   .voice-toggle { display: none; }
   .chat-bar .voice-toggle-phone { display: grid; place-items: center; flex: none; width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; }
   .chat-bar > .row { order: 3; flex: 1 0 100%; flex-wrap: nowrap; gap: 0.4rem; }
