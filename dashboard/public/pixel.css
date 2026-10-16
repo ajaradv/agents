@@ -661,7 +661,7 @@ details.raw pre { margin: 0.3rem 0 0; max-height: 12rem; overflow: auto; white-s
 
 .dock { display: none; }
 .chat-close svg { display: none; }
-.voice-toggle-phone { display: none; }
+.chat-bar .voice-toggle-phone { display: none; }
 
 .dock-btn {
   appearance: none;
