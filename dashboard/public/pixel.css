@@ -954,6 +954,12 @@ body.chat-open { overflow: hidden; }
 .ledger-table th, .ledger-table td { overflow-wrap: normal; word-break: normal; }
 .ledger-table code { font-size: 0.75rem; overflow-wrap: anywhere; }
 .fleet-metrics .ledger-table { min-width: 36rem; }
+/* ---------- Helm ---------- */
+.helm-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.helm-proposal { border: 2px solid var(--ink); background: var(--sheet); padding: 0.6rem; display: grid; gap: 0.35rem; min-width: 0; }
+.helm-proposal p { margin: 0; overflow-wrap: anywhere; }
+.helm-what code { font-size: 0.78rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* ---------- Fleet metrics ---------- */
 .fleet-metrics h4 { margin: 0.4rem 0 0; }
 .metric-kpis { grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); }

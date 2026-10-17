@@ -10,6 +10,7 @@ import { agentsSidebarHtml } from "./lib/partials.ts";
 import { agentsStatusJson } from "./lib/agents-api.ts";
 import {
   appendCaptainChat,
+  appendChatLine,
   appendChatError,
   findSentLine,
   readCaptainChat,
@@ -32,7 +33,9 @@ import { speakable, speechParts, sttAvailable, synthesize, transcribe, ttsState,
 import { onShipLogWrite } from "./lib/ship-log.ts";
 import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
 import { metricsDashboardHtml, parsePeriod } from "./lib/metrics-view.ts";
-import { dockVoyage, findShip, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
+import { dockVoyage, findShip, openVoyage, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
+import { applyProposal, dismissProposal, hasHelmsman, helmDigest } from "./lib/helm.ts";
+import { ledgerMarkdown, voyageId, voyageLedger } from "./lib/metrics.ts";
 import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas, withFrameChecks } from "./lib/canvas.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import type { HostEvent } from "./lib/agent-host.ts";
@@ -307,6 +310,17 @@ async function captainSend(agentId: string, text: string, requestId?: string): P
 }
 
 /** Give a saved captain line to the node; if it cannot take it, say so in the thread. */
+/** Send the ship's helmsman a Helm review (after a dock, or when the captain asks). */
+async function sendHelmReview(shipId: string, reason: string, ledger = ""): Promise<{ ok: boolean; message: string }> {
+  const ship = await findShip(shipId);
+  if (!ship || !hasHelmsman(ship)) return { ok: false, message: `${shipId} has no helmsman aboard. Bring one aboard in the shipyard.` };
+  const to = `${shipId}-helmsman`;
+  const line = await appendChatLine(to, { ts: new Date().toISOString(), from: "helm", kind: "crew", text: helmDigest(ship, reason, ledger).slice(0, 8000) });
+  broadcastChat(to, line);
+  await handToNode(to, line);
+  return { ok: true, message: `Helm review sent to ${to}. Proposals appear on the deck.` };
+}
+
 async function handToNode(agentId: string, line: ChatLine): Promise<void> {
   const error = await submitCaptainLine(agentId, line);
   if (error) broadcastChat(agentId, await appendChatError(agentId, error, line.ts));
@@ -743,6 +757,14 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return Response.json({ ok: true, message: `Running ${ship.id}'s ${stage} gates (${ship.gates[stage].join(", ")}); you get a notice when they finish.` });
     }
 
+    const helmAction = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/helm(?:\/([0-9a-f]{6})\/(apply|dismiss)|\/review)$/);
+    if (helmAction && req.method === "POST") {
+      const [, shipId, id, act] = helmAction as unknown as [string, string, string | undefined, string | undefined];
+      const res = id ? (act === "apply" ? await applyProposal(shipId, id) : await dismissProposal(shipId, id)) : await sendHelmReview(shipId, "the captain asked for a review");
+      sseBroadcast("ship", shipId);
+      return Response.json(res, { status: res.ok ? 200 : 400 });
+    }
+
     const shipAction = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/(crew|orchestrator|voyage|dock)$/);
     if (shipAction && req.method === "POST") {
       const [, shipId, action] = shipAction as unknown as [string, string, string];
@@ -784,7 +806,14 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
           }
         }
       } else {
+        const sailing = await openVoyage(shipId);
         res = await dockVoyage(shipId, String(b.summary ?? ""));
+        // After a dock, the helmsman (when aboard) reviews the ship's process with the voyage's ledger.
+        if (res.ok && sailing) {
+          const ship = await findShip(shipId);
+          const ledger = voyageLedger(voyageId(sailing.file));
+          if (ship && hasHelmsman(ship)) void sendHelmReview(shipId, `the voyage "${sailing.goal.slice(0, 160)}" docked`, ledger ? ledgerMarkdown(ledger) : "").catch((e) => console.error("[helm]", e));
+        }
       }
       sseBroadcast("ship", shipId);
       return Response.json(res, { status: res.ok ? 200 : 400 });

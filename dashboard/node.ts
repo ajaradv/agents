@@ -14,6 +14,7 @@ import { allChatTargetIds, chatAllowed, chatTarget, refreshAgentTargets, startCh
 import type { ChatLine } from "./lib/chat.ts";
 import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
+import { helmPropose } from "./lib/helm.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
@@ -49,7 +50,7 @@ import { newSession } from "./lib/session-rotate.ts";
  *   POST /v1/answer          { agentId, dialogId, value?, confirmed?, cancelled? }
  *   POST /v1/abort|stop|new-session  { agentId }
  *   POST /v1/refresh-targets after crew changes
- * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers|check|vm>
+ * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers|check|vm|helm>
  * Fleet API (extensions/fleet.ts, officers' crew token): GET /api/fleet/<status|log|tasks|maneuvers|chat>, POST /api/fleet/chat
  */
 
@@ -223,6 +224,7 @@ async function crewApi(req: Request, shipId: string, what: string, num: string |
     else if (what === "message") res = await crewMessage(shipId, { ...b, from } as never);
     else if (what === "maneuvers") res = await crewStartManeuver(shipId, { ...b, from } as never);
     else if (what === "check") res = await runCheck(shipId, from, String(b.name ?? ""));
+    else if (what === "helm") res = await helmPropose(shipId, from, b as Record<string, unknown>);
     else if (what === "vm") res = crewVmEvent(shipId, from, String(b.event ?? ""), String(b.detail ?? ""));
     else res = { ok: false, message: "unknown crew call" };
     emit("ship", shipId);
@@ -319,7 +321,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|recall)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
-  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm)(?:\/(\d+))?$/);
+  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm)(?:\/(\d+))?$/);
   if (crew) return crewApi(req, crew[1]!, crew[2]!, crew[3]);
 
   if (!path.startsWith("/v1/")) return new Response("not found", { status: 404 });

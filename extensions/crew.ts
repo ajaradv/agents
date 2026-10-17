@@ -7,7 +7,8 @@
  * Everyone aboard: voyage_status, crew_message, task_report, run_check (the
  * host commands the captain lists for the ship; FLEET_SHIP_CHECKS names them),
  * and maneuver_start when the ship gives the role maneuvers (FLEET_SHIP_MANEUVERS).
- * The lead (<ship>-lead) also gets: task_add, task_update.
+ * The lead (<ship>-lead) also gets: task_add, task_update. The helmsman
+ * (<ship>-helmsman) gets helm_propose.
  */
 
 import { StringEnum } from "@mariozechner/pi-ai";
@@ -110,6 +111,34 @@ export default function (pi: ExtensionAPI) {
       }),
       async execute(_id, p) {
         return text(await call("POST", "maneuvers", { maneuver: p.maneuver, prompt: p.prompt ?? "" }));
+      },
+    });
+  }
+
+  // The helmsman reviews the ship's process and files proposals for the captain (dashboard/lib/helm.ts).
+  if (me === `${ship}-helmsman`) {
+    pi.registerTool({
+      name: "helm_propose",
+      label: "Propose a process change",
+      description:
+        "Helmsman only. File one proposal for the captain, who applies or dismisses it on the ship's deck. kind and its fields: check {name, command}; gate {stage: task|dock, check}; maneuver {name, checks[] or adw, roles[] (who may launch it), needs[] (roles aboard), gates[]}; retire_maneuver {name}; allow_host {host}; note {text}. Always give why: what in the record or the repo supports it.",
+      parameters: Type.Object({
+        kind: StringEnum(["check", "gate", "maneuver", "retire_maneuver", "allow_host", "note"] as const),
+        why: Type.String(),
+        name: Type.Optional(Type.String()),
+        command: Type.Optional(Type.String()),
+        stage: Type.Optional(StringEnum(["task", "dock"] as const)),
+        check: Type.Optional(Type.String()),
+        checks: Type.Optional(Type.Array(Type.String())),
+        adw: Type.Optional(Type.String()),
+        roles: Type.Optional(Type.Array(Type.String())),
+        needs: Type.Optional(Type.Array(Type.String())),
+        gates: Type.Optional(Type.Array(StringEnum(["task", "dock"] as const))),
+        host: Type.Optional(Type.String()),
+        text: Type.Optional(Type.String()),
+      }),
+      async execute(_id, p) {
+        return text(await call("POST", "helm", p as Record<string, unknown>));
       },
     });
   }

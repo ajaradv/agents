@@ -40,11 +40,11 @@ export async function crewRoles(): Promise<AgentMeta[]> {
 }
 
 /** Remove map.key when the map exists; a ship without that map has nothing to remove. */
-function deleteKey(doc: ReturnType<typeof parseDocument>, map: string, key: string): void {
+export function deleteKey(doc: ReturnType<typeof parseDocument>, map: string, key: string): void {
   if (isMap(doc.get(map))) doc.deleteIn([map, key]);
 }
 
-async function editShip(id: string, edit: (doc: ReturnType<typeof parseDocument>) => void): Promise<void> {
+export async function editShip(id: string, edit: (doc: ReturnType<typeof parseDocument>) => void): Promise<void> {
   const path = shipFile(id);
   const doc = parseDocument(await readFile(path, "utf8"));
   edit(doc);

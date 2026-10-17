@@ -134,3 +134,23 @@ maneuvers:
 - Every run is a task and a `runs` row (kind `maneuver`) in the metrics
   database; `voyage_status` and the lead's voyage brief list the maneuvers
   and which are locked.
+
+## The helmsman
+
+A ship can take a **helmsman** aboard (shipyard, role `helmsman`): a read-only
+crewmate that keeps the ship's process fit as the project grows.
+
+- **When**: after every dock (with the voyage's ledger), or when the captain
+  presses **Ask for a review** in the Helm section of the deck.
+- **What it gets**: a digest the node builds (`dashboard/lib/helm.ts`): the
+  ship's checks, gates, maneuvers, and VM allowlist; build files and justfile
+  recipes at the repo root; the last 30 days of check and maneuver runs with
+  pass rates, check sets run together voyage after voyage, declared maneuvers
+  nobody runs, hosts the VMs blocked, and tool failures.
+- **What it does**: reads the repo to confirm, then files proposals with
+  `helm_propose`: a check, a gate, a maneuver, retiring a maneuver, allowing a
+  host, or a note. Each says why. The node validates them against the ship.
+- **Who decides**: the captain, on the deck. **Apply** edits the ship file
+  (keeping comments and everything else); **Dismiss** drops it. Nothing
+  changes the ship file without the captain. Crewmates pick up applied
+  changes at their next start.

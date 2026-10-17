@@ -6,6 +6,7 @@ import { listOrders, ORDER_TOOLS, type OrderMeta } from "./order-note.ts";
 import { escapeHtml } from "./quota.ts";
 import { gateStatus, type GateReport } from "./gates.ts";
 import { liveLedgerHtml, pastLedgerHtml } from "./ledger-view.ts";
+import { hasHelmsman, listProposals, proposalLine, type Proposal } from "./helm.ts";
 import { voyageId } from "./metrics.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
@@ -245,6 +246,36 @@ function maneuverHtml(m: Maneuver): string {
   </article>`;
 }
 
+/** The helm: the helmsman's open proposals for the captain, and a way to ask for a review. */
+async function helmHtml(ship: ShipRow): Promise<string> {
+  const all = await listProposals(ship.id);
+  const open = all.filter((p) => p.status === "open");
+  const aboard = hasHelmsman(ship);
+  if (!aboard && !open.length) return "";
+  const api = `/api/ships/${encodeURIComponent(ship.id)}/helm`;
+  const kindLabel: Record<string, string> = { check: "New check", gate: "New gate", maneuver: "New maneuver", retire_maneuver: "Retire maneuver", allow_host: "Allow a host", note: "Note" };
+  const card = (p: Proposal) => `<li class="helm-proposal">
+      <div class="between"><strong>${escapeHtml(kindLabel[p.kind] ?? p.kind)}</strong><span class="muted">${escapeHtml(timeAgo(p.ts))}</span></div>
+      <p class="helm-what"><code>${escapeHtml(proposalLine(p))}</code></p>
+      <p class="muted">${escapeHtml(p.why)}</p>
+      <form class="row shipyard-form" data-api="${api}/${p.id}/apply">
+        ${p.kind === "note" ? "" : `<button class="btn btn-ink" type="submit">Apply</button>`}
+        <button class="btn" type="submit" data-api="${api}/${p.id}/dismiss">${p.kind === "note" ? "Read" : "Dismiss"}</button>
+        <span class="muted" data-note></span>
+      </form>
+    </li>`;
+  const settled = all.filter((p) => p.status !== "open").slice(-3).reverse();
+  return `<section class="stack helm">
+      <div class="between"><h3>Helm</h3>${
+        aboard
+          ? `<form class="row shipyard-form" data-api="${api}/review"><button class="btn" type="submit" data-then="note">Ask for a review</button><span class="muted" data-note></span></form>`
+          : `<span class="muted">No helmsman aboard</span>`
+      }</div>
+      ${open.length ? `<ul class="helm-list">${open.map(card).join("")}</ul>` : `<p class="muted">No open proposals. The helmsman reviews the ship's checks, gates, maneuvers, and VM allowlist after each voyage docks.</p>`}
+      ${settled.length ? `<p class="muted">Recently: ${settled.map((p) => `${p.status} · ${escapeHtml(proposalLine(p).slice(0, 80))}`).join("; ")}</p>` : ""}
+    </section>`;
+}
+
 /** The voyage ledger: live for the voyage under sail (with its gates), and past voyages. */
 async function ledgerParts(ship: ShipRow, voyage: Voyage | null, labels: Map<string, string>): Promise<{ live: string; past: string }> {
   const label = (id: string) => labels.get(id) ?? id;
@@ -303,6 +334,8 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
       ${cards.length ? `<div class="crew-grid">${cards.map(crewCardHtml).join("")}</div>` : `<p class="muted">No crewmates aboard. Add roles under <code>crew:</code> in fleet/ships/${escapeHtml(ship.id)}.yaml.</p>`}
       ${fm.length ? `<h4>Firstmate crews on this ship</h4><div class="crew-grid">${fm.map(fmCrewHtml).join("")}</div>` : ""}
     </section>
+
+    ${await helmHtml(ship)}
 
     ${yardFirst ? yard : ""}
 
