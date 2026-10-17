@@ -5,7 +5,7 @@
 #   bin/fleet-vm-image          build fleet/vm/image.json into fleet/home/gondolin/fleet-assets
 #
 # The image is Alpine with what crews need: bash, git, ripgrep, fd, node/npm,
-# python3/uv, a compiler, jq, and pre-commit (so ship git hooks run inside the
+# python3/uv, a compiler, jq, pre-commit, and Python 3.14 (so ship git hooks run inside the
 # VM). Add packages in fleet/vm/image.json, then rebuild. Running VMs keep the
 # old image until their crewmate restarts.
 #

@@ -38,4 +38,5 @@ Ships may release with [python-semantic-release](https://python-semantic-release
 - Same types as branches: `feat: add order export`, `fix(api): round totals to cents`, `chore(deps): bump tailwindcss to 4.3.3 and daisyui to 5.7.50`, `docs: note that just pytest runs in docker compose`.
 - `feat!:` or a `BREAKING CHANGE:` footer only for real breaking changes (a major release).
 - One logical change per commit; the summary line under 72 characters.
+- **Never skip hooks** (`--no-verify`, `-n`, `core.hooksPath` tricks). If a git hook fails, fix what it reports and commit again; if it cannot run at all (a missing tool or interpreter), stop and report the task blocked with the hook's error, so the captain can fix the environment.
 - Never push; the captain reviews and merges.

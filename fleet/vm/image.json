@@ -29,5 +29,11 @@
   },
   "rootfs": {
     "label": "gondolin-root"
+  },
+  "postBuild": {
+    "commands": [
+      "UV_LIBC=musl UV_PYTHON_INSTALL_DIR=/opt/python uv python install 3.14",
+      "ln -sf /opt/python/cpython-3.14-linux-aarch64-musl/bin/python3.14 /usr/local/bin/python3.14"
+    ]
   }
 }
