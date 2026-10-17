@@ -222,7 +222,7 @@ export async function crewStartManeuver(shipId: string, b: { from: string; maneu
     upsertWorkflow("maneuver", runId, { ship: shipId, taskId: task.id, maneuver: m.name, kind: "checks", by: b.from }, { trace: `maneuver-${runId}` });
     logShipEvent(shipId, b.from, "maneuver", `${m.name} launched (${runId}): ${m.checks.join(" → ")}`, { maneuver: m.name, adwId: runId, task: task.id, trace: `maneuver-${runId}` });
     void runCheckManeuver(a.ship, m, runId, task.id, b.from);
-    return { ok: true, message: `Maneuver ${m.name} (${m.checks.join(" → ")}) launched as ${runId} (task #${task.id}). It stops at the first failure; you get a crew message from the helm with the result.`, adwId: runId, task: task.id };
+    return { ok: true, message: `Maneuver ${m.name} (${m.checks.join(" → ")}) launched as ${runId} (task #${task.id}). It stops at the first failure. End your turn now (do not wait or sleep): the result arrives as a crew message from the helm.`, adwId: runId, task: task.id };
   }
   const adw = m.adw!;
   const log = join(maneuverLogDir(shipId), `${runId}.log`);
@@ -243,7 +243,7 @@ export async function crewStartManeuver(shipId: string, b: { from: string; maneu
     running.delete(runId);
     await settleOnce(a.ship, task.id, runId, code);
   });
-  return { ok: true, message: `Maneuver ${m.name} (${adw}) launched as ${runId} (task #${task.id}).${m.gates.length ? ` When it passes, the ${m.gates.join(" and ")} gates run before it counts as done.` : ""} You get a crew message when it finishes; voyage_status shows its phases meanwhile.`, adwId: runId, task: task.id };
+  return { ok: true, message: `Maneuver ${m.name} (${adw}) launched as ${runId} (task #${task.id}).${m.gates.length ? ` When it passes, the ${m.gates.join(" and ")} gates run before it counts as done.` : ""} End your turn now (do not wait or sleep): you get a crew message when it finishes; voyage_status shows its phases meanwhile.`, adwId: runId, task: task.id };
 }
 
 /**
