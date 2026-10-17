@@ -26,7 +26,7 @@ export type ShipRow = {
 };
 
 /** Package registries and GitHub (read over HTTPS): what a crewmate's VM reaches unless the ship says otherwise. */
-export const DEFAULT_VM_ALLOW = ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "crates.io", "static.crates.io", "index.crates.io", "github.com", "codeload.github.com", "objects.githubusercontent.com"];
+export const DEFAULT_VM_ALLOW = ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "crates.io", "static.crates.io", "index.crates.io", "github.com", "codeload.github.com", "objects.githubusercontent.com", "raw.githubusercontent.com"];
 
 /** One vault note under `{ALICE_VAULT}/fleet/initiatives/`. */
 export type InitiativeRow = {

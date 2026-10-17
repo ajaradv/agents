@@ -285,6 +285,7 @@ def dashboard_chat_block() -> str:
 DEFAULT_VM_ALLOW = [
     "pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "crates.io", "static.crates.io",
     "index.crates.io", "github.com", "codeload.github.com", "objects.githubusercontent.com",
+    "raw.githubusercontent.com",
 ]
 
 

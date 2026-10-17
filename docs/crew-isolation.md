@@ -12,7 +12,7 @@ In `fleet/ships/<ship>.yaml`:
 ```yaml
 isolation: vm          # crewmates' tools run in a VM ("host" or absent: as before)
 vm_allow:              # hosts the VM may reach over HTTP/HTTPS; omit for the default
-  - pypi.org           # list (package registries, GitHub over HTTPS); [] for no network
+  - pypi.org           # list (package registries, GitHub and raw.githubusercontent.com over HTTPS); [] for no network
 checks:                # host commands crewmates may run by name (run_check)
   pytest: just pytest
   lint: just lint
