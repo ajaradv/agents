@@ -7,6 +7,7 @@ import { frontmatter, readShips, type ShipRow } from "./fleet-layers.ts";
 import { aliceVault, ROOT } from "./paths.ts";
 import { spawnTimed } from "./proc.ts";
 import { logShipEvent, shipTurnTotals } from "./ship-log.ts";
+import { describeGates, gateStatus } from "./gates.ts";
 import { ledgerLine, ledgerMarkdown, recordVoyageDock, recordVoyageStart, voyageId, voyageLedger } from "./metrics.ts";
 import { leaseVoyageWorktree, releaseVoyageWorktree, usesVoyageWorktrees, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
 
@@ -223,7 +224,7 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
   let worktree: VoyageWorktree | undefined;
   if (usesVoyageWorktrees(ship)) {
     const lease = await leaseVoyageWorktree(ship, slug, g);
-    if (!lease.ok) return { ok: false, message: lease.message };
+    if ("message" in lease) return { ok: false, message: lease.message };
     worktree = lease.worktree;
   }
   const crew = ship.crew.map((r) => `${shipId}-${r}`);
@@ -262,8 +263,13 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
 export async function dockVoyage(shipId: string, summary: string): Promise<{ ok: boolean; message: string }> {
   const v = await openVoyage(shipId);
   if (!v) return { ok: false, message: `${shipId} is not under sail.` };
-  // Return the voyage's worktree first: uncommitted work keeps the voyage open.
+  // Dock gates first: the branch's latest commit must have passed them (run them with Run gates).
   const ship = await findShip(shipId);
+  if (ship?.gates.dock.length) {
+    const gates = await gateStatus(ship, "dock");
+    if (!gates.green) return { ok: false, message: `${shipId} cannot dock yet: ${describeGates(gates)} Run the gates (Run gates on the deck, or ask the lead), then dock again.` };
+  }
+  // Return the voyage's worktree: uncommitted work keeps the voyage open.
   const released = ship ? await releaseVoyageWorktree(ship) : { ok: true, message: "" };
   if (!released.ok) return { ok: false, message: released.message };
   const now = new Date().toISOString();
@@ -290,6 +296,9 @@ export function voyageBrief(ship: ShipRow, v: Voyage): string {
       `Voyage record (vault): ${v.file}`,
       `Crew aboard: ${ship.crew.filter((r) => r !== "lead").map((r) => `${ship.id}-${r}`).join(", ") || "only you"}.`,
       ship.adws.length ? `Maneuvers available: ${ship.adws.join(", ")}.` : "No SSSF factory on this ship.",
+      ...(ship.gates.task.length || ship.gates.dock.length
+        ? [`Gates (checks that must pass on the latest commit): ${ship.gates.task.length ? `a task is done only after ${ship.gates.task.join(", ")} pass (they run when it is reported done)` : ""}${ship.gates.task.length && ship.gates.dock.length ? "; " : ""}${ship.gates.dock.length ? `the voyage docks only after ${ship.gates.dock.join(", ")} pass` : ""}. Commit before reporting a task done.`]
+        : []),
       ...(v.worktree ?? voyageWorktree(ship.id)
         ? [`Work happens on branch ${(v.worktree ?? voyageWorktree(ship.id))!.branch} in the voyage's own worktree (your crew's working folder); commit there and never push. The captain reviews and merges after docking. The branch name is a guess from the goal: before the first commit, rename it if the type or words are wrong, and write conventional commit messages (skill git-conventions).`]
         : []),

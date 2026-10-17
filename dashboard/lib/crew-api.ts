@@ -11,6 +11,7 @@ import { fleetInboxRoot } from "./paths.ts";
 import { recentManeuvers, shipTraceDb } from "./ship-maneuvers.ts";
 import { logShipEvent, recentShipEvents } from "./ship-log.ts";
 import { recordHandoff } from "./metrics.ts";
+import { describeGates, gateStatus, runGates } from "./gates.ts";
 import { openVoyage, type Voyage } from "./shipyard.ts";
 import { addTask, getTask, listTasks, taskProgress, TASK_STATUSES, updateTask, type TaskStatus, type VoyageTask } from "./voyage-tasks.ts";
 import { Database } from "bun:sqlite";
@@ -79,6 +80,10 @@ export async function voyageStatus(shipId: string, from: string): Promise<Res> {
     crew,
     lead: leadOf(a.ship),
     adws: a.ship.adws,
+    gates: {
+      task: a.ship.gates.task.length ? describeGates(await gateStatus(a.ship, "task")) : "none",
+      dock: a.ship.gates.dock.length ? describeGates(await gateStatus(a.ship, "dock")) : "none",
+    },
   };
 }
 
@@ -116,6 +121,15 @@ export async function crewUpdateTask(shipId: string, id: number, b: { from: stri
     if (assignee && !crewIds(a.ship).includes(assignee)) return { ok: false, message: `${assignee} is not aboard.` };
   }
   const reassigned = assignee !== undefined && assignee !== t.assignee;
+  // Declared task gates: "done" is earned. The helm runs them in the background; the task stays
+  // working until they pass (then done) or fail (then blocked, with the output).
+  const gated = status === "done" && a.ship.gates.task.length > 0;
+  if (gated) {
+    await updateTask(shipId, id, { status: "working", note: `${b.note ? `${String(b.note)}\n\n` : ""}Verifying: running task gates (${a.ship.gates.task.join(", ")}).`, by: b.from });
+    recordHandoff({ ship: shipId, from: b.from, to: "helm", kind: "task-verify", size: String(b.note ?? "").length });
+    void verifyTask(a.ship, id, b.from, String(b.note ?? ""));
+    return { ok: true, message: `Task #${id}: running its gates (${a.ship.gates.task.join(", ")}) before it counts as done. You and the lead hear the result; carry on or end your turn.` };
+  }
   const updated = await updateTask(shipId, id, {
     ...(status ? { status: status as TaskStatus } : reassigned && assignee ? { status: "working" as TaskStatus } : {}),
     ...(b.note !== undefined ? { note: String(b.note) } : {}),
@@ -132,6 +146,30 @@ export async function crewUpdateTask(shipId: string, id: number, b: { from: stri
   return { ok: true, message: `Task #${id} is ${updated.status}${!isLead && lead ? "; the lead has been told" : ""}.` };
 }
 
+/** Run a task's gates; mark it done when they pass, blocked (with the failures) when they do not. */
+async function verifyTask(ship: ShipRow, id: number, reporter: string, note: string): Promise<void> {
+  try {
+    const { report, failures } = await runGates(ship, "task", "helm");
+    const t = getTask(ship.id, id);
+    if (!t) return;
+    const lead = leadOf(ship);
+    const tell = async (text: string) => {
+      for (const who of new Set([reporter, lead].filter((x): x is string => Boolean(x)))) await acceptCrewLine(who, "helm", text);
+    };
+    if (report.green) {
+      await updateTask(ship.id, id, { status: "done", note: `${note ? `${note}\n\n` : ""}${describeGates(report)}`, by: "helm" });
+      recordHandoff({ ship: ship.id, from: "helm", to: reporter, kind: "task-done", size: 0 });
+      await tell(`Task #${id} (${t.title}) is done: ${describeGates(report)}`);
+    } else {
+      await updateTask(ship.id, id, { status: "blocked", note: `${note ? `${note}\n\n` : ""}${describeGates(report)}`, by: "helm" });
+      recordHandoff({ ship: ship.id, from: "helm", to: reporter, kind: "task-blocked", size: failures.length });
+      await tell(`Task #${id} (${t.title}) is not done yet: ${describeGates(report)}${failures ? `\n\n${failures}` : ""}\n\nFix it, commit, and report the task done again.`);
+    }
+  } catch (e) {
+    logShipEvent(ship.id, "helm", "notice", `Task #${id} gates could not run: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 export async function crewMessage(shipId: string, b: { from: string; to?: string; text?: string }): Promise<Res> {
   const a = await aboard(shipId, b.from);
   if ("error" in a) return a.error;
@@ -141,7 +179,7 @@ export async function crewMessage(shipId: string, b: { from: string; to?: string
   const text = String(b.text ?? "").trim();
   if (!text) return { ok: false, message: "Say something." };
   await acceptCrewLine(to, b.from, text);
-  recordHandoff({ ship: a.ship, from: b.from, to, kind: "message", size: text.length });
+  recordHandoff({ ship: shipId, from: b.from, to, kind: "message", size: text.length });
   return { ok: true, message: `Sent to ${to}. Its reply comes back to you as a crew message only if it writes to you; check voyage_status for task reports.` };
 }
 

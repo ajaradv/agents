@@ -15,7 +15,7 @@ import { allChatTargetIds, chatTarget } from "./chat-targets.ts";
 import { logCrewEvent, logCrewLine, logCrewTurn } from "./ship-events.ts";
 import { budgetRefusal, officerBudgetRefusal } from "./shipyard.ts";
 import { dashLog } from "./log.ts";
-import { recordTurn } from "./metrics.ts";
+import { recordTurn as recordTurnMetric } from "./metrics.ts";
 import { spawnTimed } from "./proc.ts";
 import { fleetInboxRoot, ROOT } from "./paths.ts";
 import {
@@ -102,7 +102,7 @@ registerHostHooks({
   settled: (agentId, outcome) => {
     logCrewTurn(agentId, outcome);
     // Fleet metrics (lib/metrics.ts): every turn, tagged with its ship's voyage under sail.
-    recordTurn({ agent: agentId, ship: chatTarget(agentId)?.ship, model: outcome.model, ok: outcome.ok, ms: outcome.ms, cost: outcome.cost, tokens: outcome.tokens, cacheRead: outcome.cacheRead, prompt: outcome.prompt, error: outcome.error });
+    recordTurnMetric({ agent: agentId, ship: chatTarget(agentId)?.ship, model: outcome.model, ok: outcome.ok, ms: outcome.ms, cost: outcome.cost, tokens: outcome.tokens, cacheRead: outcome.cacheRead, prompt: outcome.prompt, error: outcome.error });
     recordTurn(agentId, {
       at: new Date().toISOString(),
       status: outcome.ok ? "ok" : "error",

@@ -39,7 +39,8 @@ CREATE INDEX IF NOT EXISTS turns_ts ON turns(ts);
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, ship TEXT NOT NULL, voyage TEXT, agent TEXT NOT NULL,
   kind TEXT NOT NULL, name TEXT NOT NULL, deterministic INTEGER NOT NULL DEFAULT 1,
-  ok INTEGER NOT NULL, ms INTEGER NOT NULL, cost REAL NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT ''
+  ok INTEGER NOT NULL, ms INTEGER NOT NULL, cost REAL NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '',
+  commit_sha TEXT NOT NULL DEFAULT '', dirty INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS runs_voyage ON runs(voyage);
 CREATE TABLE IF NOT EXISTS handoffs (
@@ -75,6 +76,11 @@ export function metricsDb(): Database {
   handle = new Database(path, { create: true });
   handle.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;");
   handle.exec(SCHEMA);
+  // Columns added after the first release of this file.
+  const cols = new Set((handle.query("PRAGMA table_info(runs)").all() as { name: string }[]).map((c) => c.name));
+  if (!cols.has("commit_sha")) handle.exec("ALTER TABLE runs ADD COLUMN commit_sha TEXT NOT NULL DEFAULT ''");
+  if (!cols.has("dirty")) handle.exec("ALTER TABLE runs ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0");
+  handle.exec("CREATE INDEX IF NOT EXISTS runs_commit ON runs(ship, name, commit_sha)");
   handlePath = path;
   return handle;
 }
@@ -153,12 +159,21 @@ export function recordTurn(t: { agent: string; ship?: string; model?: string; ok
   });
 }
 
-export function recordRun(r: { ship: string; agent: string; kind: "check" | "maneuver"; name: string; ok: boolean; ms: number; cost?: number; deterministic?: boolean; detail?: string }): void {
+export function recordRun(r: { ship: string; agent: string; kind: "check" | "maneuver"; name: string; ok: boolean; ms: number; cost?: number; deterministic?: boolean; detail?: string; commit?: string; dirty?: boolean }): void {
   safely(() =>
     metricsDb()
-      .query("INSERT INTO runs (ts, ship, voyage, agent, kind, name, deterministic, ok, ms, cost, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(now(), r.ship, openVoyageId(r.ship), r.agent, r.kind, r.name, r.deterministic === false ? 0 : 1, r.ok ? 1 : 0, Math.round(r.ms), r.cost ?? 0, (r.detail ?? "").slice(0, 300)),
+      .query("INSERT INTO runs (ts, ship, voyage, agent, kind, name, deterministic, ok, ms, cost, detail, commit_sha, dirty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(now(), r.ship, openVoyageId(r.ship), r.agent, r.kind, r.name, r.deterministic === false ? 0 : 1, r.ok ? 1 : 0, Math.round(r.ms), r.cost ?? 0, (r.detail ?? "").slice(0, 300), r.commit ?? "", r.dirty ? 1 : 0),
   );
+}
+
+/** The latest run of a check on a commit (clean tree only), or null. */
+export function latestRunOn(ship: string, name: string, commit: string): { ok: boolean; ts: string; detail: string } | null {
+  if (!commit) return null;
+  const r = metricsDb()
+    .query("SELECT ok, ts, detail FROM runs WHERE ship = ? AND name = ? AND commit_sha = ? AND dirty = 0 ORDER BY id DESC LIMIT 1")
+    .get(ship, name, commit) as { ok: number; ts: string; detail: string } | null;
+  return r ? { ok: r.ok === 1, ts: r.ts, detail: r.detail } : null;
 }
 
 export function recordHandoff(h: { ship: string; from: string; to?: string; kind: string; size?: number }): void {

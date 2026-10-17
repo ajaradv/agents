@@ -23,6 +23,8 @@ export type ShipRow = {
   vmAllow: string[];
   /** Commands crewmates may run on the host by name (run_check), e.g. { pytest: "just pytest" }. */
   checks: Record<string, string>;
+  /** Checks that must pass on the latest commit: before a task is done (task) and before docking (dock). */
+  gates: { task: string[]; dock: string[] };
 };
 
 /** Package registries and GitHub (read over HTTPS): what a crewmate's VM reaches unless the ship says otherwise. */
@@ -78,6 +80,10 @@ export function parseShipYaml(text: string, fallbackId: string): Omit<ShipRow, "
         .filter(([k, v]) => /^[a-z][a-z0-9_-]{0,30}$/.test(k) && typeof v === "string" && v.trim())
         .map(([k, v]) => [k, String(v).trim()]),
     ),
+    gates: {
+      task: strList((y.gates as Record<string, unknown> | null)?.task),
+      dock: strList((y.gates as Record<string, unknown> | null)?.dock),
+    },
   };
 }
 

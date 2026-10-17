@@ -77,7 +77,7 @@ def parse_simple_yaml(path: Path) -> dict:
             list_key = None
         if rest == "":
             if indent == 0:
-                if key in ("authority", "env", "crew_models", "crew_budgets", "checks"):
+                if key in ("authority", "env", "crew_models", "crew_budgets", "checks", "gates"):
                     data[key] = {}
                     nested = data[key]
                     nested_key = None

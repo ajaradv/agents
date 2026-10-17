@@ -64,3 +64,29 @@ pool the way Firstmate does it (`treehouse get --lease`):
   and warns if your checkout's branch moved during the voyage.
 
 Ships Firstmate runs are unchanged: Firstmate manages worktrees itself.
+
+## Gates
+
+A ship declares which checks must pass on the latest commit before a task is
+done and before a voyage docks:
+
+```yaml
+gates:
+  task:
+    - pytest
+  dock:
+    - frontend
+    - pytest
+```
+
+- A gate is green only when that check's latest run on the current commit,
+  with no uncommitted changes, passed (runs record their commit in the
+  metrics database).
+- When a crewmate reports a task done, the helm runs the task gates itself:
+  pass, and the task is done; fail, and it is blocked with the output, and the
+  crewmate and the lead are told. The crew never marks a gated task done alone.
+- Dock refuses until the dock gates are green on the branch's latest commit,
+  and says which are missing, failing, or stale. `POST /api/ships/<ship>/gates`
+  (stage `dock` or `task`) runs the ones that are not green and sends a notice
+  with the result.
+- `voyage_status` shows the gates to the crew; the lead's voyage brief names them.

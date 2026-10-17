@@ -19,8 +19,9 @@ import { metricsStripHtml } from "./lib/bus.ts";
 import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fleet-snapshot.ts";
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
 import { toolFailuresHtml } from "./lib/tool-failures.ts";
+import { describeGates, runGates } from "./lib/gates.ts";
 import { addSubscription, pushNewNeeds, removeSubscription, sendToAll, subscriptions, validSub, vapidKeys } from "./lib/push.ts";
-import { ackNotice, quietState, snooze, wake } from "./lib/notify.ts";
+import { ackNotice, notifyCaptain, quietState, snooze, wake } from "./lib/notify.ts";
 import { approveOrder, cancelOrder, checkOrderBody, createOrder, retryOrder } from "./lib/order-note.ts";
 import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
@@ -721,6 +722,20 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       });
       if (res.ok) sseBroadcast("ship", String(b.id));
       return Response.json(res, { status: res.ok ? 200 : 400 });
+    }
+
+    // Run gates (lib/gates.ts): the dock gates (or task gates) that are not green, in the background;
+    // the result arrives as a notice (done or blocked).
+    const gatesRun = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/gates$/);
+    if (gatesRun && req.method === "POST") {
+      const ship = await findShip(gatesRun[1]!);
+      const b = (await req.json().catch(() => ({}))) as { stage?: string };
+      const stage = b.stage === "task" ? "task" : "dock";
+      if (!ship || !ship.gates[stage].length) return Response.json({ ok: false, message: `${gatesRun[1]} has no ${stage} gates.` }, { status: 400 });
+      void runGates(ship, stage, "captain").then(({ report, failures }) =>
+        notifyCaptain({ from: "helm", kind: report.green ? "done" : "blocked", summary: `${ship.id}: ${describeGates(report)}`, detail: failures.slice(0, 3000), ref: ship.id }),
+      );
+      return Response.json({ ok: true, message: `Running ${ship.id}'s ${stage} gates (${ship.gates[stage].join(", ")}); you get a notice when they finish.` });
     }
 
     const shipAction = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/(crew|orchestrator|voyage|dock)$/);
