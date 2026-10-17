@@ -263,7 +263,8 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       hooks.event(p.id, { kind: "stream", text: "" });
       if (msg.stopReason === "error" && msg.errorMessage) p.turnError = msg.errorMessage;
       const text = assistantText(msg);
-      if (text) hooks.line(p.id, await appendAgentChat(p.id, p.id, text));
+      // Text in a message that ends in a tool call is narration on the way (a step), not the answer.
+      if (text) hooks.line(p.id, await appendAgentChat(p.id, p.id, text, { step: msg.stopReason === "toolUse" }));
       return;
     }
     case "tool_execution_start":

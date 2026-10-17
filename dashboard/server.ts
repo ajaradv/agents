@@ -75,6 +75,7 @@ function chatPayload(line: ChatLine) {
     ...(line.dialog ? { dialog: line.dialog } : {}),
     ...(line.go ? { go: line.go } : {}),
     ...(line.requestId ? { requestId: line.requestId } : {}),
+    ...(line.step ? { step: true } : {}),
   };
 }
 

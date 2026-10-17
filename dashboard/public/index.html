@@ -151,6 +151,8 @@
         </div>
       </div>
       <div class="row">
+        <button type="button" class="btn" :class="{ 'btn-ink': showThinking }" :aria-pressed="showThinking" @click="toggleThinking()"
+                :title="showThinking ? 'Showing what agents write between steps; click to hide it' : 'Show what agents write between steps (their thinking)'">Thinking</button>
         <button type="button" class="btn" x-show="!chatGroup && chatThinking && current().runtime === 'rpc'" @click="stopAgent()">Stop</button>
         <button type="button" class="btn" x-show="!chatGroup && !chatThinking && current().persistentSession" x-cloak
                 title="Start this agent on an empty history. Long sessions make every turn re-send everything." @click="newAgentSession()">New session</button>
@@ -231,7 +233,7 @@
         </div>
       </template>
     </section>
-    <div class="thread" x-ref="chatLog" aria-live="polite">
+    <div class="thread" x-ref="chatLog" aria-live="polite" :class="{ 'show-steps': showThinking }">
       <div class="bubble-row is-system" x-show="chatEmpty" x-cloak>
         <div class="bubble"><p x-text="title() + (chatGroup ? ' is on the line. Messages go to the lead unless you pick another member.' : ' is on the line.')"></p></div>
       </div>

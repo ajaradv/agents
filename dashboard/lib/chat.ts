@@ -31,6 +31,8 @@ export type ChatLine = {
   go?: { id: string; tool: string };
   /** Client-chosen id for a captain send; a retry with the same id is not sent twice. */
   requestId?: string;
+  /** An agent's narration between tool calls (its message ended in a tool call): thinking, hidden unless the captain shows it. */
+  step?: boolean;
 };
 
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,80}$/;
@@ -95,6 +97,7 @@ export async function appendAgentChat(
   agentId: string,
   from: string,
   text: string,
+  opts: { step?: boolean } = {},
 ): Promise<ChatLine> {
   if (!chatAllowed(agentId)) throw new Error("chat not enabled for agent");
   const line: ChatLine = {
@@ -102,6 +105,7 @@ export async function appendAgentChat(
     from,
     kind: "chat",
     text: text.trim(),
+    ...(opts.step ? { step: true } : {}),
   };
   if (!line.text) throw new Error("empty message");
   const dir = join(fleetInboxRoot(), agentId);

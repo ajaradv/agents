@@ -86,6 +86,8 @@ function dashboardApp() {
     /** Voice: "idle" | "listening" | "transcribing"; replies are spoken when voiceReplies is on. */
     voiceState: "idle",
     voiceReplies: false,
+    /** Show agents' thinking: narration between tool calls and the live "writing" text (per device, off by default). */
+    showThinking: false,
     voiceSpeaking: false,
     voiceNote: "",
     /** The reply being spoken as it streams: {tid, raw, next (chars spoken), muted (barged in)}. */
@@ -177,6 +179,7 @@ function dashboardApp() {
     init() {
       try {
         this.voiceReplies = localStorage.getItem("fleet.voiceReplies") === "1";
+        this.showThinking = localStorage.getItem("fleet.showThinking") === "1";
       } catch {
         /* private window */
       }
@@ -1003,6 +1006,29 @@ function dashboardApp() {
       };
     },
 
+    /**
+     * Lines saved before steps were marked: an agent line followed by another
+     * line from the same agent, with nothing from anyone else between, was
+     * narration on the way to its answer.
+     */
+    markEarlierStep(row) {
+      let prev = row.previousElementSibling;
+      while (prev && (prev.classList.contains("is-system") || prev.classList.contains("is-streaming"))) prev = prev.previousElementSibling;
+      if (!prev || prev.dataset.kind !== "chat" || prev.dataset.role !== row.dataset.role || prev.dataset.thread !== row.dataset.thread || prev.classList.contains("is-step")) return;
+      prev.classList.add("is-step");
+      const name = prev.querySelector(".bubble-name");
+      if (name && !name.textContent.endsWith(" · thinking")) name.textContent += " · thinking";
+    },
+
+    toggleThinking() {
+      this.showThinking = !this.showThinking;
+      try {
+        localStorage.setItem("fleet.showThinking", this.showThinking ? "1" : "0");
+      } catch {
+        /* private window */
+      }
+    },
+
     appendChatLine(m, threadId) {
       const log = this.$refs.chatLog;
       if (!log) return;
@@ -1084,7 +1110,11 @@ function dashboardApp() {
         const avatar = face
           ? `<img class="avatar" src="${face}" alt="" width="48" height="48" />`
           : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
-        row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
+        row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}${!mine && m.step ? " · thinking" : ""}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
+        if (!mine) {
+          row.dataset.role = m.role;
+          if (m.step) row.classList.add("is-step");
+        }
       }
       if (m.ts) row.dataset.at = m.ts;
       if (settled) row.classList.add("is-sent-settle");
@@ -1095,6 +1125,7 @@ function dashboardApp() {
       const later = m.ts ? [...log.querySelectorAll(".bubble-row[data-at]")].find((n) => n.dataset.at > m.ts) : null;
       if (later) log.insertBefore(row, later);
       else log.appendChild(row);
+      if (kind === "chat" && row.dataset.role) this.markEarlierStep(row);
       while (log.childElementCount > LOG_MAX) log.removeChild(log.firstChild);
       if (!later) log.scrollTop = log.scrollHeight;
     },
@@ -1552,6 +1583,8 @@ function dashboardApp() {
      * voice starts within a sentence instead of after the whole message.
      */
     speakStream(tid, text) {
+      // With thinking hidden the live text may be narration: speak the saved answer instead (maybeSpeak).
+      if (!this.showThinking) return;
       if (!this.voiceReplies || this.chatGroup || tid !== this.chatId || !text) return;
       const ls = this.liveSpeech;
       if (!ls || ls.tid !== tid || !text.startsWith(ls.raw.slice(0, ls.next))) {
@@ -1584,6 +1617,7 @@ function dashboardApp() {
     /** Speak an agent's chat line when voice replies are on and it arrived live. */
     maybeSpeak(m, threadId) {
       if (!this.voiceReplies || this.chatGroup || threadId !== this.chatId) return;
+      if (m.step) return; // thinking is never read aloud
       if (m.role === "captain" || m.role === "system" || m.role === "dashboard" || (m.kind !== "chat" && m.kind !== "question")) return;
       if (!m.ts || Date.parse(m.ts) < this.voiceSince) return;
       // Questions are read whole (the captain answers them); replies give the gist (spokenLimit).
