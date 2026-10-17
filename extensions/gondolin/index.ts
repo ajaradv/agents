@@ -6,7 +6,9 @@
  *
  * - Only the ship's repo or the voyage's worktree (/workspace), the
  *   crewmate's memory folder (/memory), the ship's shared memory
- *   (/ship-memory: project and voyage memory), and, in a worktree, the repo's .git
+ *   (/ship-memory: project and voyage memory), the crewmate's cache
+ *   (/cache: pre-commit hook environments, built for the guest, never the
+ *   Mac's), and, in a worktree, the repo's .git
  *   (at its own path, which the worktree's .git file points to) are mounted;
  *   the rest of the Mac does not exist in the guest.
  * - Commands get a fixed environment (home, locale, CI, git identity), never
@@ -25,7 +27,7 @@
 
 import path from "node:path";
 import { createHttpHooks, RealFSProvider, VM } from "@earendil-works/gondolin";
-import { allowedHosts, guestEnv, hostAllowed } from "./policy.ts";
+import { allowedHosts, GUEST_CACHE, guestEnv, hostAllowed } from "./policy.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	type BashOperations,
@@ -56,6 +58,8 @@ const HOST_MEMORY = process.env.FLEET_VM_MEMORY ?? "";
 const GUEST_SHIP_MEMORY = "/ship-memory";
 /** The ship's shared memory folder on the host (fleet/inbox/ships/<ship>/memory: project and voyage memory). */
 const HOST_SHIP_MEMORY = process.env.FLEET_VM_SHIP_MEMORY ?? "";
+/** The crewmate's cache folder on the host (fleet/inbox/<id>/cache), mounted at /cache: pre-commit hook environments. */
+const HOST_CACHE = process.env.FLEET_VM_CACHE ?? "";
 const DEFAULT_GREP_LIMIT = 100;
 
 type TextToolResult<TDetails> = {
@@ -420,6 +424,7 @@ export default function (pi: ExtensionAPI) {
 		const mounts: Record<string, RealFSProvider> = { [GUEST_WORKSPACE]: new RealFSProvider(localCwd) };
 		if (HOST_MEMORY) mounts[GUEST_MEMORY] = new RealFSProvider(HOST_MEMORY);
 		if (HOST_SHIP_MEMORY) mounts[GUEST_SHIP_MEMORY] = new RealFSProvider(HOST_SHIP_MEMORY);
+		if (HOST_CACHE) mounts[GUEST_CACHE] = new RealFSProvider(HOST_CACHE);
 		// In a voyage worktree, .git is a file pointing into the repo's .git: mount it at its own path so git works.
 		const gitDir = process.env.FLEET_VM_GITDIR ?? "";
 		if (gitDir && path.isAbsolute(gitDir)) mounts[gitDir] = new RealFSProvider(gitDir);

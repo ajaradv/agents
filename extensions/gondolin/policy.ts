@@ -1,11 +1,16 @@
 /** Pure policy for the fleet Gondolin extension (no pi imports, so it can be tested). */
 
+export const GUEST_CACHE = "/cache";
+
 /**
  * The only environment commands in the VM get. The host's environment (keys,
  * FLEET_* tokens, macOS PATH) never crosses; the guest keeps its own PATH.
  */
-export function guestEnv(agentId = process.env.FLEET_AGENT_ID ?? "crewmate"): Record<string, string> {
+export function guestEnv(agentId = process.env.FLEET_AGENT_ID ?? "crewmate", cache = !!process.env.FLEET_VM_CACHE): Record<string, string> {
 	return {
+		// The crewmate's cache folder (/cache) keeps pre-commit's hook environments
+		// between VMs, so a new VM does not rebuild them before its first commit.
+		...(cache ? { PRE_COMMIT_HOME: `${GUEST_CACHE}/pre-commit` } : {}),
 		HOME: "/root",
 		LANG: "C.UTF-8",
 		TERM: "xterm-256color",

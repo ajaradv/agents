@@ -28,6 +28,7 @@ describe("parseShipYaml", () => {
       isolation: "host",
       vmAllow: DEFAULT_VM_ALLOW,
       checks: {},
+      gates: { task: [], dock: [] },
     });
   });
 

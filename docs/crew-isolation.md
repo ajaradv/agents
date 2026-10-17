@@ -25,6 +25,13 @@ restart).
 
 - `/workspace`: the ship's repo (read-write; commits land in the real repo).
 - `/memory`: its memory folder (`fleet/inbox/<ship>-<role>/memory`).
+- `/ship-memory`: the ship's shared memory (`fleet/inbox/ships/<ship>/memory`:
+  project memory and the voyage scratchpad).
+- `/cache`: its cache folder (`fleet/inbox/<ship>-<role>/cache`).
+  `PRE_COMMIT_HOME` points there, so pre-commit builds its hook environments
+  once per crewmate rather than in every new VM. They are built for the guest
+  (Alpine, musl), so this is never the Mac's pre-commit cache. Delete the folder
+  to force a rebuild, for example after the VM image changes.
 - Nothing else from the Mac, no provider keys, no fleet tokens.
 - Network: only `vm_allow` hosts, HTTP and HTTPS only; blocked hosts are
   logged on the ship log (kind `vm`) and on Health under Tool failures

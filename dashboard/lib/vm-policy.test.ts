@@ -5,9 +5,12 @@ import { tail } from "./ship-checks.ts";
 
 describe("crew VM policy", () => {
   test("commands get a fixed environment: no keys, no fleet tokens, no host PATH", () => {
-    const env = guestEnv("pochteca-scout");
+    const env = guestEnv("pochteca-scout", false);
     expect(Object.keys(env).sort()).toEqual(["CI", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_NAME", "HOME", "LANG", "TERM"]);
     expect(env.GIT_AUTHOR_NAME).toBe("pochteca-scout");
+  });
+  test("with a cache folder, pre-commit keeps its hook environments there", () => {
+    expect(guestEnv("pochteca-scout", true).PRE_COMMIT_HOME).toBe("/cache/pre-commit");
   });
   test("the allowlist parses hostnames and wildcards, and matches only those", () => {
     const allow = allowedHosts("pypi.org, *.github.com,bad host,http://x.com");
