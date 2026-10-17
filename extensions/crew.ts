@@ -4,7 +4,8 @@
  * crewmate (<ship>-<role>) and sets FLEET_SHIP and FLEET_AGENT_ID; the agent
  * host sets FLEET_DASHBOARD_URL.
  *
- * Everyone aboard: voyage_status, crew_message, task_report.
+ * Everyone aboard: voyage_status, crew_message, task_report, run_check (the
+ * host commands the captain lists for the ship; FLEET_SHIP_CHECKS names them).
  * The lead (<ship>-lead) also gets: task_add, task_update, maneuver_start.
  */
 
@@ -21,7 +22,7 @@ function text(t: string) {
   return { content: [{ type: "text" as const, text: t }], details: {} };
 }
 
-async function call(method: "GET" | "POST", path: string, body?: Record<string, unknown>): Promise<string> {
+async function call(method: "GET" | "POST", path: string, body?: Record<string, unknown>, timeoutMs = 20_000): Promise<string> {
   if (!ship || !me) return "Not aboard a ship in this session (FLEET_SHIP unset).";
   try {
     const url = `${base}/api/crew/${encodeURIComponent(ship)}/${path}${method === "GET" ? `?from=${encodeURIComponent(me)}` : ""}`;
@@ -30,7 +31,7 @@ async function call(method: "GET" | "POST", path: string, body?: Record<string, 
       // The dashboard knows this process by FLEET_CREW_TOKEN, not by name.
       headers: { "Content-Type": "application/json", "x-fleet-crew-token": process.env.FLEET_CREW_TOKEN ?? "" },
       ...(method === "POST" ? { body: JSON.stringify({ ...body, from: me }) } : {}),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const j = (await res.json()) as Record<string, unknown>;
     if (method === "GET") return JSON.stringify(j, null, 2);
@@ -81,6 +82,19 @@ export default function (pi: ExtensionAPI) {
       return text(await call("POST", `tasks/${p.id}`, { status: p.status, note: p.summary }));
     },
   });
+
+  const checks = (process.env.FLEET_SHIP_CHECKS ?? "").split(",").filter((c) => /^[a-z][a-z0-9_-]{0,30}$/.test(c)).sort();
+  if (checks.length) {
+    pi.registerTool({
+      name: "run_check",
+      label: "Run a ship check",
+      description: `Run one of this ship's checks on the host, in the ship's repo, and get its output (the end of it when long). For checks your own tools cannot run, such as tests that need Docker. You pick the check by name; the command is set by the captain. Checks: ${checks.join(", ")}.`,
+      parameters: Type.Object({ name: StringEnum(checks as [string, ...string[]]) }),
+      async execute(_id, p) {
+        return text(await call("POST", "check", { name: p.name }, 20 * 60_000));
+      },
+    });
+  }
 
   if (!isLead) return;
 

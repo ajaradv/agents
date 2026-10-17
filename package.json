@@ -4,6 +4,7 @@
   "type": "module",
   "description": "Vendored pi-vs-cc extensions for the atria-factory SDLC. Run via the justfile recipes or `pi -e extensions/<name>.ts`.",
   "dependencies": {
+    "@earendil-works/gondolin": "0.12.0",
     "@sinclair/typebox": "^0.34.0",
     "web-push": "3.6.7",
     "yaml": "^2.8.0"

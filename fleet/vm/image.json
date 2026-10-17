@@ -1,0 +1,33 @@
+{
+  "arch": "aarch64",
+  "distro": "alpine",
+  "alpine": {
+    "version": "3.23.0",
+    "kernelPackage": "linux-virt",
+    "kernelImage": "vmlinuz-virt",
+    "rootfsPackages": [
+      "linux-virt",
+      "rng-tools",
+      "bash",
+      "ca-certificates",
+      "curl",
+      "e2fsprogs",
+      "nodejs",
+      "npm",
+      "uv",
+      "python3",
+      "openssh-client",
+      "git",
+      "ripgrep",
+      "fd",
+      "build-base",
+      "jq",
+      "pre-commit"
+    ],
+    "initramfsPackages": [],
+    "krunfwVersion": "v5.2.1"
+  },
+  "rootfs": {
+    "label": "gondolin-root"
+  }
+}

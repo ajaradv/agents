@@ -77,7 +77,7 @@ def parse_simple_yaml(path: Path) -> dict:
             list_key = None
         if rest == "":
             if indent == 0:
-                if key in ("authority", "env", "crew_models", "crew_budgets"):
+                if key in ("authority", "env", "crew_models", "crew_budgets", "checks"):
                     data[key] = {}
                     nested = data[key]
                     nested_key = None
@@ -280,6 +280,25 @@ def dashboard_chat_block() -> str:
     return DASHBOARD_RPC_BLOCK if RUNTIME == "rpc" else DASHBOARD_CHAT_BLOCK
 
 
+# What a crewmate's VM reaches when its ship names no vm_allow (keep in step with
+# DEFAULT_VM_ALLOW in dashboard/lib/fleet-layers.ts): package registries and GitHub over HTTPS.
+DEFAULT_VM_ALLOW = [
+    "pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "crates.io", "static.crates.io",
+    "index.crates.io", "github.com", "codeload.github.com", "objects.githubusercontent.com",
+]
+
+
+def vm_env(ship: dict, agent_id: str, inbox: Path) -> dict[str, str]:
+    """Environment for the fleet Gondolin extension (extensions/gondolin), for a ship with `isolation: vm`."""
+    allow = ship.get("vm_allow")
+    hosts = DEFAULT_VM_ALLOW if allow is None else [str(h).lower() for h in (allow or [])]
+    env = {"FLEET_VM": "1", "FLEET_VM_ALLOW": ",".join(hosts), "FLEET_VM_MEMORY": str(inbox / agent_id / "memory")}
+    image = ROOT / "fleet" / "home" / "gondolin" / "fleet-assets"
+    if (image / "manifest.json").is_file():
+        env["FLEET_VM_IMAGE"] = str(image)
+    return env
+
+
 def resolve_crewmate(agent_id: str) -> tuple[dict, dict] | None:
     """`<ship>-<role>` for a role listed under `crew:` in fleet/ships/<ship>.yaml.
 
@@ -432,6 +451,12 @@ def prepare_pi_launch(
         ship_path = Path(str(aboard["path"])).expanduser()
         cwd = ship_path
         os.environ["FLEET_SHIP"] = str(aboard["id"])
+        checks = aboard.get("checks") if isinstance(aboard.get("checks"), dict) else {}
+        os.environ["FLEET_SHIP_CHECKS"] = ",".join(sorted(str(k) for k in checks))
+        if str(aboard.get("isolation") or "") == "vm":
+            # R4: this crewmate's built-in tools run in a micro-VM with only the repo and its memory mounted.
+            (fleet_inbox_root() / agent_id / "memory").mkdir(parents=True, exist_ok=True)
+            os.environ.update(vm_env(aboard, agent_id, fleet_inbox_root()))
         crew = ", ".join(f"`{aboard['id']}-{r}`" for r in aboard.get("crew") or [])
         path_block = (
             "## Resolved paths (this session)\n\n"
@@ -552,7 +577,8 @@ def prepare_pi_launch(
     # repeated reads (cache-watch.ts).
     if agent_type == "assistant":
         # Crewmates also work as a crew: tasks, crew messages, maneuvers (crew.ts).
-        for name in ("ask-captain", "canvas", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()):
+        isolated = bool(aboard) and str(aboard.get("isolation") or "") == "vm"
+        for name in ("ask-captain", "canvas", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()) + (("gondolin",) if isolated else ()):
             ref = str(ROOT / "extensions" / f"{name}.ts")
             if ref not in ext_refs:
                 ext_refs.append(ref)

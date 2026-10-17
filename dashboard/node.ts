@@ -26,7 +26,9 @@ import { NODE_CODE_VERSION } from "./lib/node-version.ts";
 import type { NodeAgentState, NodeState } from "./lib/node-client.ts";
 import { HOST, NODE_PORT, nodeStateDir, ROOT } from "./lib/paths.ts";
 import { requestRefusal } from "./lib/request-guard.ts";
-import { onShipLogWrite } from "./lib/ship-log.ts";
+import { logShipEvent, onShipLogWrite } from "./lib/ship-log.ts";
+import { runCheck } from "./lib/ship-checks.ts";
+import { recordToolFailure } from "./lib/tool-failures.ts";
 import { newSession } from "./lib/session-rotate.ts";
 
 /**
@@ -46,7 +48,7 @@ import { newSession } from "./lib/session-rotate.ts";
  *   POST /v1/answer          { agentId, dialogId, value?, confirmed?, cancelled? }
  *   POST /v1/abort|stop|new-session  { agentId }
  *   POST /v1/refresh-targets after crew changes
- * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers>
+ * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers|check|vm>
  * Fleet API (extensions/fleet.ts, officers' crew token): GET /api/fleet/<status|log|tasks|maneuvers|chat>, POST /api/fleet/chat
  */
 
@@ -187,6 +189,15 @@ function events(server: ReturnType<typeof Bun.serve>, req: Request): Response {
   return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
 }
 
+/** A crewmate's VM started, stopped, failed, or blocked a request (extensions/gondolin). */
+function crewVmEvent(shipId: string, from: string, event: string, detail: string): { ok: boolean; message: string } {
+  if (!["start", "stop", "blocked", "error"].includes(event)) return { ok: false, message: "unknown vm event" };
+  const say = { start: "VM started", stop: "VM stopped", blocked: "VM blocked a request to", error: "VM did not start:" }[event as "start"];
+  logShipEvent(shipId, from, "vm", `${say} ${detail}`.trim(), { event, detail });
+  if (event === "blocked" || event === "error") recordToolFailure({ agent: from, tool: event === "blocked" ? "network" : "vm", args: event === "blocked" ? detail : "", error: event === "blocked" ? `blocked by the ship's allowlist: ${detail}` : detail });
+  return { ok: true, message: "noted" };
+}
+
 async function crewApi(req: Request, shipId: string, what: string, num: string | undefined): Promise<Response> {
   // The caller is whoever holds the token its live process was given; a name
   // in the request ("from") is never trusted.
@@ -201,6 +212,8 @@ async function crewApi(req: Request, shipId: string, what: string, num: string |
     else if (what === "tasks") res = await crewAddTask(shipId, { ...b, from } as never);
     else if (what === "message") res = await crewMessage(shipId, { ...b, from } as never);
     else if (what === "maneuvers") res = await crewStartManeuver(shipId, { ...b, from } as never);
+    else if (what === "check") res = await runCheck(shipId, from, String(b.name ?? ""));
+    else if (what === "vm") res = crewVmEvent(shipId, from, String(b.event ?? ""), String(b.detail ?? ""));
     else res = { ok: false, message: "unknown crew call" };
     emit("ship", shipId);
   } else {
@@ -296,7 +309,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|recall)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
-  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers)(?:\/(\d+))?$/);
+  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm)(?:\/(\d+))?$/);
   if (crew) return crewApi(req, crew[1]!, crew[2]!, crew[3]);
 
   if (!path.startsWith("/v1/")) return new Response("not found", { status: 404 });

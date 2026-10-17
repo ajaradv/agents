@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# fleet-vm-image - build the guest image crewmates' VMs run (R4, extensions/gondolin).
+#
+# Usage:
+#   bin/fleet-vm-image          build fleet/vm/image.json into fleet/home/gondolin/fleet-assets
+#
+# The image is Alpine with what crews need: bash, git, ripgrep, fd, node/npm,
+# python3/uv, a compiler, jq, and pre-commit (so ship git hooks run inside the
+# VM). Add packages in fleet/vm/image.json, then rebuild. Running VMs keep the
+# old image until their crewmate restarts.
+#
+# Needs: Node 23.6+, QEMU (brew install qemu), and mke2fs (brew install
+# e2fsprogs; keg-only, found here without changing your PATH).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT="$ROOT/fleet/home/gondolin/fleet-assets"
+command -v qemu-system-aarch64 >/dev/null || { echo "QEMU is missing: brew install qemu" >&2; exit 1; }
+if ! command -v mke2fs >/dev/null; then
+  E2="$(brew --prefix e2fsprogs 2>/dev/null)/sbin"
+  [ -x "$E2/mke2fs" ] || { echo "mke2fs is missing: brew install e2fsprogs" >&2; exit 1; }
+  PATH="$E2:$PATH"
+fi
+mkdir -p "$(dirname "$OUT")"
+rm -rf "$OUT.new"
+cd "$ROOT"
+node_modules/.bin/gondolin build --config fleet/vm/image.json --output "$OUT.new"
+rm -rf "$OUT"
+mv "$OUT.new" "$OUT"
+echo "built $OUT"

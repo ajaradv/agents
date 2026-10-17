@@ -7,6 +7,7 @@ import {
   parseInitiative,
   parseShipYaml,
   readInitiatives,
+  DEFAULT_VM_ALLOW,
 } from "./fleet-layers.ts";
 
 describe("parseShipYaml", () => {
@@ -24,6 +25,9 @@ describe("parseShipYaml", () => {
       orchestrator: "firstmate",
       crew: [],
       crewModels: {},
+      isolation: "host",
+      vmAllow: DEFAULT_VM_ALLOW,
+      checks: {},
     });
   });
 
