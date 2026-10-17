@@ -39,6 +39,10 @@ const LANE_META: Record<
     label: "OpenRouter",
     keyEnv: "OPENROUTER_API_KEY",
   },
+  google: {
+    label: "Google AI Studio",
+    keyEnv: "GEMINI_API_KEY",
+  },
 };
 
 function collectProvidersFromDispatch(j: Record<string, unknown>): Set<string> {
@@ -90,12 +94,13 @@ export async function readConfiguredApiLanes(
   }
 
   const lanes: ApiLane[] = [];
-  for (const provider of ["deepseek", "huggingface", "openrouter"] as const) {
+  for (const provider of ["deepseek", "huggingface", "openrouter", "google"] as const) {
     if (quotaProviderIds.has(provider)) continue;
     const meta = LANE_META[provider]!;
     const inDispatch = dispatchProviders.has(provider);
+    // Google AI Studio shows as soon as its key is set: tracked for its free tier before any agent uses it.
     const inCatalog =
-      provider === "openrouter" ? inDispatch : await providerInPiCatalog(provider);
+      provider === "openrouter" ? inDispatch : provider === "google" ? envKeyPresent(meta.keyEnv, dotenv) : await providerInPiCatalog(provider);
     if (!inDispatch && !inCatalog) continue;
     const keySet =
       provider === "huggingface" ? huggingFaceKeyPresent(dotenv) : envKeyPresent(meta.keyEnv, dotenv);

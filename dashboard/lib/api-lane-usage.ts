@@ -24,13 +24,14 @@ export function getApiLaneUsageCache(): Record<string, ApiLaneUsage> {
 async function fetchJson(
   url: string,
   apiKey: string,
+  keyHeader: "bearer" | "x-goog-api-key" = "bearer",
 ): Promise<{ status: number; body: unknown; timedOut: boolean }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_MS);
   try {
     const res = await fetch(url, {
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        ...(keyHeader === "bearer" ? { Authorization: `Bearer ${apiKey}` } : { "x-goog-api-key": apiKey }),
         Accept: "application/json",
       },
       signal: ctrl.signal,
@@ -151,6 +152,28 @@ async function fetchOpenRouter(apiKey: string): Promise<ApiLaneUsage> {
   };
 }
 
+/**
+ * Google AI Studio (GEMINI_API_KEY): there is no balance or credits API, so the
+ * lane checks the key works and counts the models it can call. The free tier is
+ * per-model rate limits (requests per minute and per day) that reset daily.
+ */
+export async function fetchGemini(apiKey: string): Promise<ApiLaneUsage> {
+  const at = new Date().toISOString();
+  const { status, body, timedOut } = await fetchJson("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", apiKey, "x-goog-api-key");
+  if (timedOut) return usageCache.google?.ok ? { ...usageCache.google, stale: true, at } : { provider: "google", ok: false, error: "timed out", at };
+  if (status === 400 || status === 401 || status === 403) return { provider: "google", ok: false, error: "key rejected", at };
+  if (status < 200 || status >= 300 || !body || typeof body !== "object") return { provider: "google", ok: false, error: `HTTP ${status || "error"}`, at };
+  const models = ((body as { models?: { name?: string; supportedGenerationMethods?: string[] }[] }).models ?? []).filter((m) => m.supportedGenerationMethods?.includes("generateContent"));
+  const gemini = models.filter((m) => /gemini/i.test(m.name ?? ""));
+  return {
+    provider: "google",
+    ok: true,
+    at,
+    headline: `Key works · ${gemini.length} Gemini models`,
+    detail: `Free tier: per-model limits per minute and per day, reset daily (no balance API). ${models.length} models can generate.`,
+  };
+}
+
 export async function refreshApiLaneUsage(): Promise<Record<string, ApiLaneUsage>> {
   if (usageRunning) return usageCache;
   usageRunning = true;
@@ -158,6 +181,7 @@ export async function refreshApiLaneUsage(): Promise<Record<string, ApiLaneUsage
     const dotenv = await loadFleetDotenv();
     const dsKey = envKeyValue("DEEPSEEK_API_KEY", dotenv);
     const orKey = envKeyValue("OPENROUTER_API_KEY", dotenv);
+    const geminiKey = envKeyValue("GEMINI_API_KEY", dotenv);
     const next = { ...usageCache };
     const jobs: Promise<void>[] = [];
     if (dsKey) {
@@ -188,6 +212,8 @@ export async function refreshApiLaneUsage(): Promise<Record<string, ApiLaneUsage
         at: new Date().toISOString(),
       };
     }
+    if (geminiKey) jobs.push(fetchGemini(geminiKey).then((u) => void (next.google = u)));
+    else delete next.google;
     await Promise.all(jobs);
     usageCache = next;
   } finally {

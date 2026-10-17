@@ -74,6 +74,7 @@ const AGENT_KEYS = [
   "HF_TOKEN",
   "CURSOR_API_KEY",
   "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
 ];
 
 /**
@@ -82,7 +83,7 @@ const AGENT_KEYS = [
  * Retries an empty read once before giving up.
  */
 /** Provider of a model id → its key (keep in step with PROVIDER_KEYS in bin/launch). */
-const PROVIDER_KEYS: Record<string, string> = { cursor: "CURSOR_API_KEY", deepseek: "DEEPSEEK_API_KEY", openrouter: "OPENROUTER_API_KEY", anthropic: "ANTHROPIC_API_KEY" };
+const PROVIDER_KEYS: Record<string, string> = { cursor: "CURSOR_API_KEY", deepseek: "DEEPSEEK_API_KEY", openrouter: "OPENROUTER_API_KEY", anthropic: "ANTHROPIC_API_KEY", google: "GEMINI_API_KEY" };
 
 /** Only the keys these models need (R4c), e.g. a helper on deepseek/... gets DEEPSEEK_API_KEY alone. */
 export function keysForModels(all: Record<string, string>, models: string[]): Record<string, string> {
