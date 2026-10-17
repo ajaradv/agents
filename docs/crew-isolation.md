@@ -43,3 +43,24 @@ never fall back to running on the Mac.
 - `bin/fleet-vm-image` builds the guest image from `fleet/vm/image.json` into
   `fleet/home/gondolin/fleet-assets` (about 20 s, 630 MB). Add Alpine packages
   there and rebuild when a ship needs more tools.
+
+## Voyages work in their own worktree
+
+For ships the fleet's crew sails (`orchestrator: lead`), every voyage gets its
+own git worktree, leased from [treehouse](https://github.com/kunchenguid/treehouse)'s
+pool the way Firstmate does it (`treehouse get --lease`):
+
+- On **Set sail**, the fleet leases a worktree, checks it is a real linked
+  worktree (not your checkout) and clean, and creates `crew/<goal-slug>` from
+  the default branch (origin's HEAD, else main or master). The record is
+  `fleet/inbox/ships/<ship>/worktree.json`; the voyage note shows the branch.
+- Crewmates start in the worktree (a crewmate already running restarts on its
+  next message); a VM mounts it at `/workspace`, plus the repo's `.git` at its
+  own path so commits work. `run_check` runs there too.
+- Your own checkout is never touched.
+- On **Dock**, the fleet refuses while the worktree has uncommitted work;
+  otherwise it returns the worktree to the pool (`treehouse return --force`),
+  keeps the branch, tells you how many commits it has to review and merge,
+  and warns if your checkout's branch moved during the voyage.
+
+Ships Firstmate runs are unchanged: Firstmate manages worktrees itself.

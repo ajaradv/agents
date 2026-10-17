@@ -4,8 +4,10 @@
  * plan fleet/plans/feature/r4-crew-isolation). Vendored from pi-coding-agent
  * 1.2.0 examples/extensions/gondolin (MIT), with fleet changes:
  *
- * - Only the ship's repo (/workspace) and the crewmate's memory folder
- *   (/memory) are mounted; the rest of the Mac does not exist in the guest.
+ * - Only the ship's repo or the voyage's worktree (/workspace), the
+ *   crewmate's memory folder (/memory), and, in a worktree, the repo's .git
+ *   (at its own path, which the worktree's .git file points to) are mounted;
+ *   the rest of the Mac does not exist in the guest.
  * - Commands get a fixed environment (home, locale, CI, git identity), never
  *   the host's: no provider keys, no FLEET_* tokens. (The example passed the
  *   host environment through.)
@@ -409,6 +411,9 @@ export default function (pi: ExtensionAPI) {
 		});
 		const mounts: Record<string, RealFSProvider> = { [GUEST_WORKSPACE]: new RealFSProvider(localCwd) };
 		if (HOST_MEMORY) mounts[GUEST_MEMORY] = new RealFSProvider(HOST_MEMORY);
+		// In a voyage worktree, .git is a file pointing into the repo's .git: mount it at its own path so git works.
+		const gitDir = process.env.FLEET_VM_GITDIR ?? "";
+		if (gitDir && path.isAbsolute(gitDir)) mounts[gitDir] = new RealFSProvider(gitDir);
 		let created: VM;
 		try {
 			created = await VM.create({ sessionLabel: `fleet ${process.env.FLEET_AGENT_ID ?? path.basename(localCwd)}`, httpHooks, env, vfs: { mounts } });

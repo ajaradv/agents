@@ -13,6 +13,7 @@ import { agentKeyEnv } from "./fleet-env.ts";
 import { dashLog } from "./log.ts";
 import { notifyCaptain } from "./notify.ts";
 import { recordToolFailure } from "./tool-failures.ts";
+import { voyageWorktree } from "./voyage-worktree.ts";
 import { toolFailed } from "../../extensions/cache-watch.ts";
 import { fleetInboxRoot, NODE_PORT, ROOT } from "./paths.ts";
 
@@ -116,6 +117,8 @@ type AgentProc = {
   toolArgs: Map<string, string>;
   /** provider/model of the latest reply. */
   model: string;
+  /** The voyage worktree this crewmate started in ("" for the repo or a non-crewmate). */
+  worktree: string;
   /** Continues sent for the current captain line after a dropped stream. */
   streamRetries: number;
   /** This turn's billed cost and tokens, summed from Pi's assistant message usage. */
@@ -484,6 +487,7 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
     turnError: null,
     toolArgs: new Map(),
     model: "",
+    worktree: worktreeFor(agentId),
     streamRetries: 0,
     turnCost: 0,
     turnTokens: 0,
@@ -514,9 +518,22 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
   return p;
 }
 
+/** The open voyage's worktree for a crewmate's ship, or "" (bin/launch starts crewmates there). */
+function worktreeFor(agentId: string): string {
+  const ship = chatTarget(agentId)?.ship;
+  return ship ? (voyageWorktree(ship)?.path ?? "") : "";
+}
+
 /** Hand a captain line to the agent's live session (starting it when needed). */
 export async function submitToHost(agentId: string, line: ChatLine): Promise<void> {
   let p = procs.get(agentId);
+  // A voyage started or docked since this crewmate launched: restart it in the right folder
+  // (between turns only; the session carries over).
+  if (p && !p.running && p.worktree !== worktreeFor(agentId)) {
+    void dashLog("agent-host", `${agentId} working folder changed (voyage worktree); restarting`);
+    await stopHost(agentId);
+    p = undefined;
+  }
   if (!p) {
     const keys = await agentKeyEnv();
     p = procs.get(agentId) ?? start(agentId, keys);

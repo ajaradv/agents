@@ -1,6 +1,7 @@
 import { readShips } from "./fleet-layers.ts";
 import { spawnTimed } from "./proc.ts";
 import { logShipEvent } from "./ship-log.ts";
+import { voyageWorktree } from "./voyage-worktree.ts";
 
 /**
  * Host checks (R4): a crewmate whose tools run in a VM cannot run Docker, and
@@ -31,8 +32,10 @@ export async function runCheck(shipId: string, from: string, name: string): Prom
   const started = Date.now();
   logShipEvent(shipId, from, "check", `Check ${name} started: ${cmd}`, { name, cmd });
   try {
+    // In the voyage's worktree when one is open (the crew's work), else the repo.
     // A login shell, so the captain's PATH (just, docker, uv) resolves as in a terminal.
-    const res = await spawnTimed(["/bin/zsh", "-lc", cmd], { timeoutMs: TIMEOUT_MS, cwd: ship.path, env: { ...process.env, CI: "1" } });
+    const cwd = voyageWorktree(shipId)?.path ?? ship.path;
+    const res = await spawnTimed(["/bin/zsh", "-lc", cmd], { timeoutMs: TIMEOUT_MS, cwd, env: { ...process.env, CI: "1" } });
     const secs = Math.round((Date.now() - started) / 1000);
     const passed = !res.timedOut && res.exitCode === 0;
     const verdict = res.timedOut ? `timed out after ${secs}s` : passed ? `passed in ${secs}s` : `failed (exit ${res.exitCode}) in ${secs}s`;

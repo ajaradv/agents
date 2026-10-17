@@ -289,6 +289,15 @@ DEFAULT_VM_ALLOW = [
 ]
 
 
+def voyage_worktree(ship_id: str) -> dict | None:
+    """The open voyage's worktree for a fleet-crewed ship (written by dashboard/lib/voyage-worktree.ts), or None."""
+    try:
+        w = json.loads((fleet_inbox_root() / "ships" / ship_id / "worktree.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return w if isinstance(w, dict) and Path(str(w.get("path", ""))).is_dir() else None
+
+
 def vm_env(ship: dict, agent_id: str, inbox: Path) -> dict[str, str]:
     """Environment for the fleet Gondolin extension (extensions/gondolin), for a ship with `isolation: vm`."""
     allow = ship.get("vm_allow")
@@ -479,6 +488,17 @@ def prepare_pi_launch(
         ship_path = Path(str(aboard["path"])).expanduser()
         cwd = ship_path
         os.environ["FLEET_SHIP"] = str(aboard["id"])
+        # A voyage under sail has its own worktree: the crew works there, never in the captain's checkout.
+        wt = voyage_worktree(str(aboard["id"]))
+        if wt:
+            cwd = Path(str(wt["path"]))
+            os.environ["FLEET_SHIP_WORKTREE"] = str(wt["path"])
+            os.environ["FLEET_SHIP_BRANCH"] = str(wt.get("branch", ""))
+            if wt.get("gitDir"):
+                os.environ["FLEET_VM_GITDIR"] = str(wt["gitDir"])
+        else:
+            for k in ("FLEET_SHIP_WORKTREE", "FLEET_SHIP_BRANCH", "FLEET_VM_GITDIR"):
+                os.environ.pop(k, None)
         checks = aboard.get("checks") if isinstance(aboard.get("checks"), dict) else {}
         os.environ["FLEET_SHIP_CHECKS"] = ",".join(sorted(str(k) for k in checks))
         if str(aboard.get("isolation") or "") == "vm":
@@ -489,9 +509,14 @@ def prepare_pi_launch(
         path_block = (
             "## Resolved paths (this session)\n\n"
             f"- **Aboard ship:** `{aboard['id']}`; you are its `{role}` crewmate (`{agent_id}`)\n"
-            f"- **Ship repo (cwd):** `{ship_path}`; stay in this project. Work for other ships belongs to their crews.\n"
-            f"- **Delivery mode:** `{aboard.get('mode') or 'unset'}`\n"
-            f"- **Crew aboard:** {crew}\n"
+            + (
+                f"- **Voyage worktree (cwd):** `{cwd}`, on branch `{wt.get('branch', '')}`; the ship's repo is `{ship_path}`, "
+                "but work, commit, and run everything in the worktree, never in the repo folder (that is the captain's checkout). Never push.\n"
+                if wt
+                else f"- **Ship repo (cwd):** `{ship_path}`; stay in this project. Work for other ships belongs to their crews.\n"
+            )
+            + f"- **Delivery mode:** `{aboard.get('mode') or 'unset'}`\n"
+            + f"- **Crew aboard:** {crew}\n"
             f"- **FLEET_INBOX:** `{inbox}`\n"
             f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
             f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"

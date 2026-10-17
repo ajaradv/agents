@@ -7,6 +7,7 @@ import { frontmatter, readShips, type ShipRow } from "./fleet-layers.ts";
 import { aliceVault, ROOT } from "./paths.ts";
 import { spawnTimed } from "./proc.ts";
 import { logShipEvent, shipTurnTotals } from "./ship-log.ts";
+import { leaseVoyageWorktree, releaseVoyageWorktree, usesVoyageWorktrees, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
 
 /**
  * The shipyard: build a ship (register it, check what it is missing), crew it
@@ -163,7 +164,7 @@ export function readyToSail(items: CheckItem[]): boolean {
 
 // ---------------------------------------------------------------- voyages
 
-export type Voyage = { file: string; ship: string; status: "sailing" | "docked"; goal: string; to: string; started: string; ended?: string };
+export type Voyage = { file: string; ship: string; status: "sailing" | "docked"; goal: string; to: string; started: string; ended?: string; worktree?: VoyageWorktree };
 
 function voyageDir(shipId: string): string {
   return join(aliceVault(), "fleet", "voyages", shipId);
@@ -217,6 +218,13 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
   const file = join(voyageDir(shipId), `${now.toISOString().slice(0, 10)}-${slug}.md`);
   if (existsSync(file)) return { ok: false, message: "A voyage with that goal already started today." };
   await mkdir(voyageDir(shipId), { recursive: true });
+  // Fleet-crewed ships work in a leased worktree on a crew/ branch, never in the captain's checkout.
+  let worktree: VoyageWorktree | undefined;
+  if (usesVoyageWorktrees(ship)) {
+    const lease = await leaseVoyageWorktree(ship, slug);
+    if (!lease.ok) return { ok: false, message: lease.message };
+    worktree = lease.worktree;
+  }
   const crew = ship.crew.map((r) => `${shipId}-${r}`);
   await writeFile(
     file,
@@ -229,6 +237,7 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
       `to: ${to}`,
       `orchestrator: ${ship.orchestrator}`,
       `crew: [${crew.join(", ")}]`,
+      ...(worktree ? [`branch: ${worktree.branch}`, `worktree: ${yamlStr(worktree.path)}`] : []),
       `started: ${now.toISOString()}`,
       "---",
       "",
@@ -238,27 +247,31 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
       "",
       "## Log",
       "",
-      `- ${now.toISOString()} set sail; goal sent to ${to}`,
+      `- ${now.toISOString()} set sail; goal sent to ${to}${worktree ? `; work on branch ${worktree.branch} (from ${worktree.base}) in ${worktree.path}` : ""}`,
       "",
     ].join("\n"),
     "utf8",
   );
-  logShipEvent(shipId, "captain", "voyage-start", g, { file, to });
-  const voyage: Voyage = { file, ship: shipId, status: "sailing", goal: g, to, started: now.toISOString() };
+  logShipEvent(shipId, "captain", "voyage-start", g, { file, to, ...(worktree ? { branch: worktree.branch, worktree: worktree.path } : {}) });
+  const voyage: Voyage = { file, ship: shipId, status: "sailing", goal: g, to, started: now.toISOString(), ...(worktree ? { worktree } : {}) };
   return { ok: true, message: `${shipId} set sail.`, voyage };
 }
 
 export async function dockVoyage(shipId: string, summary: string): Promise<{ ok: boolean; message: string }> {
   const v = await openVoyage(shipId);
   if (!v) return { ok: false, message: `${shipId} is not under sail.` };
+  // Return the voyage's worktree first: uncommitted work keeps the voyage open.
+  const ship = await findShip(shipId);
+  const released = ship ? await releaseVoyageWorktree(ship) : { ok: true, message: "" };
+  if (!released.ok) return { ok: false, message: released.message };
   const now = new Date().toISOString();
   let text = await readFile(v.file, "utf8");
   text = text.replace(/^status: sailing$/m, "status: docked").replace(/^started: (.*)$/m, `started: $1\nended: ${now}`);
   const note = summary.trim();
-  text = text.trimEnd() + `\n- ${now} docked\n` + (note ? `\n## Summary\n\n${note}\n` : "");
+  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (note ? `\n## Summary\n\n${note}\n` : "");
   await writeFile(v.file, text, "utf8");
   logShipEvent(shipId, "captain", "voyage-end", note || "Docked", { file: v.file });
-  return { ok: true, message: `${shipId} docked.` };
+  return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}` };
 }
 
 /** The opening message a crewmate (or Firstmate) gets when a voyage starts. */
@@ -270,6 +283,9 @@ export function voyageBrief(ship: ShipRow, v: Voyage): string {
       `Voyage record (vault): ${v.file}`,
       `Crew aboard: ${ship.crew.filter((r) => r !== "lead").map((r) => `${ship.id}-${r}`).join(", ") || "only you"}.`,
       ship.adws.length ? `Maneuvers available: ${ship.adws.join(", ")}.` : "No SSSF factory on this ship.",
+      ...(v.worktree ?? voyageWorktree(ship.id)
+        ? [`Work happens on branch ${(v.worktree ?? voyageWorktree(ship.id))!.branch} in the voyage's own worktree (your crew's working folder); commit there and never push. The captain reviews and merges after docking.`]
+        : []),
       "You are the lead: read voyage_status, plan the goal into tasks, assign them with task_add, tell me the plan in a few lines, and end your turn. Reports come back to you as crew messages.",
     ].join("\n");
   }
