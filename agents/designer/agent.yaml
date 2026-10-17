@@ -30,6 +30,13 @@ skill_paths:
   - vendor/motion-design-skill/skills/motion-design
   - vendor/three-agent-skills/skills/three-best-practices
   - vendor/three-agent-skills/skills/r3f-best-practices
+# Isolated sub-agents (extensions/subagent.ts, agents/subagents/): the
+# impeccable critique runs its design review and detector evidence as two
+# independent assessments; without a sub-agent tool it ran "DEGRADED:
+# single-context". Sub-agents inherit this model; their spend counts toward
+# the daily budget.
+extensions:
+  - subagent
 extra_prompts:
   - prompts/system/sr_opus_5_system_prompt.md
 authority:

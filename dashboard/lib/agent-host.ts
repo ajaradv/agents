@@ -165,6 +165,15 @@ function assistantText(message: unknown): string {
     .trim();
 }
 
+/** Dollars a tool's own model calls cost: pi's result usage, or the subagent extension's per-task usage. */
+export function toolSpend(result: unknown): number {
+  const r = result as { usage?: { cost?: { total?: number } | number }; details?: { results?: { usage?: { cost?: number } }[] } } | undefined;
+  const own = r?.usage?.cost;
+  const fromUsage = typeof own === "number" ? own : (own?.total ?? 0);
+  if (fromUsage > 0) return fromUsage;
+  return (r?.details?.results ?? []).reduce((sum, x) => sum + (Number(x?.usage?.cost) || 0), 0);
+}
+
 function flushStream(p: AgentProc): void {
   if (p.streamTimer) return;
   p.streamTimer = setTimeout(() => {
@@ -265,6 +274,11 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       const text = assistantText(msg);
       // Text in a message that ends in a tool call is narration on the way (a step), not the answer.
       if (text) hooks.line(p.id, await appendAgentChat(p.id, p.id, text, { step: msg.stopReason === "toolUse" }));
+      return;
+    }
+    case "tool_execution_end": {
+      // Tools that run models of their own (sub-agents) report what they spent; it is part of this turn.
+      p.turnCost += toolSpend(rec.result);
       return;
     }
     case "tool_execution_start":
