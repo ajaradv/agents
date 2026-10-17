@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { syncCaptainWait, waitDisplaySummary } from "./captain-wait.ts";
 import { fleetInboxRoot } from "./paths.ts";
-import { collectCaptainHolds, runFleetSnapshotJson } from "./fleet-snapshot.ts";
+import { collectCaptainHolds, recentFleetSnapshot } from "./fleet-snapshot.ts";
 
 export type CaptainHoldRow = {
   id: string;
@@ -72,7 +72,7 @@ async function readLatestCaptainWait(): Promise<CaptainWaitEvent | null> {
 
 export async function readFirstmateWaitStatus(): Promise<FirstmateWaitStatus> {
   const captainWait = await readLatestCaptainWait();
-  const snap = await runFleetSnapshotJson();
+  const snap = await recentFleetSnapshot();
   if (!snap.ok) {
     return {
       snapshotOk: false,

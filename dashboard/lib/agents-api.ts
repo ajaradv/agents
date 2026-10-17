@@ -30,12 +30,11 @@ export type AgentStatusJson = {
 export async function agentsStatusJson(): Promise<{ agents: AgentStatusJson[] }> {
   // Crew-only templates (scout) exist only aboard ships, as <ship>-<role>.
   const agents = (await loadAgents()).filter((a) => !a.crewOnly);
+  // Each agent's status (herdr pane checks) at the same time, not one after another.
+  const resolved = await Promise.all(agents.map(async (a) => [chatAllowed(a.id) ? await resolveAgentStatus(a.id) : null, await lastBusLine(a.id)] as const));
   const out: AgentStatusJson[] = [];
-  for (const a of agents) {
-    const status = chatAllowed(a.id)
-      ? await resolveAgentStatus(a.id)
-      : null;
-    const last = await lastBusLine(a.id);
+  for (const [i, a] of agents.entries()) {
+    const [status, last] = resolved[i]!;
     let lastShort: string | undefined;
     if (last) {
       try {

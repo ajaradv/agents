@@ -113,16 +113,50 @@ const TERMINAL = new Set(["done", "failed"]);
 const SNAPSHOT_TIMEOUT_MS = 15_000;
 
 let lastGood: FleetSnapshot | null = null;
+let lastGoodAt = 0;
+let inFlight: Promise<FleetSnapshot> | null = null;
 
 /** The newest successful snapshot (the rail refresh takes one every 20s); null before the first. */
 export function lastFleetSnapshot(): FleetSnapshot | null {
   return lastGood;
 }
 
-export async function runFleetSnapshotJson(): Promise<FleetSnapshot> {
-  const snap = await takeFleetSnapshot();
-  if (snap.ok) lastGood = snap;
-  return snap;
+/**
+ * A fresh snapshot. The script takes about 2 s, so callers that arrive while
+ * one is running share it rather than starting their own (a page load asks
+ * three times at once).
+ */
+export function runFleetSnapshotJson(): Promise<FleetSnapshot> {
+  if (inFlight) return inFlight;
+  inFlight = takeFleetSnapshot()
+    .then((snap) => {
+      if (snap.ok) {
+        lastGood = snap;
+        lastGoodAt = Date.now();
+      }
+      return snap;
+    })
+    .finally(() => {
+      inFlight = null;
+    });
+  return inFlight;
+}
+
+/**
+ * A snapshot no older than `maxAgeMs`: the newest good one when it is recent
+ * enough (the rail refresh keeps it within 20 s), else a fresh one. Views and
+ * status use this so a page load never waits on the script.
+ */
+export function recentFleetSnapshot(maxAgeMs = 30_000): Promise<FleetSnapshot> {
+  if (lastGood && Date.now() - lastGoodAt <= maxAgeMs) return Promise.resolve(lastGood);
+  return runFleetSnapshotJson();
+}
+
+/** For tests: set (or with null, forget) the cached snapshot and its age. */
+export function _setFleetSnapshot(snap: FleetSnapshot | null, ageMs = 0): void {
+  lastGood = snap;
+  lastGoodAt = snap ? Date.now() - ageMs : 0;
+  inFlight = null;
 }
 
 async function takeFleetSnapshot(): Promise<FleetSnapshot> {
@@ -393,7 +427,7 @@ function taskProject(t: SnapshotTask): string {
 
 export async function fleetStripHtml(): Promise<string> {
   const [snap, heartbeat, home, projects, tui, ships, initiatives] = await Promise.all([
-    runFleetSnapshotJson(),
+    recentFleetSnapshot(),
     readLatestFirstmateHeartbeat(),
     readHomeSummary(),
     readRegisteredProjects(),

@@ -130,8 +130,10 @@ export async function agentsSidebarHtml(): Promise<string> {
   const all = (await loadAgents()).filter((a) => !a.crewOnly);
   const agents = all.filter((a) => !a.ship);
   const rows: string[] = [];
-  for (const a of agents) {
-    const status = chatAllowed(a.id) ? await resolveAgentStatus(a.id) : null;
+  // Each agent's status (herdr pane checks) at the same time, not one after another.
+  const resolved = await Promise.all(agents.map(async (a) => [chatAllowed(a.id) ? await resolveAgentStatus(a.id) : null, await lastBusLine(a.id)] as const));
+  for (const [i, a] of agents.entries()) {
+    const [status, last] = resolved[i]!;
     const chatBadge = status
       ? `<span class="detent ${chatBadgeClass(status.chatState)}">${escapeHtml(status.chatLabel)}</span>`
       : "";
@@ -139,7 +141,6 @@ export async function agentsSidebarHtml(): Promise<string> {
       status && isTuiAgent(a.id)
         ? `<span class="detent ${tuiBadgeClass(status.tuiState)}">${escapeHtml(status.tuiLabel)}</span>`
         : "";
-    const last = await lastBusLine(a.id);
     let lastShort = "—";
     if (last) {
       try {

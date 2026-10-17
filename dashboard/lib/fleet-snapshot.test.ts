@@ -51,3 +51,20 @@ describe("collectCaptainHolds", () => {
     ]);
   });
 });
+
+describe("snapshot sharing", () => {
+  test("callers at the same time share one run; views reuse a recent snapshot", async () => {
+    const fs = await import("./fleet-snapshot.ts");
+    fs._setFleetSnapshot(null);
+    const a = fs.runFleetSnapshotJson();
+    const b = fs.runFleetSnapshotJson();
+    expect(a).toBe(b);
+    await a;
+    const cached = { ok: true, tasks: [], backlog: [] };
+    fs._setFleetSnapshot(cached, 10_000);
+    expect(await fs.recentFleetSnapshot()).toBe(cached);
+    fs._setFleetSnapshot(cached, 60_000);
+    expect(await fs.recentFleetSnapshot(120_000)).toBe(cached);
+    fs._setFleetSnapshot(null);
+  });
+});
