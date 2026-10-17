@@ -5,7 +5,8 @@
  * 1.2.0 examples/extensions/gondolin (MIT), with fleet changes:
  *
  * - Only the ship's repo or the voyage's worktree (/workspace), the
- *   crewmate's memory folder (/memory), and, in a worktree, the repo's .git
+ *   crewmate's memory folder (/memory), the ship's shared memory
+ *   (/ship-memory: project and voyage memory), and, in a worktree, the repo's .git
  *   (at its own path, which the worktree's .git file points to) are mounted;
  *   the rest of the Mac does not exist in the guest.
  * - Commands get a fixed environment (home, locale, CI, git identity), never
@@ -52,6 +53,9 @@ const GUEST_WORKSPACE = "/workspace";
 const GUEST_MEMORY = "/memory";
 /** The crewmate's memory folder on the host (fleet/inbox/<id>/memory), mounted at /memory. */
 const HOST_MEMORY = process.env.FLEET_VM_MEMORY ?? "";
+const GUEST_SHIP_MEMORY = "/ship-memory";
+/** The ship's shared memory folder on the host (fleet/inbox/ships/<ship>/memory: project and voyage memory). */
+const HOST_SHIP_MEMORY = process.env.FLEET_VM_SHIP_MEMORY ?? "";
 const DEFAULT_GREP_LIMIT = 100;
 
 type TextToolResult<TDetails> = {
@@ -86,6 +90,10 @@ export function toGuestPath(localCwd: string, inputPath: string): string {
 		if (HOST_MEMORY && isInsideHostPath(HOST_MEMORY, trimmed)) {
 			const rel = path.relative(HOST_MEMORY, trimmed);
 			return rel ? path.posix.join(GUEST_MEMORY, toPosix(rel)) : GUEST_MEMORY;
+		}
+		if (HOST_SHIP_MEMORY && isInsideHostPath(HOST_SHIP_MEMORY, trimmed)) {
+			const rel = path.relative(HOST_SHIP_MEMORY, trimmed);
+			return rel ? path.posix.join(GUEST_SHIP_MEMORY, toPosix(rel)) : GUEST_SHIP_MEMORY;
 		}
 		return path.posix.resolve("/", toPosix(trimmed));
 	}
@@ -411,6 +419,7 @@ export default function (pi: ExtensionAPI) {
 		});
 		const mounts: Record<string, RealFSProvider> = { [GUEST_WORKSPACE]: new RealFSProvider(localCwd) };
 		if (HOST_MEMORY) mounts[GUEST_MEMORY] = new RealFSProvider(HOST_MEMORY);
+		if (HOST_SHIP_MEMORY) mounts[GUEST_SHIP_MEMORY] = new RealFSProvider(HOST_SHIP_MEMORY);
 		// In a voyage worktree, .git is a file pointing into the repo's .git: mount it at its own path so git works.
 		const gitDir = process.env.FLEET_VM_GITDIR ?? "";
 		if (gitDir && path.isAbsolute(gitDir)) mounts[gitDir] = new RealFSProvider(gitDir);
@@ -556,7 +565,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event) => {
 		// The VM boots on the first tool call; this only tells the model where its tools run.
 		const localLine = `Current working directory: ${localCwd}`;
-		const guestLine = `Current working directory: ${GUEST_WORKSPACE} (an isolated VM: your tools run there; the ship's repo ${localCwd} is mounted at ${GUEST_WORKSPACE}${HOST_MEMORY ? `, your memory folder at ${GUEST_MEMORY}` : ""}; nothing else on the host is visible; network only to the ship's allowlist; tests that need Docker run on the host through run_check)`;
+		const guestLine = `Current working directory: ${GUEST_WORKSPACE} (an isolated VM: your tools run there; the ship's repo ${localCwd} is mounted at ${GUEST_WORKSPACE}${HOST_MEMORY ? `, your memory folder at ${GUEST_MEMORY}` : ""}${HOST_SHIP_MEMORY ? `, the ship's shared memory at ${GUEST_SHIP_MEMORY}` : ""}; nothing else on the host is visible; network only to the ship's allowlist; tests that need Docker run on the host through run_check)`;
 		const systemPrompt = event.systemPrompt.includes(localLine)
 			? event.systemPrompt.replace(localLine, guestLine)
 			: `${event.systemPrompt}\n\n${guestLine}`;

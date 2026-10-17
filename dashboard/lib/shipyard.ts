@@ -8,6 +8,7 @@ import { aliceVault, ROOT } from "./paths.ts";
 import { spawnTimed } from "./proc.ts";
 import { logShipEvent, shipTurnTotals } from "./ship-log.ts";
 import { describeGates, gateStatus } from "./gates.ts";
+import { endVoyageMemory, startVoyageMemory } from "./crew-memory.ts";
 import { ledgerLine, ledgerMarkdown, recordVoyageDock, recordVoyageStart, voyageId, voyageLedger } from "./metrics.ts";
 import { leaseVoyageWorktree, releaseVoyageWorktree, usesVoyageWorktrees, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
 
@@ -257,6 +258,8 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
   logShipEvent(shipId, "captain", "voyage-start", g, { file, to, ...(worktree ? { branch: worktree.branch, worktree: worktree.path } : {}) });
   const voyage: Voyage = { file, ship: shipId, status: "sailing", goal: g, to, started: now.toISOString(), ...(worktree ? { worktree } : {}) };
   recordVoyageStart({ id: voyageId(file), ship: shipId, goal: g, to, branch: worktree?.branch, worktree: worktree?.path, started: now.toISOString() });
+  // Tiered crew memory (lib/crew-memory.ts): a fresh voyage scratchpad, fresh crew sessions, no leftovers.
+  if (ship.orchestrator === "lead") await startVoyageMemory(shipId, { goal: g, branch: worktree?.branch, worktree: worktree?.path, record: file }, crew);
   return { ok: true, message: `${shipId} set sail.`, voyage };
 }
 
@@ -278,10 +281,12 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   const commits = Number(released.message.match(/has (\d+) commit/)?.[1] ?? 0);
   recordVoyageDock(id, { commits, outcome: summary.trim(), branch: released.message.match(/^Branch (\S+)/)?.[1] });
   const ledger = voyageLedger(id);
+  // The voyage's memory is archived into its note, then discarded.
+  const scratch = ship && ship.orchestrator === "lead" ? await endVoyageMemory(shipId, ship.crew.map((r) => `${shipId}-${r}`)) : "";
   let text = await readFile(v.file, "utf8");
   text = text.replace(/^status: sailing$/m, "status: docked").replace(/^started: (.*)$/m, `started: $1\nended: ${now}`);
   const note = summary.trim();
-  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "");
+  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "") + (scratch ? `\n## Voyage memory (archived at dock)\n\n${scratch}\n` : "");
   await writeFile(v.file, text, "utf8");
   logShipEvent(shipId, "captain", "voyage-end", note || "Docked", { file: v.file });
   return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}${ledger ? ` ${ledgerLine(ledger)}` : ""}` };
