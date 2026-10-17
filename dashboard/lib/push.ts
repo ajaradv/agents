@@ -45,7 +45,7 @@ export function vapidKeys(): Vapid {
     writeFileSync(path, JSON.stringify(vapid) + "\n", { mode: 0o600 });
     chmodSync(path, 0o600);
   }
-  webpush.setVapidDetails(process.env.FLEET_PUSH_CONTACT ?? "mailto:captain@fleet.local", vapid.publicKey, vapid.privateKey);
+  webpush.setVapidDetails(process.env.FLEET_PUSH_CONTACT ?? "https://github.com/ajaradv/agents", vapid.publicKey, vapid.privateKey);
   return vapid;
 }
 
