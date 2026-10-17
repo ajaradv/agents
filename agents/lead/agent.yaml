@@ -9,3 +9,6 @@ model: deepseek/deepseek-v4-pro
 fallback_model: openrouter/deepseek/deepseek-v4-pro
 # crew: only — exists only aboard ships, as <ship>-lead.
 crew: only
+# Branch names and commit messages in the conventional form python-semantic-release reads.
+skill_paths:
+  - skills/git-conventions

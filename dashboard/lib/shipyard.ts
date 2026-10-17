@@ -221,7 +221,7 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
   // Fleet-crewed ships work in a leased worktree on a crew/ branch, never in the captain's checkout.
   let worktree: VoyageWorktree | undefined;
   if (usesVoyageWorktrees(ship)) {
-    const lease = await leaseVoyageWorktree(ship, slug);
+    const lease = await leaseVoyageWorktree(ship, slug, g);
     if (!lease.ok) return { ok: false, message: lease.message };
     worktree = lease.worktree;
   }
@@ -284,7 +284,7 @@ export function voyageBrief(ship: ShipRow, v: Voyage): string {
       `Crew aboard: ${ship.crew.filter((r) => r !== "lead").map((r) => `${ship.id}-${r}`).join(", ") || "only you"}.`,
       ship.adws.length ? `Maneuvers available: ${ship.adws.join(", ")}.` : "No SSSF factory on this ship.",
       ...(v.worktree ?? voyageWorktree(ship.id)
-        ? [`Work happens on branch ${(v.worktree ?? voyageWorktree(ship.id))!.branch} in the voyage's own worktree (your crew's working folder); commit there and never push. The captain reviews and merges after docking.`]
+        ? [`Work happens on branch ${(v.worktree ?? voyageWorktree(ship.id))!.branch} in the voyage's own worktree (your crew's working folder); commit there and never push. The captain reviews and merges after docking. The branch name is a guess from the goal: before the first commit, rename it if the type or words are wrong, and write conventional commit messages (skill git-conventions).`]
         : []),
       "You are the lead: read voyage_status, plan the goal into tasks, assign them with task_add, tell me the plan in a few lines, and end your turn. Reports come back to you as crew messages.",
     ].join("\n");

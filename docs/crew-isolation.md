@@ -51,7 +51,7 @@ own git worktree, leased from [treehouse](https://github.com/kunchenguid/treehou
 pool the way Firstmate does it (`treehouse get --lease`):
 
 - On **Set sail**, the fleet leases a worktree, checks it is a real linked
-  worktree (not your checkout) and clean, and creates `crew/<goal-slug>` from
+  worktree (not your checkout) and clean, and creates a conventional branch (`<type>/<words>`, see `skills/git-conventions`) from
   the default branch (origin's HEAD, else main or master). The record is
   `fleet/inbox/ships/<ship>/worktree.json`; the voyage note shows the branch.
 - Crewmates start in the worktree (a crewmate already running restarts on its

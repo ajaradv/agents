@@ -15,7 +15,8 @@ import { spawnTimed } from "./proc.ts";
  * - On voyage start, lease a worktree from treehouse's pool (`treehouse get
  *   --lease`, non-interactive and durable, the holder named after the voyage),
  *   assert it is a real linked worktree distinct from the primary checkout,
- *   require it clean, and create `crew/<slug>` from the default branch's tip.
+ *   require it clean, and create a conventional branch (`<type>/<words>`,
+ *   skills/git-conventions) from the default branch's tip.
  * - Crewmates work there (bin/launch reads the record; a crewmate's VM mounts
  *   the worktree at /workspace and the repo's .git at its own path).
  * - On dock: refuse while there is uncommitted work, then return the worktree
@@ -71,9 +72,42 @@ async function defaultBase(cwd: string): Promise<string | null> {
   return null;
 }
 
+const TYPE_RULES: [RegExp, string][] = [
+  [/\b(fix|fixes|bug|broken|repair|crash|regression)\b/i, "fix"],
+  [/\b(perf|performance|faster|speed up|optimi[sz]e)\b/i, "perf"],
+  [/\b(upgrade|bump|update .*(deps|dependenc|version|to \d)|dependenc)/i, "chore"],
+  [/\b(readme|docs?|documentation|document)\b/i, "docs"],
+  [/\b(refactor|restructure|clean ?up|rename|reorgani[sz]e)\b/i, "refactor"],
+  [/\b(tests?|coverage)\b/i, "test"],
+  [/\b(ci|pipeline|github actions|workflow file)\b/i, "ci"],
+  [/\b(build|packaging|webpack|docker ?file)\b/i, "build"],
+];
+const FILLER = new Set("a an the to of and or in on for with by from into under over at as is are be this that these those our its it add adds make makes one short small note please update the app django project repo code".split(" "));
+
+/**
+ * A conventional branch name for a goal (skills/git-conventions, the form
+ * python-semantic-release reads): `<type>/<2-6 words>`, the type guessed from
+ * the goal's wording (feat when nothing else fits). The lead renames it before
+ * its first commit when the guess is wrong.
+ */
+export function branchForGoal(goal: string): string {
+  const type = TYPE_RULES.find(([re]) => re.test(goal))?.[1] ?? "feat";
+  const words = goal
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .match(/[a-z0-9]+(?:\.[0-9]+)*/g) ?? [];
+  const picked: string[] = [];
+  for (const w of words) {
+    if (FILLER.has(w) || w === type || (picked.length === 0 && /^(upgrade|bump|fix|implement|create|write)$/.test(w) && type !== "feat")) continue;
+    picked.push(w);
+    if (picked.length >= 6 || picked.join("-").length >= 36) break;
+  }
+  return `${type}/${picked.join("-") || "voyage"}`;
+}
+
 /** A branch name for this voyage that does not exist yet. */
-export function voyageBranch(slug: string, taken: (b: string) => boolean, today = new Date().toISOString().slice(0, 10)): string {
-  const base = `crew/${slug.slice(0, 48).replace(/-+$/, "") || "voyage"}`;
+export function voyageBranch(name: string, taken: (b: string) => boolean, today = new Date().toISOString().slice(0, 10)): string {
+  const base = name.includes("/") ? name : `feat/${name.slice(0, 48).replace(/-+$/, "") || "voyage"}`;
   if (!taken(base)) return base;
   for (let i = 2; i < 50; i++) if (!taken(`${base}-${today}-${i}`)) return `${base}-${today}-${i}`;
   return `${base}-${Date.now()}`;
@@ -87,7 +121,7 @@ const real = (p: string) => {
   }
 };
 
-export async function leaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">, slug: string): Promise<{ ok: true; worktree: VoyageWorktree } | { ok: false; message: string }> {
+export async function leaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">, slug: string, goal = ""): Promise<{ ok: true; worktree: VoyageWorktree } | { ok: false; message: string }> {
   const primary = ship.path;
   if (!primary || !existsSync(join(primary, ".git"))) return { ok: false, message: `${ship.id} has no git repo at ${primary || "(no path)"}; voyage not started.` };
   const hasRemote = (await git(primary, ["remote"])).out.split("\n").includes("origin");
@@ -105,7 +139,7 @@ export async function leaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">, sl
   const path = info.path;
   const release = () => spawnTimed([treehouseBin(), "return", "--force", "--if-lease-id", info.lease_id!, path], { timeoutMs: 120_000, cwd: primary });
   try {
-    return await prepareLease(ship, slug, primary, path, info.lease_id, release);
+    return await prepareLease(ship, goal ? branchForGoal(goal) : slug, primary, path, info.lease_id, release);
   } catch (e) {
     // Never leak a lease: anything unexpected after leasing returns the worktree.
     await release();
@@ -115,7 +149,7 @@ export async function leaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">, sl
 
 async function prepareLease(
   ship: Pick<ShipRow, "id" | "path">,
-  slug: string,
+  name: string,
   primary: string,
   path: string,
   leaseId: string,
@@ -137,8 +171,8 @@ async function prepareLease(
     await release();
     return { ok: false, message: `Could not find ${ship.id}'s default branch (origin/HEAD, main, or master); voyage not started.` };
   }
-  const existing = new Set((await git(primary, ["for-each-ref", "--format=%(refname:short)", "refs/heads/crew/"])).out.split("\n").filter(Boolean));
-  const branch = voyageBranch(slug, (b) => existing.has(b));
+  const existing = new Set((await git(primary, ["for-each-ref", "--format=%(refname:short)", "refs/heads/"])).out.split("\n").filter(Boolean));
+  const branch = voyageBranch(name, (b) => existing.has(b));
   const sw = await git(path, ["switch", "-c", branch, base]);
   if (!sw.ok) {
     await release();
@@ -164,7 +198,9 @@ export async function releaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">):
   if (changes.length) {
     return { ok: false, message: `${ship.id}'s voyage worktree has uncommitted work (${changes.slice(0, 5).join("; ")}${changes.length > 5 ? "; …" : ""}). Have the crew commit or discard it, then dock again.` };
   }
-  const ahead = (await git(ship.path, ["rev-list", "--count", `${w.base}..${w.branch}`])).out;
+  // The lead may have renamed the branch (skills/git-conventions): use what the worktree is on now.
+  const branch = (await git(w.path, ["branch", "--show-current"])).out || w.branch;
+  const ahead = (await git(ship.path, ["rev-list", "--count", `${w.base}..${branch}`])).out;
   const r = await spawnTimed([treehouseBin(), "return", "--force", "--if-lease-id", w.leaseId, w.path], { timeoutMs: 120_000, cwd: ship.path });
   if (r.exitCode !== 0) {
     return { ok: false, message: `Could not return ${ship.id}'s worktree to treehouse: ${(r.stderr || r.stdout).trim().slice(0, 200)}. The voyage stays open.` };
@@ -172,6 +208,6 @@ export async function releaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">):
   await rm(recordPath(ship.id), { force: true });
   const now = (await git(ship.path, ["branch", "--show-current"])).out;
   const tangle = w.primaryBranch && now !== w.primaryBranch ? ` Warning: your checkout of ${ship.id} moved from ${w.primaryBranch} to ${now || "a detached HEAD"} during the voyage.` : "";
-  const work = Number(ahead) > 0 ? `Branch ${w.branch} has ${ahead} commit(s) on ${w.base}, ready for you to review and merge.` : `Branch ${w.branch} has no commits; nothing to merge.`;
+  const work = Number(ahead) > 0 ? `Branch ${branch} has ${ahead} commit(s) on ${w.base}, ready for you to review and merge.` : `Branch ${branch} has no commits; nothing to merge.`;
   return { ok: true, message: `${work}${tangle}` };
 }
