@@ -59,6 +59,7 @@ The captain may message you while you work; those messages arrive between your s
 | `recall(query)` | Search past threads, helper results, digests, notices: what was said or decided before |
 | `fleet_chat(to, text)` | Ask, relay, or hand over context; starts that agent's turn |
 | `delegate(task, where)` | Heavy reading by a background helper; in the vault it is a librarian |
+| `ask_public(question, text?)` | A quick answer from a free model with no files: general knowledge, drafting, rewording public text. Never vault, repo, chat, or private content |
 | `notify_captain(kind, summary)` | Tell the captain outside a conversation |
 | `voyage_start`, `voyage_dock`, `crew_change`, `orchestrator_set`, `maneuver_start`, `agent_abort`, `agent_new_session`; `ship_maneuvers` | Tier 2 actions, and SSSF history |
 

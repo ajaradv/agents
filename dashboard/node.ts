@@ -21,6 +21,7 @@ import { readShips } from "./lib/fleet-layers.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
+import { askPublic } from "./lib/public-helper.ts";
 import { dashLog } from "./lib/log.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
 import { backfillMetrics } from "./lib/metrics-backfill.ts";
@@ -281,6 +282,10 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
     return reply(await startDelegation(from, String(b.task ?? ""), String(b.where ?? "vault")));
   }
 
+  if (what === "public" && req.method === "POST") {
+    return reply(await askPublic(from, String(b.question ?? ""), String(b.text ?? "")));
+  }
+
   if (what === "notify" && req.method === "POST") {
     // Communication, not a fleet action: allowed during an order too.
     const n = notifyCaptain({ from, kind: String(b.kind ?? "info") as NoticeKind, summary: String(b.summary ?? "").trim(), detail: String(b.detail ?? ""), ref: String(b.ref ?? "") });
@@ -333,7 +338,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const url = new URL(req.url);
   const path = url.pathname;
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|recall)$/);
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|public|recall)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm)(?:\/(\d+))?$/);

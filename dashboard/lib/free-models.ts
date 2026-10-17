@@ -1,4 +1,4 @@
-import { envKeyValue, loadFleetDotenv } from "./fleet-env.ts";
+import { agentKeyEnv } from "./fleet-env.ts";
 import { metricsDb } from "./metrics.ts";
 
 /**
@@ -46,9 +46,9 @@ function db() {
 
 export type FreeModel = { provider: "openrouter" | "google"; model: string; ctx: number; tools: boolean; images: boolean; uptime: number | null; latencyMs: number | null; checkOk: boolean | null; checkMs: number | null; note: string; checkedAt: string };
 
-async function getJson(url: string, headers: Record<string, string> = {}, init: RequestInit = {}): Promise<{ status: number; body: any }> {
+async function getJson(url: string, headers: Record<string, string> = {}, init: RequestInit = {}, timeoutMs = TIMEOUT_MS): Promise<{ status: number; body: any }> {
   try {
-    const r = await fetch(url, { ...init, headers: { Accept: "application/json", ...headers, ...(init.headers as Record<string, string> | undefined) }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    const r = await fetch(url, { ...init, headers: { Accept: "application/json", ...headers, ...(init.headers as Record<string, string> | undefined) }, signal: AbortSignal.timeout(timeoutMs) });
     let body: any = null;
     try {
       body = await r.json();
@@ -97,7 +97,7 @@ let orQuota: { used: number; limit: number; remaining: number; at: number } | nu
 /** OpenRouter's own count of today's free requests (cached 5 minutes). */
 export async function openRouterFreeQuota(): Promise<{ used: number; limit: number; remaining: number } | null> {
   if (orQuota && Date.now() - orQuota.at < 300_000) return orQuota;
-  const key = envKeyValue("OPENROUTER_API_KEY", await loadFleetDotenv());
+  const key = (await agentKeyEnv()).OPENROUTER_API_KEY;
   if (!key) return null;
   const r = await getJson(`${OR}/key`, { Authorization: `Bearer ${key}` });
   const q = r.body?.data?.free_model_daily_requests;
@@ -182,9 +182,10 @@ export async function refreshFreeModels(): Promise<{ openrouter: number; google:
   if (refreshing) return null;
   refreshing = true;
   try {
-    const env = await loadFleetDotenv();
-    const orKey = envKeyValue("OPENROUTER_API_KEY", env);
-    const gKey = envKeyValue("GEMINI_API_KEY", env);
+    // agentKeyEnv retries once: the .env is a 1Password pipe that can read empty for a moment.
+    const keys = await agentKeyEnv();
+    const orKey = keys.OPENROUTER_API_KEY ?? "";
+    const gKey = keys.GEMINI_API_KEY ?? "";
     const now = new Date().toISOString();
     const rows: FreeModel[] = [];
     const catalog = await getJson(`${OR}/models`);
@@ -267,18 +268,25 @@ export function pickFreeModels(all: FreeModel[], needs: Needs, quota: { openrout
     });
 }
 
-export type FreeResult = { ok: boolean; text: string; model: string; free: boolean; tried: string[]; error?: string };
+export type FreeResult = { ok: boolean; text: string; model: string; free: boolean; tried: string[]; cost: number; ms: number; error?: string };
 
 /**
  * One completion for NON-SENSITIVE text: up to three free models in order,
  * then the paid fallback. Every call is counted.
  */
-export async function freeComplete(prompt: string, opts: { purpose: string; needs?: Needs; maxTokens?: number; paidFallback?: string | null } = { purpose: "" }): Promise<FreeResult> {
-  const env = await loadFleetDotenv();
-  const orKey = envKeyValue("OPENROUTER_API_KEY", env);
-  const gKey = envKeyValue("GEMINI_API_KEY", env);
+export async function freeComplete(
+  prompt: string,
+  opts: { purpose: string; system?: string; needs?: Needs; maxTokens?: number; paidFallback?: string | null; attempts?: number; attemptMs?: number } = { purpose: "" },
+): Promise<FreeResult> {
+  const started = Date.now();
+  const keys = await agentKeyEnv();
+  const orKey = keys.OPENROUTER_API_KEY ?? "";
+  const gKey = keys.GEMINI_API_KEY ?? "";
+  if (!orKey && !gKey) return { ok: false, text: "", model: "", free: true, tried: [], cost: 0, ms: Date.now() - started, error: "no OpenRouter or Gemini key could be read (fleet/home/.env)" };
   const quota = await openRouterFreeQuota().catch(() => null);
-  const candidates = pickFreeModels(listFreeModels(), opts.needs ?? {}, { openrouterRemaining: quota?.remaining ?? null, googleUsed: (m) => callsToday("google", m) }).slice(0, 3);
+  const candidates = pickFreeModels(listFreeModels(), opts.needs ?? {}, { openrouterRemaining: quota?.remaining ?? null, googleUsed: (m) => callsToday("google", m) }).slice(0, opts.attempts ?? 3);
+  const wait = opts.attemptMs ?? TIMEOUT_MS;
+  const messages = [...(opts.system ? [{ role: "system", content: opts.system }] : []), { role: "user", content: prompt }];
   const tried: string[] = [];
   for (const m of candidates) {
     tried.push(`${m.provider}/${m.model}`);
@@ -288,31 +296,31 @@ export async function freeComplete(prompt: string, opts: { purpose: string; need
     if (m.provider === "openrouter" && orKey) {
       const r = await getJson(`${OR}/chat/completions`, { Authorization: `Bearer ${orKey}`, "Content-Type": "application/json" }, {
         method: "POST",
-        body: JSON.stringify({ model: m.model, messages: [{ role: "user", content: prompt }], max_tokens: opts.maxTokens ?? 800, provider: { data_collection: "deny" } }),
-      });
+        body: JSON.stringify({ model: m.model, messages, max_tokens: opts.maxTokens ?? 800, provider: { data_collection: "deny" } }),
+      }, wait);
       text = String(r.body?.choices?.[0]?.message?.content ?? "");
       if (r.status !== 200 || !text.trim()) error = String(r.body?.error?.message ?? `HTTP ${r.status}`);
     } else if (m.provider === "google" && gKey) {
       const r = await getJson(`${GEMINI}/models/${m.model}:generateContent`, { "x-goog-api-key": gKey, "Content-Type": "application/json" }, {
         method: "POST",
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: opts.maxTokens ?? 800 } }),
-      });
+        body: JSON.stringify({ ...(opts.system ? { systemInstruction: { parts: [{ text: opts.system }] } } : {}), contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: opts.maxTokens ?? 800 } }),
+      }, wait);
       text = String((r.body?.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? "").join(""));
       if (r.status !== 200 || !text.trim()) error = String(r.body?.error?.status ?? `HTTP ${r.status}`);
     } else continue;
     recordFreeCall({ provider: m.provider, model: m.model, purpose: opts.purpose, ok: !error, ms: Date.now() - t, error });
-    if (!error) return { ok: true, text, model: `${m.provider}/${m.model}`, free: true, tried };
+    if (!error) return { ok: true, text, model: `${m.provider}/${m.model}`, free: true, tried, cost: 0, ms: Date.now() - started };
   }
   const paid = opts.paidFallback === undefined ? PAID_FALLBACK : opts.paidFallback;
-  if (!paid || !orKey) return { ok: false, text: "", model: "", free: true, tried, error: "no free model answered and there is no paid fallback" };
+  if (!paid || !orKey) return { ok: false, text: "", model: "", free: true, tried, cost: 0, ms: Date.now() - started, error: !paid ? "no free model answered and there is no paid fallback" : "no free model answered, and the paid fallback needs the OpenRouter key" };
   tried.push(`openrouter/${paid}`);
   const r = await getJson(`${OR}/chat/completions`, { Authorization: `Bearer ${orKey}`, "Content-Type": "application/json" }, {
     method: "POST",
-    body: JSON.stringify({ model: paid, messages: [{ role: "user", content: prompt }], max_tokens: opts.maxTokens ?? 800 }),
-  });
+    body: JSON.stringify({ model: paid, messages, max_tokens: opts.maxTokens ?? 800, usage: { include: true } }),
+  }, wait);
   const text = String(r.body?.choices?.[0]?.message?.content ?? "");
   const ok = r.status === 200 && Boolean(text.trim());
-  return { ok, text, model: `openrouter/${paid}`, free: false, tried, ...(ok ? {} : { error: String(r.body?.error?.message ?? `HTTP ${r.status}`) }) };
+  return { ok, text, model: `openrouter/${paid}`, free: false, tried, cost: Number(r.body?.usage?.cost) || 0, ms: Date.now() - started, ...(ok ? {} : { error: String(r.body?.error?.message ?? `HTTP ${r.status}`) }) };
 }
 
 // ---------------------------------------------------------------- view

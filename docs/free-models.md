@@ -23,3 +23,16 @@
   review, and many free OpenRouter providers log prompts. OpenRouter calls send
   `provider: { data_collection: "deny" }`, so only providers that keep prompts
   private serve them (which rules out most free NVIDIA and Poolside models).
+
+## The public helper
+
+Officers have `ask_public(question, text?)` (extensions/fleet.ts →
+`POST /api/fleet/public` → `dashboard/lib/public-helper.ts`): a quick answer
+from a free model with no tools and no file access, returned in the same call
+(three free attempts of 25 s at most, then the paid fallback). For general
+knowledge, drafting, and rewording or summarising public text the officer
+pastes in. The node refuses text that looks private (keys, tokens, credential
+assignments, local file paths, 1Password references, pastes over 12,000
+characters) and logs the refusal. Each answer is a turn for `<officer>-public`
+in the metrics database (model, time, cost: 0 when free) and a line on the
+fleet ship's log.

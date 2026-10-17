@@ -23,7 +23,7 @@ function text(t: string) {
   return { content: [{ type: "text" as const, text: t }], details: {} };
 }
 
-async function call(method: "GET" | "POST", what: string, params: Record<string, string | number | undefined> = {}, body?: Record<string, unknown>): Promise<string> {
+async function call(method: "GET" | "POST", what: string, params: Record<string, string | number | undefined> = {}, body?: Record<string, unknown>, timeoutMs = 30_000): Promise<string> {
   if (!base || !token) return "Fleet tools work only in the dashboard's live session (this looks like the TUI). Ask the captain, or read the vault and the inbox instead.";
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, String(v));
@@ -32,7 +32,7 @@ async function call(method: "GET" | "POST", what: string, params: Record<string,
       method,
       headers: { "Content-Type": "application/json", "x-fleet-crew-token": token },
       ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const j = (await res.json()) as Record<string, unknown>;
     return method === "GET" ? JSON.stringify(j, null, 1) : String(j.message ?? (res.ok ? "done" : "failed"));
@@ -161,6 +161,20 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, p) {
       return text(await call("POST", "delegate", {}, { task: p.task, where: p.where ?? "vault" }));
+    },
+  });
+
+  pi.registerTool({
+    name: "ask_public",
+    label: "Ask the public helper",
+    description:
+      "Ask a quick question of a free model with no tools and no file access: general knowledge, drafting or rewording, summarising text you paste in. Answers in this call. Only public or general text: free models may train on what they get, so never include vault notes, repo code, chats, names, or secrets (the node refuses text that looks private). Use delegate for anything that needs the vault or a repo.",
+    parameters: Type.Object({
+      question: Type.String({ description: "The question or instruction, self-contained" }),
+      text: Type.Optional(Type.String({ description: "Public text the question is about (optional)" })),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "public", {}, { question: p.question, text: p.text ?? "" }, 120_000));
     },
   });
 
