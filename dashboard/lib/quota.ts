@@ -5,6 +5,7 @@ import {
   type ProviderCard,
 } from "./quota-parse.ts";
 import { apiLaneCardHtml, readConfiguredApiLanes } from "./api-lanes.ts";
+import { freeModelsHtml } from "./free-models.ts";
 import { getApiLaneUsageCache, refreshApiLaneUsage } from "./api-lane-usage.ts";
 import { dashLog } from "./log.ts";
 import { spawnTimed } from "./proc.ts";
@@ -243,11 +244,12 @@ function providerCardHtml(card: ProviderCard): string {
 async function apiLanesHtml(quotaIds: Set<string>): Promise<string> {
   const apiLanes = await readConfiguredApiLanes(quotaIds, getApiLaneUsageCache());
   const apiCards = apiLanes.map(apiLaneCardHtml).join("");
-  if (!apiCards) return "";
+  const free = await freeModelsHtml().catch(() => "");
+  if (!apiCards) return free;
   return `<div class="stack">
       <h3>Configured API lanes</h3>
       <div class="grid-3">${apiCards}</div>
-    </div>`;
+    </div>${free}`;
 }
 
 export async function usagePartialHtml(): Promise<string> {

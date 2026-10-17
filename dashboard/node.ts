@@ -16,6 +16,7 @@ import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStat
 import { recoverManeuvers } from "./lib/crew-api.ts";
 import { helmPropose } from "./lib/helm.ts";
 import { materializeAllShips } from "./lib/ship-config.ts";
+import { freeRegistryAge, refreshFreeModels } from "./lib/free-models.ts";
 import { readShips } from "./lib/fleet-layers.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
@@ -143,6 +144,16 @@ function startRuntime(): void {
   startRecallIndexer();
   // Ship config (lib/ship-config.ts): the merged view of every ship, as JSON for bin/launch.
   void readShips().then((ships) => materializeAllShips(ships.map((s) => s.id))).catch((e) => console.error("[node] ship config:", e));
+  // Free model lanes (lib/free-models.ts): refresh the registry when it is a day old (checked every 6 hours).
+  const freeRefresh = () => {
+    const age = freeRegistryAge();
+    if (age && Date.now() - Date.parse(age) < 20 * 3_600_000) return;
+    void refreshFreeModels()
+      .then((n) => n && console.error(`[node] free models: ${JSON.stringify(n)}`))
+      .catch((e) => console.error("[node] free models:", e));
+  };
+  setTimeout(freeRefresh, 60_000);
+  setInterval(freeRefresh, 6 * 3_600_000);
   // Fleet metrics (lib/metrics.ts): import history from ship logs and voyage notes once.
   setTimeout(() => {
     try {
