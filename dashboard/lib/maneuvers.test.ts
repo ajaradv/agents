@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describeManeuver, findManeuver, launchRefusal, maneuverAvailability, parseManeuvers } from "./maneuvers.ts";
 
 const decls = parseManeuvers({
@@ -64,5 +67,19 @@ describe("maneuver declarations", () => {
     expect(describeManeuver(findManeuver(all, "verify")!)).toBe("verify: checks lint → pytest (deterministic), by lead, scout, designer");
     expect(describeManeuver(findManeuver(all, "build")!)).toBe("build: SSSF adw_plan_build_test, by lead; must pass task gates; locked: needs a designer aboard");
     expect(describeManeuver(findManeuver(all, "release")!)).toBe("release: SSSF adw_ship, captain's Go only");
+  });
+});
+
+describe("bin/launch reads maneuvers", () => {
+  test("nested maneuver fields never overwrite the ship's checks; tools go to the roles in `by`", () => {
+    const dir = mkdtempSync(join(tmpdir(), "launch-yaml-"));
+    const file = join(dir, "ship.yaml");
+    writeFileSync(file, "id: x\ncrew:\n  - lead\nchecks:\n  lint: just lint\n  pytest: just pytest\nmaneuvers:\n  verify:\n    checks: [lint, pytest]\n    by:\n      - lead\n      - scout\n  release:\n    adw: adw_ship\n    go: true\nmode: m\n");
+    const py = `import importlib.util, importlib.machinery, json, pathlib, sys
+l = importlib.machinery.SourceFileLoader("launch", sys.argv[1]); s = importlib.util.spec_from_loader("launch", l); m = importlib.util.module_from_spec(s); l.exec_module(m)
+d = m.parse_simple_yaml(pathlib.Path(sys.argv[2]))
+print(json.dumps({"checks": d["checks"], "mode": d["mode"], "scout": m.launchable_maneuvers(d, "scout", pathlib.Path(sys.argv[3])), "lead": m.launchable_maneuvers(d, "lead", pathlib.Path(sys.argv[3]))}))`;
+    const r = Bun.spawnSync(["/usr/bin/python3", "-B", "-c", py, join(import.meta.dir, "..", "..", "bin", "launch"), file, dir]);
+    expect(JSON.parse(r.stdout.toString())).toEqual({ checks: { lint: "just lint", pytest: "just pytest" }, mode: "m", scout: ["verify"], lead: ["verify"] });
   });
 });
