@@ -30,3 +30,16 @@ describe("crew VM policy", () => {
     expect(tail("x".repeat(20), 5)).toBe("[… 15 earlier characters cut …]\nxxxxx");
   });
 });
+
+import { keysForModels, withoutSecrets } from "./fleet-env.ts";
+
+describe("per-agent keys (R4c)", () => {
+  const all = { DEEPSEEK_API_KEY: "d", OPENROUTER_API_KEY: "o", CURSOR_API_KEY: "c", TYPESAFE_API_KEY: "t", HF_TOKEN: "h" };
+  test("a helper on DeepSeek gets only DeepSeek's key", () => {
+    expect(keysForModels(all, ["deepseek/deepseek-flash"])).toEqual({ DEEPSEEK_API_KEY: "d" });
+    expect(keysForModels(all, ["openrouter/anthropic/claude-sonnet-5.5", "deepseek/deepseek-flash"])).toEqual({ DEEPSEEK_API_KEY: "d", OPENROUTER_API_KEY: "o" });
+  });
+  test("inherited secrets are stripped before the needed ones are added", () => {
+    expect(withoutSecrets({ PATH: "/bin", CURSOR_API_KEY: "c", TYPESAFE_API_KEY: "t" })).toEqual({ PATH: "/bin" });
+  });
+});

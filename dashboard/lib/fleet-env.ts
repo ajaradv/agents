@@ -81,6 +81,20 @@ const AGENT_KEYS = [
  * the pipe answering in that moment (bin/launch keeps keys already in its env).
  * Retries an empty read once before giving up.
  */
+/** Provider of a model id → its key (keep in step with PROVIDER_KEYS in bin/launch). */
+const PROVIDER_KEYS: Record<string, string> = { cursor: "CURSOR_API_KEY", deepseek: "DEEPSEEK_API_KEY", openrouter: "OPENROUTER_API_KEY", anthropic: "ANTHROPIC_API_KEY" };
+
+/** Only the keys these models need (R4c), e.g. a helper on deepseek/... gets DEEPSEEK_API_KEY alone. */
+export function keysForModels(all: Record<string, string>, models: string[]): Record<string, string> {
+  const need = new Set(models.map((m) => PROVIDER_KEYS[m.split("/")[0] ?? ""]).filter(Boolean));
+  return Object.fromEntries(Object.entries(all).filter(([k]) => need.has(k)));
+}
+
+/** Every secret the fleet hands out; stripped from a child's inherited environment before adding what it needs. */
+export function withoutSecrets(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !AGENT_KEYS.includes(k)));
+}
+
 export async function agentKeyEnv(): Promise<Record<string, string>> {
   let dotenv = await loadFleetDotenv();
   if (!Object.keys(dotenv).length) {

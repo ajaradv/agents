@@ -2,7 +2,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync
 import { join } from "node:path";
 import { postBus } from "./bus-post.ts";
 import { readShips } from "./fleet-layers.ts";
-import { agentKeyEnv } from "./fleet-env.ts";
+import { agentKeyEnv, keysForModels, withoutSecrets } from "./fleet-env.ts";
 import { listWorkflows, once, updateWorkflow, upsertWorkflow } from "./journal.ts";
 import { dashLog } from "./log.ts";
 import { aliceVault, fleetInboxRoot, ROOT } from "./paths.ts";
@@ -105,7 +105,7 @@ export async function startDelegation(from: string, task: string, where = "vault
   try {
     const proc = Bun.spawn(
       ["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--model", MODEL, "--tools", "read,grep,find,ls", "--append-system-prompt", HELPER_PROMPT, ...(where === "vault" || !where ? ["--append-system-prompt", LIBRARIAN_PROMPT] : []), "-e", join(ROOT, "extensions", "cache-watch.ts"), t],
-      { cwd, stdin: "ignore", stdout: out, stderr: out, detached: true, env: { ...process.env, ...(await agentKeyEnv()), FLEET_AGENT_ID: `${from}-helper` } },
+      { cwd, stdin: "ignore", stdout: out, stderr: out, detached: true, env: { ...withoutSecrets(process.env), ...keysForModels(await agentKeyEnv(), [MODEL]), FLEET_AGENT_ID: `${from}-helper` } },
     );
     pid = proc.pid;
     void proc.exited.then(() => finishDelegation(id));

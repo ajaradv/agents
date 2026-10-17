@@ -340,7 +340,34 @@ def load_agent(agent_id: str) -> tuple[dict, dict | None] | None:
 
 
 # A model's provider and the key it needs from fleet/home/.env.
-PROVIDER_KEYS = {"cursor": "CURSOR_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
+PROVIDER_KEYS = {"cursor": "CURSOR_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+# Every secret the fleet hands out (R4c): an assistant keeps only the ones it needs.
+SECRET_KEYS = ("TYPESAFE_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "HF_API_KEY", "HF_TOKEN", "CURSOR_API_KEY", "ANTHROPIC_API_KEY")
+
+
+def keys_needed(agent: dict) -> set[str]:
+    """The provider keys of the agent's model and backup model, plus any it lists under `keys:`."""
+    need: set[str] = set()
+    for m in (agent.get("model"), agent.get("fallback_model")):
+        if isinstance(m, str) and m:
+            key = PROVIDER_KEYS.get(m.split("/", 1)[0])
+            if key:
+                need.add(key)
+    for k in agent.get("keys") or []:
+        if str(k) in SECRET_KEYS:
+            need.add(str(k))
+    if "HF_API_KEY" in need or "HF_TOKEN" in need:
+        need |= {"HF_API_KEY", "HF_TOKEN"}
+    return need
+
+
+def restrict_keys(agent: dict) -> list[str]:
+    """Drop every secret this agent does not need from the environment pi inherits; returns what was dropped."""
+    need = keys_needed(agent)
+    dropped = [k for k in SECRET_KEYS if k in os.environ and k not in need]
+    for k in dropped:
+        del os.environ[k]
+    return dropped
 
 
 def memory_block(agent_id: str, inbox: Path) -> str:
@@ -617,6 +644,10 @@ def prepare_pi_launch(
 
     args.extend(extra)
     model_str = str(model) if model else None
+    # R4c: an assistant's process holds only its own providers' keys (a crewmate's
+    # VM holds none at all: extensions/gondolin passes a fixed environment).
+    if agent_type == "assistant":
+        restrict_keys(agent)
     return cwd, args, prompt_file, model_str
 
 
