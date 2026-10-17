@@ -18,6 +18,7 @@ import {
 import { metricsStripHtml } from "./lib/bus.ts";
 import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fleet-snapshot.ts";
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
+import { toolFailuresHtml } from "./lib/tool-failures.ts";
 import { addSubscription, pushNewNeeds, removeSubscription, sendToAll, subscriptions, validSub, vapidKeys } from "./lib/push.ts";
 import { ackNotice, quietState, snooze, wake } from "./lib/notify.ts";
 import { approveOrder, cancelOrder, checkOrderBody, createOrder, retryOrder } from "./lib/order-note.ts";
@@ -498,6 +499,10 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return new Response(await usagePartialHtml(), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
+    }
+
+    if (path === "/partials/tool-failures" && req.method === "GET") {
+      return new Response(toolFailuresHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
 
     if (path === "/partials/metrics" && req.method === "GET") {

@@ -21,10 +21,15 @@
  *    loop until its credits ran out. Any edit, write, or shell command resets
  *    the count (the world may have changed), so re-reading after a change and
  *    re-running tests stay allowed;
- * 4. two strikes: when the same tool fails twice in a row (an error result, or
- *    the fleet node not answering), the second failure tells the agent to stop
- *    calling it and to report blocked or work around it, instead of retrying
- *    until the budget runs out.
+ * 4. two strikes: when the same call (same tool, same arguments) fails twice
+ *    in a row, or a fleet tool finds the node down twice, the second failure
+ *    tells the agent to stop and report blocked or work around it, instead of
+ *    retrying until the budget runs out. Different calls failing (two files
+ *    not found) are not a broken tool: counting them per tool once made the
+ *    designer give up on reading images altogether.
+ * 5. a read of a file that does not exist gets a hint: calls in one step run
+ *    at the same time, so a file another call in that step creates is not
+ *    there yet.
  *
  * Warnings go out as notices, which the fleet node writes to the ship's log.
  * Providers that never cache (Cursor replays sessions) are skipped for (2).
@@ -52,7 +57,15 @@ export function toolFailed(isError: boolean, content: { type: string; text?: str
   return first.startsWith("The fleet node did not answer");
 }
 
-export const STRIKE_NOTE = "\n\nThis tool has now failed twice in a row. Do not call it again in this run: work around it, or tell the captain you are blocked (notify_captain kind blocked, or say so in the chat) with what failed.";
+export const STRIKE_NOTE = "\n\nThis exact call has now failed twice in a row. Do not repeat it in this run: work around it, or tell the captain you are blocked (notify_captain kind blocked, or say so in the chat) with what failed.";
+
+export const MISSING_FILE_NOTE = "\n\nTool calls in one step run at the same time: if another call in this step creates this file (a screenshot, a crop), it is not there yet. Read it in your next step.";
+
+/** What counts as "the same failure": the same call, or a fleet tool with the node down. */
+export function strikeKey(tool: string, input: unknown, content: { type: string; text?: string }[]): string {
+  const first = content.find((c) => c.type === "text")?.text ?? "";
+  return first.startsWith("The fleet node did not answer") ? `${tool}\u0000node-down` : `${tool}\u0000${stableJson(input ?? {})}`;
+}
 
 /** JSON with sorted object keys and no whitespace, so the same value always serializes the same way. */
 export function stableJson(v: unknown): string {
@@ -113,17 +126,21 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_result", async (event) => {
-    const e = event as { toolName?: string; isError?: boolean; content?: { type: string; text?: string }[] };
+    const e = event as { toolName?: string; input?: unknown; isError?: boolean; content?: { type: string; text?: string }[] };
     if (!e.toolName) return;
     const content = e.content ?? [];
     if (!toolFailed(Boolean(e.isError), content)) {
-      strikes.delete(e.toolName);
+      // The tool works: forget its earlier failures.
+      for (const k of [...strikes.keys()]) if (k.startsWith(`${e.toolName}\u0000`)) strikes.delete(k);
       return;
     }
-    const n = (strikes.get(e.toolName) ?? 0) + 1;
-    strikes.set(e.toolName, n);
-    if (n !== 2) return;
-    return { content: [...content, { type: "text" as const, text: STRIKE_NOTE }] };
+    const key = strikeKey(e.toolName, e.input, content);
+    const n = (strikes.get(key) ?? 0) + 1;
+    strikes.set(key, n);
+    const missing = /\bENOENT\b|no such file/i.test(content.find((c) => c.type === "text")?.text ?? "") && isReadTool(e.toolName);
+    const notes = `${missing ? MISSING_FILE_NOTE : ""}${n === 2 ? STRIKE_NOTE : ""}`;
+    if (!notes) return;
+    return { content: [...content, { type: "text" as const, text: notes }] };
   });
 
   pi.on("message_end", async (event, ctx) => {

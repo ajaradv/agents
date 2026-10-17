@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cacheMiss, isReadTool, prefixHash, stableJson, toolFailed } from "../../extensions/cache-watch.ts";
+import { cacheMiss, isReadTool, prefixHash, stableJson, strikeKey, toolFailed } from "../../extensions/cache-watch.ts";
 import { windowImages } from "../../extensions/image-window.ts";
 
 const img = (n: number) => ({ type: "image", data: "x".repeat(n) });
@@ -85,5 +85,15 @@ describe("cache-watch two strikes", () => {
     expect(toolFailed(true, [])).toBe(true);
     expect(toolFailed(false, [{ type: "text", text: "The fleet node did not answer (timeout). Tell the captain." }])).toBe(true);
     expect(toolFailed(false, [{ type: "text", text: "{\"ok\":true}" }])).toBe(false);
+  });
+});
+
+describe("cache-watch strikes count the same call, not the same tool", () => {
+  test("two different missing files are two different calls; a node outage is one", () => {
+    const enoent = [{ type: "text", text: "ENOENT: no such file or directory" }];
+    expect(strikeKey("read", { path: "/tmp/a.png" }, enoent)).not.toBe(strikeKey("read", { path: "/tmp/b.png" }, enoent));
+    expect(strikeKey("read", { path: "/tmp/a.png" }, enoent)).toBe(strikeKey("read", { path: "/tmp/a.png" }, enoent));
+    const down = [{ type: "text", text: "The fleet node did not answer (timeout). Tell the captain." }];
+    expect(strikeKey("ship_log", { ship: "a" }, down)).toBe(strikeKey("ship_log", { ship: "b" }, down));
   });
 });

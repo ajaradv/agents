@@ -11,6 +11,8 @@ import {
 import { chatTarget } from "./chat-targets.ts";
 import { agentKeyEnv } from "./fleet-env.ts";
 import { dashLog } from "./log.ts";
+import { recordToolFailure } from "./tool-failures.ts";
+import { toolFailed } from "../../extensions/cache-watch.ts";
 import { fleetInboxRoot, NODE_PORT, ROOT } from "./paths.ts";
 
 /**
@@ -87,6 +89,10 @@ type AgentProc = {
   stderrTail: string;
   lastCaptainTs: string | null;
   turnError: string | null;
+  /** Running tool calls' short summaries, by call id (for the failure log). */
+  toolArgs: Map<string, string>;
+  /** provider/model of the latest reply. */
+  model: string;
   /** Continues sent for the current captain line after a dropped stream. */
   streamRetries: number;
   /** This turn's billed cost and tokens, summed from Pi's assistant message usage. */
@@ -271,6 +277,8 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       p.streamText = "";
       hooks.event(p.id, { kind: "stream", text: "" });
       if (msg.stopReason === "error" && msg.errorMessage) p.turnError = msg.errorMessage;
+      const m = rec.message as { provider?: string; model?: string };
+      if (m.model) p.model = m.provider ? `${m.provider}/${m.model}` : m.model;
       const text = assistantText(msg);
       // Text in a message that ends in a tool call is narration on the way (a step), not the answer.
       if (text) hooks.line(p.id, await appendAgentChat(p.id, p.id, text, { step: msg.stopReason === "toolUse" }));
@@ -279,11 +287,26 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
     case "tool_execution_end": {
       // Tools that run models of their own (sub-agents) report what they spent; it is part of this turn.
       p.turnCost += toolSpend(rec.result);
+      const id = String(rec.toolCallId ?? "");
+      const args = p.toolArgs.get(id) ?? "";
+      p.toolArgs.delete(id);
+      const content = ((rec.result as { content?: { type: string; text?: string }[] } | undefined)?.content ?? []).filter((c) => c && typeof c.type === "string");
+      if (toolFailed(Boolean(rec.isError), content)) {
+        const error = content.filter((c) => c.type === "text").map((c) => c.text ?? "").join(" ");
+        try {
+          recordToolFailure({ agent: p.id, tool: String(rec.toolName ?? "tool"), args, error, model: p.model });
+        } catch (e) {
+          void dashLog("agent-host", `tool failure not recorded: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       return;
     }
-    case "tool_execution_start":
-      hooks.event(p.id, { kind: "activity", text: toolSummary(String(rec.toolName ?? "tool"), rec.args) });
+    case "tool_execution_start": {
+      const summary = toolSummary(String(rec.toolName ?? "tool"), rec.args);
+      if (rec.toolCallId) p.toolArgs.set(String(rec.toolCallId), summary);
+      hooks.event(p.id, { kind: "activity", text: summary });
       return;
+    }
     case "auto_retry_start":
       hooks.event(p.id, { kind: "notice", text: `Retrying: ${String(rec.errorMessage ?? "provider error")}`, level: "warning" });
       return;
@@ -296,6 +319,14 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       hooks.event(p.id, { kind: "running", running: false });
       hooks.event(p.id, { kind: "activity", text: "" });
       const ms = Date.now() - p.startedAt;
+      // Every turn that ended on a provider error goes in the failure log, retried or not.
+      if (p.turnError) {
+        try {
+          recordToolFailure({ agent: p.id, tool: "turn", error: p.turnError, model: p.model });
+        } catch {
+          /* the log is best effort */
+        }
+      }
       if (p.turnError && STREAM_DROPPED.test(p.turnError) && p.streamRetries < STREAM_RETRIES) {
         // The work so far is in the session; ask the agent to carry on from there.
         p.streamRetries += 1;
@@ -404,6 +435,8 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
     stderrTail: "",
     lastCaptainTs: null,
     turnError: null,
+    toolArgs: new Map(),
+    model: "",
     streamRetries: 0,
     turnCost: 0,
     turnTokens: 0,
