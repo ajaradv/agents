@@ -951,7 +951,30 @@ body.chat-open { overflow: hidden; }
 .ledger > summary { padding: 0.45rem 0.6rem; cursor: pointer; font-size: 0.85rem; }
 .ledger > .stack-tight { padding: 0 0.6rem 0.6rem; }
 .ledger-table td.num, .ledger-table th.num { text-align: right; white-space: nowrap; }
+.ledger-table th, .ledger-table td { overflow-wrap: normal; word-break: normal; }
 .ledger-table code { font-size: 0.75rem; overflow-wrap: anywhere; }
+.fleet-metrics .ledger-table { min-width: 36rem; }
+/* ---------- Fleet metrics ---------- */
+.fleet-metrics h4 { margin: 0.4rem 0 0; }
+.metric-kpis { grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); }
+.metric-kpis .kpi { display: grid; gap: 0.15rem; min-width: 0; overflow-wrap: anywhere; }
+.metric-chart { margin: 0; border: 1px solid var(--line); background: var(--sheet); padding: 0.6rem; display: grid; gap: 0.4rem; min-width: 0; }
+.bars { list-style: none; margin: 0; padding: 0; display: flex; align-items: stretch; gap: 3px; height: 9rem; overflow-x: auto; }
+.bar { flex: 1 1 0; max-width: 3rem; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 0.2rem; min-width: 0.5rem; }
+.bar-stack { display: flex; flex-direction: column-reverse; justify-content: flex-start; border-bottom: 2px solid var(--ink); min-height: 0; }
+.bar-seg { display: block; width: 100%; min-height: 2px; }
+.bar-label { font-size: 0.6rem; text-align: center; color: var(--quiet); white-space: nowrap; overflow: visible; height: 0.9rem; }
+.bar:last-child .bar-label { text-align: right; direction: rtl; }
+.legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.3rem 0.8rem; font-size: 0.72rem; }
+.legend li { display: inline-flex; align-items: center; gap: 0.3rem; }
+.swatch { width: 0.8rem; height: 0.8rem; border: 1px solid var(--ink); display: inline-block; }
+.role-0 { background: var(--ultra); }
+.role-1 { background: var(--vermilion); }
+.role-2 { background: var(--teal); }
+.role-3 { background: var(--yellow); }
+.role-4 { background: #6b4fa0; }
+.role-5 { background: #3d4a3a; }
+.role-6 { background: repeating-linear-gradient(45deg, var(--ink) 0 2px, var(--sheet) 2px 4px); }
 .ledger-chips .phase + .phase::before { content: none; }
 .ledger-runs { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; align-items: center; }
 .ledger-gates { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; min-width: 0; }

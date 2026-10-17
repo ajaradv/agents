@@ -31,6 +31,7 @@ import { loadAgents } from "./lib/agents.ts";
 import { speakable, speechParts, sttAvailable, synthesize, transcribe, ttsState, voiceFor } from "./lib/voice.ts";
 import { onShipLogWrite } from "./lib/ship-log.ts";
 import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
+import { metricsDashboardHtml, parsePeriod } from "./lib/metrics-view.ts";
 import { dockVoyage, findShip, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
 import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas, withFrameChecks } from "./lib/canvas.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
@@ -504,6 +505,10 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
 
     if (path === "/partials/tool-failures" && req.method === "GET") {
       return new Response(toolFailuresHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+
+    if (path === "/partials/fleet-metrics" && req.method === "GET") {
+      return new Response(metricsDashboardHtml(parsePeriod(url.searchParams.get("days"))), { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
 
     if (path === "/partials/metrics" && req.method === "GET") {

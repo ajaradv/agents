@@ -78,6 +78,7 @@
       <div class="stack">
         <div id="fleet" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerMorph"></div>
         <div id="usage" hx-get="/partials/usage" hx-trigger="load" hx-swap="innerMorph"></div>
+        <div id="fleet-metrics" hx-get="/partials/fleet-metrics?days=7" hx-trigger="load" hx-swap="innerMorph"></div>
         <div id="tool-failures" hx-get="/partials/tool-failures" hx-trigger="load, every 60s" hx-swap="innerMorph"></div>
         <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerMorph"></div>
       </div>
