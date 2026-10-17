@@ -326,7 +326,7 @@ async function applyNow(shipId: string, id: string): Promise<{ ok: boolean; mess
   // Re-check against the ship as it is now (it may have changed since the proposal).
   const again = validateProposal(ship, p as unknown as Record<string, unknown>, all.filter((x) => x.status === "open" && x.id !== id));
   if (typeof again === "string") return { ok: false, message: `Cannot apply: ${again}` };
-  await editShip(shipId, (doc) => applyToDoc(doc, p, ship));
+  await editShip(shipId, (doc) => applyToDoc(doc, p, ship), { by: "captain", why: `helmsman proposal ${p.id}: ${p.why}` });
   p.status = "applied";
   await saveProposals(shipId, all);
   logShipEvent(shipId, "captain", "helm", `Applied: ${proposalLine(p)}`, { proposal: p.id });

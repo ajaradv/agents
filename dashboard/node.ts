@@ -15,6 +15,8 @@ import type { ChatLine } from "./lib/chat.ts";
 import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
 import { helmPropose } from "./lib/helm.ts";
+import { materializeAllShips } from "./lib/ship-config.ts";
+import { readShips } from "./lib/fleet-layers.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
@@ -139,6 +141,8 @@ function startRuntime(): void {
   startDigestClock();
   // recall: keep the full-text index of chats, helper results, digests, and notices current.
   startRecallIndexer();
+  // Ship config (lib/ship-config.ts): the merged view of every ship, as JSON for bin/launch.
+  void readShips().then((ships) => materializeAllShips(ships.map((s) => s.id))).catch((e) => console.error("[node] ship config:", e));
   // Fleet metrics (lib/metrics.ts): import history from ship logs and voyage notes once.
   setTimeout(() => {
     try {

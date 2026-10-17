@@ -7,6 +7,7 @@ import { escapeHtml } from "./quota.ts";
 import { gateStatus, type GateReport } from "./gates.ts";
 import { liveLedgerHtml, pastLedgerHtml } from "./ledger-view.ts";
 import { hasHelmsman, listProposals, proposalLine, type Proposal } from "./helm.ts";
+import { recentConfigChanges, shipTemplates } from "./ship-config.ts";
 import { voyageId } from "./metrics.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
@@ -153,6 +154,7 @@ export async function harborHtml(): Promise<string> {
         <label class="stack-tight">Ship id <input class="field" name="id" required pattern="[a-z][a-z0-9_-]{0,40}" placeholder="pochteca" /></label>
         <label class="stack-tight">Repo path <input class="field" name="path" required placeholder="/Users/you/Workspace/project" /></label>
         <label class="stack-tight">Delivery mode <select class="field" name="mode">${MODES.map((m) => `<option${m === "no-mistakes" ? " selected" : ""}>${m}</option>`).join("")}</select></label>
+        <label class="stack-tight">Start from <select class="field" name="template"><option value="">a blank ship</option>${shipTemplates().map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)} template</option>`).join("")}</select></label>
         <label class="stack-tight">Register with Firstmate (one-line description, optional) <input class="field" name="firstmate" placeholder="Leave empty to run it with its own crew" /></label>
       </div>
       <label class="row"><input type="checkbox" name="factory" /> Install the SSSF factory (writes adws/ and .claude/skills/sssf into the repo)</label>
@@ -251,7 +253,14 @@ async function helmHtml(ship: ShipRow): Promise<string> {
   const all = await listProposals(ship.id);
   const open = all.filter((p) => p.status === "open");
   const aboard = hasHelmsman(ship);
-  if (!aboard && !open.length) return "";
+  const changes = recentConfigChanges(ship.id, 6);
+  if (!aboard && !open.length && !changes.length) return "";
+  const val = (v: string | null) => (v === null ? "none" : v.length > 60 ? `${v.slice(0, 59)}…` : v);
+  const history = changes.length
+    ? `<details class="fold"><summary>Config changes · ${changes.length} recent · live in fleet/home/ships/${escapeHtml(ship.id)}.yaml</summary><ul class="meter-list">${changes
+        .map((c) => `<li><span><code>${escapeHtml(c.key)}</code> ${escapeHtml(val(c.old))} → ${escapeHtml(val(c.new))}${c.why ? ` <span class="muted">· ${escapeHtml(c.why.slice(0, 120))}</span>` : ""}</span><span class="muted">${escapeHtml(c.by)} · ${escapeHtml(timeAgo(c.ts))}</span></li>`)
+        .join("")}</ul></details>`
+    : "";
   const api = `/api/ships/${encodeURIComponent(ship.id)}/helm`;
   const kindLabel: Record<string, string> = { check: "New check", gate: "New gate", maneuver: "New maneuver", retire_maneuver: "Retire maneuver", allow_host: "Allow a host", note: "Note" };
   const card = (p: Proposal) => `<li class="helm-proposal">
@@ -271,8 +280,9 @@ async function helmHtml(ship: ShipRow): Promise<string> {
           ? `<form class="row shipyard-form" data-api="${api}/review"><button class="btn" type="submit" data-then="note">Ask for a review</button><span class="muted" data-note></span></form>`
           : `<span class="muted">No helmsman aboard</span>`
       }</div>
-      ${open.length ? `<ul class="helm-list">${open.map(card).join("")}</ul>` : `<p class="muted">No open proposals. The helmsman reviews the ship's checks, gates, maneuvers, and VM allowlist after each voyage docks.</p>`}
+      ${open.length ? `<ul class="helm-list">${open.map(card).join("")}</ul>` : !aboard ? "" : `<p class="muted">No open proposals. The helmsman reviews the ship's checks, gates, maneuvers, and VM allowlist after each voyage docks.</p>`}
       ${settled.length ? `<p class="muted">Recently: ${settled.map((p) => `${p.status} · ${escapeHtml(proposalLine(p).slice(0, 80))}`).join("; ")}</p>` : ""}
+      ${history}
     </section>`;
 }
 

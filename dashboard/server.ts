@@ -738,6 +738,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
         mode: String(b.mode ?? ""),
         factory: b.factory === true || b.factory === "on",
         firstmate: String(b.firstmate ?? ""),
+        template: String(b.template ?? ""),
       });
       if (res.ok) sseBroadcast("ship", String(b.id));
       return Response.json(res, { status: res.ok ? 200 : 400 });

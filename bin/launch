@@ -51,6 +51,8 @@ def parse_simple_yaml(path: Path) -> dict:
             return None
         if s.startswith('"') and s.endswith('"'):
             return s[1:-1]
+        if s == "{}":
+            return {}
         if s.startswith("[") and s.endswith("]"):
             inner = s[1:-1].strip()
             return [] if not inner else [x.strip().strip('"') for x in inner.split(",")]
@@ -368,6 +370,45 @@ def launchable_maneuvers(ship: dict, role: str, ship_path: Path) -> list[str]:
     return names
 
 
+def ships_dir() -> Path:
+    raw = os.environ.get("FLEET_SHIPS_DIR")
+    return Path(raw).expanduser() if raw else ROOT / "fleet" / "ships"
+
+
+def merge_config(base, overlay):
+    """Overlay on top of base (dashboard/lib/ship-config.ts): maps merge key by key, the rest replaces, None removes."""
+    if not isinstance(base, dict) or not isinstance(overlay, dict):
+        return overlay
+    out = dict(base)
+    for k, v in overlay.items():
+        if v is None:
+            out.pop(k, None)
+        else:
+            out[k] = merge_config(base.get(k), v)
+    return out
+
+
+def ship_config(y: Path) -> dict:
+    """A ship's merged config: the committed base (fleet/ships) plus its live overlay (fleet/home/ships).
+
+    The node writes the merged view as JSON (fleet/inbox/.node/ships/<ship>.json);
+    it is used while it is newer than both files, else the two are merged here.
+    """
+    raw = os.environ.get("FLEET_SHIP_OVERLAY_DIR")
+    overlay = (Path(raw).expanduser() if raw else FLEET_HOME / "ships") / y.name
+    merged_json = fleet_inbox_root() / ".node" / "ships" / f"{y.stem}.json"
+    try:
+        newest = max(y.stat().st_mtime, overlay.stat().st_mtime if overlay.is_file() else 0)
+        if merged_json.is_file() and merged_json.stat().st_mtime >= newest:
+            data = json.loads(merged_json.read_text())
+            if isinstance(data, dict):
+                return data
+    except (OSError, ValueError):
+        pass
+    base = parse_simple_yaml(y)
+    return merge_config(base, parse_simple_yaml(overlay)) if overlay.is_file() else base
+
+
 def resolve_crewmate(agent_id: str) -> tuple[dict, dict] | None:
     """`<ship>-<role>` for a role listed under `crew:` in fleet/ships/<ship>.yaml.
 
@@ -375,8 +416,8 @@ def resolve_crewmate(agent_id: str) -> tuple[dict, dict] | None:
     A crewmate is the role's template deployed aboard one ship: cwd is the ship's
     repo, the session is persistent and lives in fleet/inbox/<ship>-<role>/.
     """
-    for y in sorted((ROOT / "fleet" / "ships").glob("*.yaml")):
-        ship = parse_simple_yaml(y)
+    for y in sorted(ships_dir().glob("*.yaml")):
+        ship = ship_config(y)
         sid = str(ship.get("id") or y.stem)
         if not agent_id.startswith(sid + "-"):
             continue
@@ -674,8 +715,8 @@ def prepare_pi_launch(
         # Agents that work inside project repos (designer): start in this repo, cd per request.
         cwd = ROOT
         ship_lines = ""
-        for y in sorted((ROOT / "fleet" / "ships").glob("*.yaml")):
-            ship = parse_simple_yaml(y)
+        for y in sorted(ships_dir().glob("*.yaml")):
+            ship = ship_config(y)
             if ship.get("path"):
                 ship_lines += f"  - `{ship.get('id') or y.stem}`: `{ship['path']}`\n"
         path_block = (

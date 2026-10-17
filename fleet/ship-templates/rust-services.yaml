@@ -1,0 +1,14 @@
+# Template: Rust services in a cargo workspace.
+isolation: vm
+checks:
+  build: cargo build --workspace
+  test: cargo test --workspace
+  clippy: cargo clippy --workspace -- -D warnings
+  fmt: cargo fmt --all -- --check
+gates:
+  task: [build, test]
+  dock: [fmt, clippy, test]
+maneuvers:
+  verify:
+    checks: [fmt, clippy, build, test]
+    by: [lead, scout]

@@ -29,13 +29,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SSSF = ROOT / ".claude" / "skills" / "sssf"
 SHIPS = ROOT / "fleet" / "ships"
+TEMPLATES = ROOT / "fleet" / "ship-templates"
 PROJECTS = ROOT / "fleet" / "home" / "data" / "projects.md"
 ID_RE = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
 MODES = ("no-mistakes", "no-mistakes-prod-only", "no-mistakes-required", "direct-PR", "local-only")
 COPY_IGNORE = shutil.ignore_patterns("node_modules", "__pycache__", "*.pyc", ".DS_Store", "dist")
 
 
-def ship_yaml(ship_id: str, path: Path, mode: str, factory: bool, adws: list[str]) -> str:
+def templates() -> list[str]:
+    return sorted(p.stem for p in TEMPLATES.glob("*.yaml"))
+
+
+def ship_yaml(ship_id: str, path: Path, mode: str, factory: bool, adws: list[str], template: str = "") -> str:
     lines = [f"id: {ship_id}", f"path: {path}", "orchestrator: firstmate", "crew: []"]
     if factory:
         lines += ["factory:", "  skill: .claude/skills/sssf"]
@@ -45,7 +50,11 @@ def ship_yaml(ship_id: str, path: Path, mode: str, factory: bool, adws: list[str
     else:
         lines.append("factory: null")
     lines.append(f"mode: {mode}")
-    return "\n".join(lines) + "\n"
+    text = "\n".join(lines) + "\n"
+    if template:
+        # The template's checks, gates, and maneuvers become the base's defaults (live edits go to the overlay).
+        text += f"# From template {template} (fleet/ship-templates/{template}.yaml)\n" + (TEMPLATES / f"{template}.yaml").read_text()
+    return text
 
 
 def registry_line(ship_id: str, mode: str, desc: str) -> str:
@@ -67,6 +76,7 @@ def main() -> int:
     p.add_argument("--no-factory", action="store_true", help="record the ship without stamping SSSF")
     p.add_argument("--force", action="store_true", help="replace the ship yaml and pass --force to install.py")
     p.add_argument("--register", metavar="DESC", help="append the project to Firstmate's projects.md")
+    p.add_argument("--template", default="", help=f"start from fleet/ship-templates/<name>.yaml ({', '.join(templates()) or 'none'})")
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
     sys.stdout.reconfigure(line_buffering=True)
@@ -80,6 +90,9 @@ def main() -> int:
         return 1
     if ship_path == ROOT:
         print("error: this repo is the meta ship `fleet`; do not stamp SSSF onto it", file=sys.stderr)
+        return 1
+    if a.template and a.template not in templates():
+        print(f"error: no template {a.template} (have: {', '.join(templates()) or 'none'})", file=sys.stderr)
         return 1
     yaml_path = SHIPS / f"{a.id}.yaml"
     if yaml_path.exists() and not a.force:
@@ -98,7 +111,7 @@ def main() -> int:
         return 1
 
     verb = "would" if a.dry_run else "will"
-    print(f"{verb} write {yaml_path.relative_to(ROOT)}")
+    print(f"{verb} write {yaml_path.relative_to(ROOT)}{f' from template {a.template}' if a.template else ''}")
     if factory:
         print(f"{verb} copy {SSSF.relative_to(ROOT)} -> {ship_path / '.claude/skills/sssf'}")
         print(f"{verb} run install.py{' --force' if a.force else ''} in {ship_path}")
@@ -111,7 +124,7 @@ def main() -> int:
         return 0
 
     SHIPS.mkdir(parents=True, exist_ok=True)
-    yaml_path.write_text(ship_yaml(a.id, ship_path, a.mode, factory, adws))
+    yaml_path.write_text(ship_yaml(a.id, ship_path, a.mode, factory, adws, a.template))
     if factory:
         dest = ship_path / ".claude" / "skills" / "sssf"
         dest.parent.mkdir(parents=True, exist_ok=True)

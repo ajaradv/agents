@@ -150,7 +150,7 @@ crewmate that keeps the ship's process fit as the project grows.
 - **What it does**: reads the repo to confirm, then files proposals with
   `helm_propose`: a check, a gate, a maneuver, retiring a maneuver, allowing a
   host, or a note. Each says why. The node validates them against the ship.
-- **Who decides**: the captain, on the deck. **Apply** edits the ship file
-  (keeping comments and everything else); **Dismiss** drops it. Nothing
-  changes the ship file without the captain. Crewmates pick up applied
+- **Who decides**: the captain, on the deck. **Apply** writes the change to the
+  ship's live overlay (docs/ship-config.md), never the committed file;
+  **Dismiss** drops it. Nothing changes without the captain. Crewmates pick up applied
   changes at their next start.

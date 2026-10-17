@@ -2,7 +2,9 @@ import { existsSync } from "node:fs";
 import { describeManeuver, maneuverAvailability } from "./maneuvers.ts";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isMap, parseDocument } from "yaml";
+import { isMap, type Document } from "yaml";
+import { editShipConfig, readShipConfig, shipTemplates } from "./ship-config.ts";
+export { shipYamlText } from "./ship-config.ts";
 import { loadAgents, type AgentMeta } from "./agents.ts";
 import { frontmatter, readShips, type ShipRow } from "./fleet-layers.ts";
 import { aliceVault, ROOT } from "./paths.ts";
@@ -17,8 +19,8 @@ import { leaseVoyageWorktree, releaseVoyageWorktree, usesVoyageWorktrees, voyage
  * The shipyard: build a ship (register it, check what it is missing), crew it
  * (roles from agents/ marked `crew: true`), budget it, and send it on voyages.
  *
- * Ship config lives in fleet/ships/<id>.yaml (edited with the yaml Document API
- * so comments survive). Voyage records live in the vault, like plans:
+ * Ship config is a committed base (fleet/ships/<id>.yaml) with a live overlay
+ * (fleet/home/ships/<id>.yaml) that every edit here goes to (lib/ship-config.ts). Voyage records live in the vault, like plans:
  * {vault}/fleet/voyages/<ship>/<date>-<slug>.md with `status: sailing|docked`.
  */
 
@@ -40,24 +42,17 @@ export async function crewRoles(): Promise<AgentMeta[]> {
 }
 
 /** Remove map.key when the map exists; a ship without that map has nothing to remove. */
-export function deleteKey(doc: ReturnType<typeof parseDocument>, map: string, key: string): void {
+export function deleteKey(doc: Document, map: string, key: string): void {
   if (isMap(doc.get(map))) doc.deleteIn([map, key]);
 }
 
 /**
- * A ship file's text. Long values are never folded onto two lines and flow
- * lists are not padded: bin/launch reads ship files with a line-based reader,
- * and a captain's file should keep its shape.
+ * Change a ship's config: the edit sees the merged view (base plus overlay) as
+ * one document; what it changes goes to the overlay, never the committed base
+ * (lib/ship-config).
  */
-export function shipYamlText(doc: ReturnType<typeof parseDocument>): string {
-  return doc.toString({ lineWidth: 0, flowCollectionPadding: false });
-}
-
-export async function editShip(id: string, edit: (doc: ReturnType<typeof parseDocument>) => void): Promise<void> {
-  const path = shipFile(id);
-  const doc = parseDocument(await readFile(path, "utf8"));
-  edit(doc);
-  await writeFile(path, shipYamlText(doc), "utf8");
+export async function editShip(id: string, edit: (doc: Document) => void, who: { by: string; why?: string } = { by: "captain" }): Promise<void> {
+  await editShipConfig(id, edit, who);
 }
 
 export async function setCrew(
@@ -105,8 +100,7 @@ export async function setOrchestrator(shipId: string, orchestrator: string): Pro
 /** Daily budget per role in USD from `crew_budgets:`, or null when unset. */
 export async function crewBudget(shipId: string, role: string): Promise<number | null> {
   try {
-    const doc = parseDocument(await readFile(shipFile(shipId), "utf8"));
-    const v = Number(doc.getIn(["crew_budgets", role]));
+    const v = Number((readShipConfig(shipId)?.crew_budgets as Record<string, unknown> | undefined)?.[role]);
     return v > 0 ? v : null;
   } catch {
     return null;
@@ -340,13 +334,17 @@ export function voyageBrief(ship: ShipRow, v: Voyage): string {
 
 // ---------------------------------------------------------------- register
 
-export async function registerShip(input: { id: string; path: string; mode: string; factory: boolean; firstmate: string }): Promise<{ ok: boolean; message: string; output?: string }> {
+export async function registerShip(input: { id: string; path: string; mode: string; factory: boolean; firstmate: string; template?: string }): Promise<{ ok: boolean; message: string; output?: string }> {
   if (!SHIP_RE.test(input.id)) return { ok: false, message: "Ship id: lowercase letters, digits, - or _, starting with a letter." };
   if (!input.path.startsWith("/") || !existsSync(input.path)) return { ok: false, message: `${input.path} is not a folder on this machine.` };
   if (!(MODES as readonly string[]).includes(input.mode)) return { ok: false, message: "Pick a delivery mode." };
   if (existsSync(shipFile(input.id))) return { ok: false, message: `${input.id} is already registered.` };
   const args = ["python3", join(ROOT, "bin", "stamp-ship"), input.id, input.path, "--mode", input.mode];
   if (!input.factory) args.push("--no-factory");
+  if (input.template) {
+    if (!shipTemplates().includes(input.template)) return { ok: false, message: `No ship template ${input.template}.` };
+    args.push("--template", input.template);
+  }
   if (input.firstmate.trim()) args.push("--register", input.firstmate.trim().slice(0, 200));
   const res = await spawnTimed(args, { cwd: ROOT, timeoutMs: 180_000 });
   const output = `${res.stdout ?? ""}${res.stderr ?? ""}`.trim().slice(-4000);

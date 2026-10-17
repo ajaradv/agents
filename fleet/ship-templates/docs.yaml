@@ -1,0 +1,6 @@
+# Template: a docs or content repo (Markdown, a static site). Light checks, no VM needed.
+isolation: host
+checks:
+  lint: npx --yes markdownlint-cli2 "**/*.md"
+gates:
+  dock: [lint]

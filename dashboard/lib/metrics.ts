@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { parse as yamlParse } from "yaml";
-import { nodeStateDir, ROOT } from "./paths.ts";
+import { nodeStateDir } from "./paths.ts";
+import { readShipConfig } from "./ship-config.ts";
 
 /**
  * The fleet metrics database (vault research note helm-and-maneuvers): one
@@ -138,8 +138,7 @@ export function openVoyageId(ship: string): string | null {
 export function shipMode(ship: string): "vm" | "host" {
   if (!ship || !/^[a-z][a-z0-9_-]{0,40}$/.test(ship)) return "host";
   try {
-    const y = yamlParse(readFileSync(join(ROOT, "fleet", "ships", `${ship}.yaml`), "utf8")) as { isolation?: string } | null;
-    return y?.isolation === "vm" ? "vm" : "host";
+    return readShipConfig(ship)?.isolation === "vm" ? "vm" : "host";
   } catch {
     return "host";
   }
