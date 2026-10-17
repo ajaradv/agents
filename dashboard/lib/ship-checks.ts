@@ -1,5 +1,6 @@
 import { readShips } from "./fleet-layers.ts";
 import { spawnTimed } from "./proc.ts";
+import { recordRun } from "./metrics.ts";
 import { logShipEvent } from "./ship-log.ts";
 import { voyageWorktree } from "./voyage-worktree.ts";
 
@@ -40,6 +41,7 @@ export async function runCheck(shipId: string, from: string, name: string): Prom
     const passed = !res.timedOut && res.exitCode === 0;
     const verdict = res.timedOut ? `timed out after ${secs}s` : passed ? `passed in ${secs}s` : `failed (exit ${res.exitCode}) in ${secs}s`;
     logShipEvent(shipId, from, "check", `Check ${name} ${verdict}`, { name, exitCode: res.exitCode, timedOut: res.timedOut, secs });
+    recordRun({ ship: shipId, agent: from, kind: "check", name, ok: passed, ms: Date.now() - started, detail: verdict });
     const out = tail(`${res.stdout}${res.stderr ? `\n${res.stderr}` : ""}`.trim());
     return { ok: passed, message: `Check ${name} (${cmd}) ${verdict}.\n\n${out || "(no output)"}` };
   } finally {

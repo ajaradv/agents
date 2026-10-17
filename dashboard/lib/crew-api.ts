@@ -10,6 +10,7 @@ import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { fleetInboxRoot } from "./paths.ts";
 import { recentManeuvers, shipTraceDb } from "./ship-maneuvers.ts";
 import { logShipEvent, recentShipEvents } from "./ship-log.ts";
+import { recordHandoff } from "./metrics.ts";
 import { openVoyage, type Voyage } from "./shipyard.ts";
 import { addTask, getTask, listTasks, taskProgress, TASK_STATUSES, updateTask, type TaskStatus, type VoyageTask } from "./voyage-tasks.ts";
 import { Database } from "bun:sqlite";
@@ -95,6 +96,7 @@ export async function crewAddTask(shipId: string, b: { from: string; title?: str
   if (assignee && !crewIds(a.ship).includes(assignee)) return { ok: false, message: `${assignee} is not aboard. Crew: ${crewIds(a.ship).join(", ")}.` };
   const t = await addTask(shipId, { voyage: v.file, title, detail: String(b.detail ?? ""), assignee, createdBy: b.from, status: assignee && assignee !== b.from ? "working" : "open" });
   if (assignee && assignee !== b.from) await acceptCrewLine(assignee, b.from, taskBrief(t, a.ship));
+  recordHandoff({ ship: shipId, from: b.from, to: assignee ?? "", kind: "task-assigned", size: title.length + String(b.detail ?? "").length });
   return { ok: true, message: `Task #${t.id} added${assignee ? ` and sent to ${assignee}` : ""}.`, task: t.id };
 }
 
@@ -121,6 +123,7 @@ export async function crewUpdateTask(shipId: string, id: number, b: { from: stri
     by: b.from,
   });
   if (!updated) return { ok: false, message: "Update failed." };
+  recordHandoff({ ship: shipId, from: b.from, to: reassigned ? (assignee ?? "") : isLead ? (t.assignee ?? "") : (leadOf(a.ship) ?? ""), kind: reassigned ? "task-reassigned" : `task-${updated.status}`, size: String(b.note ?? "").length });
   if (reassigned && assignee && assignee !== b.from) await acceptCrewLine(assignee, b.from, taskBrief(updated, a.ship));
   const lead = leadOf(a.ship);
   if (!isLead && lead && lead !== b.from) {
@@ -138,6 +141,7 @@ export async function crewMessage(shipId: string, b: { from: string; to?: string
   const text = String(b.text ?? "").trim();
   if (!text) return { ok: false, message: "Say something." };
   await acceptCrewLine(to, b.from, text);
+  recordHandoff({ ship: a.ship, from: b.from, to, kind: "message", size: text.length });
   return { ok: true, message: `Sent to ${to}. Its reply comes back to you as a crew message only if it writes to you; check voyage_status for task reports.` };
 }
 

@@ -19,6 +19,7 @@ import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
 import { dashLog } from "./lib/log.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
+import { backfillMetrics } from "./lib/metrics-backfill.ts";
 import { notifyCaptain, onNoticesChange, startDigestClock, type NoticeKind } from "./lib/notify.ts";
 import { checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
 import { nodeToken, tokenMatches } from "./lib/node-auth.ts";
@@ -137,6 +138,15 @@ function startRuntime(): void {
   startDigestClock();
   // recall: keep the full-text index of chats, helper results, digests, and notices current.
   startRecallIndexer();
+  // Fleet metrics (lib/metrics.ts): import history from ship logs and voyage notes once.
+  setTimeout(() => {
+    try {
+      const n = backfillMetrics();
+      if (n) console.error(`[node] metrics backfill: ${JSON.stringify(n)}`);
+    } catch (e) {
+      console.error("[node] metrics backfill:", e);
+    }
+  }, 3000);
   onFleetChange((what) => (what === "rail" ? emit("rail", {}) : what === "ship" ? emit("ship", "") : emit("go", {})));
   });
 }

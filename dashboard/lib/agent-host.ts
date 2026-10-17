@@ -45,7 +45,7 @@ export type HostEvent =
 export type HostHooks = {
   line: (agentId: string, line: ChatLine) => void;
   event: (agentId: string, ev: HostEvent) => void;
-  settled: (agentId: string, outcome: { ok: boolean; ms: number; error?: string; cost: number; tokens: number; cacheRead?: number; prompt?: number }) => void;
+  settled: (agentId: string, outcome: { ok: boolean; ms: number; error?: string; cost: number; tokens: number; cacheRead?: number; prompt?: number; model?: string }) => void;
 };
 
 const IDLE_MS = 20 * 60_000;
@@ -369,7 +369,7 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       }
       if (p.turnError && p.lastCaptainTs) {
         hooks.line(p.id, await appendChatError(p.id, p.turnError, p.lastCaptainTs));
-        hooks.settled(p.id, { ok: false, ms, error: p.turnError, cost: p.turnCost, tokens: p.turnTokens, cacheRead: p.turnCacheRead, prompt: p.turnPrompt });
+        hooks.settled(p.id, { ok: false, ms, error: p.turnError, cost: p.turnCost, tokens: p.turnTokens, cacheRead: p.turnCacheRead, prompt: p.turnPrompt, model: p.model });
         const why = fallbackReason(p.turnError);
         if (why) {
           // Out of credits, key rejected, or the stream kept dropping after the retries:
@@ -403,7 +403,7 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
           }, 0);
         }
       } else {
-        hooks.settled(p.id, { ok: true, ms, cost: p.turnCost, tokens: p.turnTokens, cacheRead: p.turnCacheRead, prompt: p.turnPrompt });
+        hooks.settled(p.id, { ok: true, ms, cost: p.turnCost, tokens: p.turnTokens, cacheRead: p.turnCacheRead, prompt: p.turnPrompt, model: p.model });
       }
       return;
     }

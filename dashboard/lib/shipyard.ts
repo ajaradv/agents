@@ -7,6 +7,7 @@ import { frontmatter, readShips, type ShipRow } from "./fleet-layers.ts";
 import { aliceVault, ROOT } from "./paths.ts";
 import { spawnTimed } from "./proc.ts";
 import { logShipEvent, shipTurnTotals } from "./ship-log.ts";
+import { ledgerLine, ledgerMarkdown, recordVoyageDock, recordVoyageStart, voyageId, voyageLedger } from "./metrics.ts";
 import { leaseVoyageWorktree, releaseVoyageWorktree, usesVoyageWorktrees, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
 
 /**
@@ -254,6 +255,7 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
   );
   logShipEvent(shipId, "captain", "voyage-start", g, { file, to, ...(worktree ? { branch: worktree.branch, worktree: worktree.path } : {}) });
   const voyage: Voyage = { file, ship: shipId, status: "sailing", goal: g, to, started: now.toISOString(), ...(worktree ? { worktree } : {}) };
+  recordVoyageStart({ id: voyageId(file), ship: shipId, goal: g, to, branch: worktree?.branch, worktree: worktree?.path, started: now.toISOString() });
   return { ok: true, message: `${shipId} set sail.`, voyage };
 }
 
@@ -265,13 +267,18 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   const released = ship ? await releaseVoyageWorktree(ship) : { ok: true, message: "" };
   if (!released.ok) return { ok: false, message: released.message };
   const now = new Date().toISOString();
+  // The ledger (lib/metrics.ts): what the voyage took, written into its note and the dock message.
+  const id = voyageId(v.file);
+  const commits = Number(released.message.match(/has (\d+) commit/)?.[1] ?? 0);
+  recordVoyageDock(id, { commits, outcome: summary.trim(), branch: released.message.match(/^Branch (\S+)/)?.[1] });
+  const ledger = voyageLedger(id);
   let text = await readFile(v.file, "utf8");
   text = text.replace(/^status: sailing$/m, "status: docked").replace(/^started: (.*)$/m, `started: $1\nended: ${now}`);
   const note = summary.trim();
-  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (note ? `\n## Summary\n\n${note}\n` : "");
+  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "");
   await writeFile(v.file, text, "utf8");
   logShipEvent(shipId, "captain", "voyage-end", note || "Docked", { file: v.file });
-  return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}` };
+  return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}${ledger ? ` ${ledgerLine(ledger)}` : ""}` };
 }
 
 /** The opening message a crewmate (or Firstmate) gets when a voyage starts. */
