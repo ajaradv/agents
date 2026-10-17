@@ -363,8 +363,8 @@ LAST_FALLBACK_REASON = ""
 
 def model_with_fallback(model: object, fallback: object, agent_id: str) -> object:
     """The agent's model, or its fallback_model when the model cannot work today:
-    its provider key is missing, or the fleet node recorded a billing or auth
-    failure on it today (fleet/inbox/<id>/model-fallback.json, written by the
+    its provider key is missing, or the fleet node recorded a billing, auth, or
+    repeated stream failure on it today (fleet/inbox/<id>/model-fallback.json, written by the
     agent host; it lapses at midnight)."""
     if not (isinstance(model, str) and isinstance(fallback, str) and fallback):
         return model

@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   appendAgentChat,
@@ -11,6 +11,7 @@ import {
 import { chatTarget } from "./chat-targets.ts";
 import { agentKeyEnv } from "./fleet-env.ts";
 import { dashLog } from "./log.ts";
+import { notifyCaptain } from "./notify.ts";
 import { recordToolFailure } from "./tool-failures.ts";
 import { toolFailed } from "../../extensions/cache-watch.ts";
 import { fleetInboxRoot, NODE_PORT, ROOT } from "./paths.ts";
@@ -61,16 +62,38 @@ const AUTH_ERROR = /\b401\b|unauthori[sz]ed|invalid (api )?key|authentication fa
  * The agent's model cannot work today (out of credits, key rejected): record it
  * so bin/launch starts the next session on fallback_model until midnight.
  */
-async function recordModelFailure(agentId: string, reason: string): Promise<void> {
+/**
+ * Mark today's primary model as failed for this agent, so bin/launch starts it
+ * on fallback_model until tomorrow. True only for the first failure today (the
+ * caller continues the work once; a second failure means the backup failed too).
+ */
+async function recordModelFailure(agentId: string, reason: string): Promise<boolean> {
   const model = chatTarget(agentId)?.model;
-  if (!model) return;
+  if (!model) return false;
   const day = new Date().toLocaleDateString("sv"); // YYYY-MM-DD, local, like Python's date.today()
+  const path = join(fleetInboxRoot(), agentId, "model-fallback.json");
+  try {
+    const prev = JSON.parse(await readFile(path, "utf8")) as { day?: string; model?: string };
+    if (prev.day === day && prev.model === model) return false;
+  } catch {
+    /* no marker yet */
+  }
   try {
     await mkdir(join(fleetInboxRoot(), agentId), { recursive: true });
-    await writeFile(join(fleetInboxRoot(), agentId, "model-fallback.json"), JSON.stringify({ day, model, reason: reason.slice(0, 300) }) + "\n", "utf8");
+    await writeFile(path, JSON.stringify({ day, model, reason: reason.slice(0, 300) }) + "\n", "utf8");
+    return true;
   } catch {
-    /* the launcher just tries the primary again */
+    return false; /* the launcher just tries the primary again */
   }
+}
+
+/** Why a turn's provider error should move the agent to its backup model, or null. */
+export function fallbackReason(error: string): "billing" | "auth" | "stream" | null {
+  if (BILLING_ERROR.test(error)) return "billing";
+  if (AUTH_ERROR.test(error)) return "auth";
+  // Only reached once the in-place retries are used up.
+  if (STREAM_DROPPED.test(error)) return "stream";
+  return null;
 }
 
 type Dialog = { method: string; lineTs: string; timer?: ReturnType<typeof setTimeout> };
@@ -344,13 +367,37 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       if (p.turnError && p.lastCaptainTs) {
         hooks.line(p.id, await appendChatError(p.id, p.turnError, p.lastCaptainTs));
         hooks.settled(p.id, { ok: false, ms, error: p.turnError, cost: p.turnCost, tokens: p.turnTokens, cacheRead: p.turnCacheRead, prompt: p.turnPrompt });
-        if (BILLING_ERROR.test(p.turnError) || AUTH_ERROR.test(p.turnError)) {
-          // Out of credits or key rejected: the next message relaunches through
-          // bin/launch, which reads this marker and uses fallback_model today.
-          void dashLog("agent-host", `${p.id} hit a billing or auth error; stopped so the next message relaunches on its fallback model`);
-          void recordModelFailure(p.id, p.turnError);
-          hooks.event(p.id, { kind: "notice", text: "Its model is out of credits or refused the key; the next message starts it on its backup model.", level: "warning" });
-          setTimeout(() => void stopHost(p.id), 0);
+        const why = fallbackReason(p.turnError);
+        if (why) {
+          // Out of credits, key rejected, or the stream kept dropping after the retries:
+          // stop, mark the primary failed for today (bin/launch then uses fallback_model),
+          // and, the first time today, carry on with the work on the backup at once.
+          const error = p.turnError;
+          const first = await recordModelFailure(p.id, error);
+          const what = why === "stream" ? "kept dropping its connection to the model" : why === "billing" ? "ran out of credits or quota" : "had its key refused";
+          void dashLog("agent-host", `${p.id} ${what}; moving to its fallback model${first ? " and continuing" : " (already failed today: stopping)"}`);
+          hooks.event(p.id, {
+            kind: "notice",
+            text: first ? `It ${what}; continuing on its backup model.` : `It ${what} on its backup model too; it stops here. Send a message to try again.`,
+            level: "warning",
+          });
+          if (first) {
+            try {
+              notifyCaptain({ from: p.id, kind: "info", summary: `${p.id} ${what} and moved to its backup model for today.`, detail: error.slice(0, 300), ref: "Health, tool failures" });
+            } catch {
+              /* the notice is best effort */
+            }
+          }
+          setTimeout(async () => {
+            await stopHost(p.id);
+            if (!first) return;
+            await submitToHost(p.id, {
+              ts: new Date().toISOString(),
+              from: "router",
+              kind: "chat",
+              text: `Your last turn ended on a provider error (${error.slice(0, 160)}). You are now on your backup model. Continue exactly where you left off; do not redo finished steps.`,
+            });
+          }, 0);
         }
       } else {
         hooks.settled(p.id, { ok: true, ms, cost: p.turnCost, tokens: p.turnTokens, cacheRead: p.turnCacheRead, prompt: p.turnPrompt });
