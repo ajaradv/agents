@@ -9,3 +9,9 @@ checks:
   pytest: just pytest
   lint: just lint
   frontend: docker compose -f docker-compose.local.yml run --rm --no-deps node sh -c "npm ci && npm run build"
+gates:
+  task:
+    - pytest
+  dock:
+    - frontend
+    - pytest
