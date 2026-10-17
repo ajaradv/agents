@@ -95,6 +95,27 @@ Options come from role frontmatter `description:` lines and `dashboard-groups.js
 
 Stack: htmx 4 and Alpine.js. Health, Fleet, and Agents are leaves; chat is the rail and its drawer. On a phone, Needs you, the three leaves, and Chat sit in a bottom dock. Live updates use `EventSource` on `/events`, then `htmx.ajax` refreshes the partial in that leaf.
 
+## Look and components
+
+- **pixel.css** is the dashboard's own stylesheet (pixel type: Silkscreen for
+  labels, Departure Mono for reading). Each leaf is a solid panel with a dark
+  title band, so headings never sit on the map art.
+- **ui.css** adds Tailwind CSS 4 utilities and daisyUI 5 components, built from
+  `dashboard/ui/ui.css` with `just css` (pinned dev dependencies in the root
+  `package.json`). No Tailwind preflight; everything is in CSS layers, so
+  pixel.css wins any clash. daisyUI classes carry a `d-` prefix (`d-btn`,
+  `d-tabs`, `d-stats`, `d-table`) and use one theme, `pixel`, made from the
+  dashboard's colors with square corners and 2px borders. A test fails when
+  ui.css was not rebuilt after markup changes.
+- **Charts** use ECharts (`public/vendor/echarts-6.1.0.min.js`), loaded only
+  when a chart is on screen. A chart is an element with `class="echart"` and
+  its ECharts option as JSON in `data-option`; the server builds the options
+  (`lib/metrics-view.ts`), and `renderCharts` in app.js draws, redraws after
+  htmx swaps, and resizes on tab switches and window resizes.
+- **Health** has sub-tabs with their own URLs: Status (`/health`), Usage
+  (`/health/usage`), Metrics (`/health/metrics`), Diagnostics
+  (`/health/diagnostics`).
+
 ## Usage metrics
 
 **`quota-axi --json --max-age 15m`** runs once at dashboard boot, then every **10 minutes** (20s timeout). **Subscription usage** cards list subscribed providers only. **Configured API lanes** poll vendor endpoints with keys from `fleet/home/.env`: DeepSeek `GET /user/balance`, OpenRouter `GET /api/v1/key` (month spend + remaining). Hugging Face stays key presence only (no personal remaining-credits API). API-lane cards still render when quota-axi is empty. Providers quota knows about but you have not signed into appear under a collapsed “without an account” section. Quota refresh pauses 30s when you click **Start TUI**.

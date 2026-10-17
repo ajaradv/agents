@@ -10,6 +10,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Fleet" />
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+  <!-- Tailwind utilities and daisyUI components (d- prefix), built from ui/ui.css; pixel.css wins any clash. -->
+  <link rel="stylesheet" href="/ui.css" />
   <link rel="stylesheet" href="/pixel.css" />
   <!-- Served locally (public/vendor/README.md): no CDN wait, works offline and over Tailscale. -->
   <script src="/vendor/htmx-4.0.0.min.js" integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc"></script>
@@ -75,12 +78,24 @@
       <aside class="slip" x-show="waitSummary" x-cloak>
         <p x-text="waitSummary"></p>
       </aside>
-      <div class="stack">
-        <div id="fleet" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerMorph"></div>
-        <div id="usage" hx-get="/partials/usage" hx-trigger="load" hx-swap="innerMorph"></div>
-        <div id="fleet-metrics" hx-get="/partials/fleet-metrics?days=7" hx-trigger="load" hx-swap="innerMorph"></div>
-        <div id="tool-failures" hx-get="/partials/tool-failures" hx-trigger="load, every 60s" hx-swap="innerMorph"></div>
-        <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerMorph"></div>
+      <div role="tablist" class="d-tabs d-tabs-border health-tabs" aria-label="Health sections">
+        <template x-for="t in healthTabs" :key="t.id">
+          <button type="button" role="tab" class="d-tab" :class="{ 'd-tab-active': healthTab === t.id }" :aria-selected="healthTab === t.id"
+                  @click="setHealthTab(t.id)" x-text="t.label"></button>
+        </template>
+      </div>
+      <div class="stack" role="tabpanel">
+        <!-- Status: Firstmate, ships, and anything waiting. -->
+        <div id="fleet" x-show="healthTab === 'status'" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerMorph"></div>
+        <!-- Usage: subscriptions, API lanes, model spend. -->
+        <div id="usage" x-show="healthTab === 'usage'" hx-get="/partials/usage" hx-trigger="load" hx-swap="innerMorph"></div>
+        <!-- Metrics: the fleet metrics dashboard (metrics database). -->
+        <div id="fleet-metrics" x-show="healthTab === 'metrics'" hx-get="/partials/fleet-metrics?days=7" hx-trigger="load" hx-swap="innerMorph"></div>
+        <!-- Diagnostics: tool failures, the bus, the vault. -->
+        <div x-show="healthTab === 'diagnostics'" class="stack">
+          <div id="tool-failures" hx-get="/partials/tool-failures" hx-trigger="load, every 60s" hx-swap="innerMorph"></div>
+          <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerMorph"></div>
+        </div>
       </div>
     </section>
 

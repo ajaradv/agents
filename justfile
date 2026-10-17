@@ -59,6 +59,11 @@ architect:
 dashboard:
     cd "{{root}}" && bun run dashboard/server.ts
 
+# Tailwind utilities and daisyUI components for the dashboard: dashboard/ui/ui.css -> dashboard/public/ui.css.
+# Run after adding Tailwind or daisyUI (d-) classes to the dashboard's markup.
+css:
+    cd "{{root}}" && bun run build:css
+
 # Background services (launchd): node and dashboard start at login and restart
 # if they die. Stop a dashboard running in a terminal before installing.
 services-install:

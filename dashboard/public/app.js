@@ -17,6 +17,13 @@ function readChatId() {
 }
 
 const LEAVES = ["needs", "harbor", "health", "agents"];
+/** Health's sub-tabs; each has its own URL (/health/metrics). */
+const HEALTH_TABS = [
+  { id: "status", label: "Status" },
+  { id: "usage", label: "Usage" },
+  { id: "metrics", label: "Metrics" },
+  { id: "diagnostics", label: "Diagnostics" },
+];
 
 /** Float32 chunks at `rate` → 16 kHz mono 16-bit WAV (what the transcriber wants). */
 function encodeWav16k(chunks, rate) {
@@ -208,11 +215,20 @@ function dashboardApp() {
       this.$watch("chatOpen", () => this.syncUrl());
       this.$watch("chatId", () => this.syncUrl());
       this.$watch("chatGroup", () => this.syncUrl());
+      // Charts drawn while hidden have no size: draw or resize them when their tab or leaf shows.
+      this.$watch("healthTab", () => this.$nextTick(() => this.renderCharts()));
+      this.$watch("leaf", () => this.$nextTick(() => this.renderCharts()));
+      let resizeTimer = 0;
+      window.addEventListener("resize", () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => this.renderCharts(), 150);
+      });
       window.addEventListener("popstate", () => this.applyUrl());
       // htmx 4 names it htmx:after:settle. Alpine binds swapped-in content itself (its mutation
       // observer), so this only restores deck state: open folds and new log rows.
       document.body.addEventListener("htmx:after:settle", (ev) => {
         const elt = ev.detail?.elt || ev.target;
+        if (elt && elt.querySelector && elt.querySelector(".echart[data-option]")) this.renderCharts(elt);
         const view = document.getElementById("harbor-view");
         if (view && this.harborOpenFolds && this.harborOpenFolds.length && (elt === view || view.contains(elt))) {
           for (const sum of view.querySelectorAll("details > summary")) if (this.harborOpenFolds.includes(this.harborFoldKey(sum))) sum.parentElement.open = true;
@@ -300,7 +316,12 @@ function dashboardApp() {
 
     /** /health, /agents pick the section; ?chat=<id> or ?group=<id> opens the drawer. */
     applyUrl() {
-      const leaf = location.pathname.replace(/^\/+|\/+$/g, "");
+      let leaf = location.pathname.replace(/^\/+|\/+$/g, "");
+      const sub = leaf.match(/^health\/([a-z]+)$/);
+      if (sub && HEALTH_TABS.some((t) => t.id === sub[1])) {
+        this.healthTab = sub[1];
+        leaf = "health";
+      }
       const ship = leaf.match(/^ships\/([a-z][a-z0-9_-]{0,63})$/);
       this.shipSel = ship ? ship[1] : "";
       // /fleet was folded into Health (Firstmate status and the project registry).
@@ -317,8 +338,69 @@ function dashboardApp() {
 
     leafUrl() {
       const q = !this.chatOpen ? "" : this.chatGroup ? `?group=${encodeURIComponent(this.chatGroup.id)}` : this.chatId ? `?chat=${encodeURIComponent(this.chatId)}` : "";
-      const base = this.leaf === "harbor" && this.shipSel ? `/ships/${encodeURIComponent(this.shipSel)}` : `/${this.leaf}`;
+      const base =
+        this.leaf === "harbor" && this.shipSel
+          ? `/ships/${encodeURIComponent(this.shipSel)}`
+          : this.leaf === "health" && this.healthTab !== "status"
+            ? `/health/${this.healthTab}`
+            : `/${this.leaf}`;
       return `${base}${q}`;
+    },
+
+    /**
+     * ECharts (public/vendor, loaded on first use): every `.echart` element carries
+     * its option as JSON in data-option (lib/metrics-view.ts). Hidden ones wait
+     * until shown; a swap that replaced the element's canvas gets a fresh chart.
+     */
+    async renderCharts(root = document) {
+      // Only charts on screen: a hidden tab's charts wait (and ECharts is not even loaded for them).
+      const els = [...root.querySelectorAll(".echart[data-option]")].filter((el) => el.offsetWidth > 0);
+      if (!els.length) return;
+      if (!window.echarts) {
+        this.echartsLoading ||= new Promise((resolve, reject) => {
+          const tag = document.createElement("script");
+          tag.src = "/vendor/echarts-6.1.0.min.js";
+          tag.onload = resolve;
+          tag.onerror = reject;
+          document.head.appendChild(tag);
+        });
+        try {
+          await this.echartsLoading;
+        } catch {
+          this.echartsLoading = null;
+          return;
+        }
+      }
+      for (const el of els) {
+        let chart = window.echarts.getInstanceByDom(el);
+        if (chart && !el.querySelector("canvas")) {
+          chart.dispose();
+          chart = null;
+        }
+        if (!chart) {
+          chart = window.echarts.init(el, null, { renderer: "canvas" });
+          el.dataset.drawn = "";
+        }
+        if (el.dataset.drawn !== el.dataset.option) {
+          try {
+            chart.setOption(JSON.parse(el.dataset.option), true);
+            el.dataset.drawn = el.dataset.option;
+          } catch {
+            /* a bad option: leave the box empty */
+          }
+        }
+        chart.resize();
+      }
+    },
+
+    healthTabs: HEALTH_TABS,
+    healthTab: "status",
+
+    /** Switch Health's sub-tab; the URL follows (/health/metrics), so it can be bookmarked. */
+    setHealthTab(id) {
+      if (!HEALTH_TABS.some((t) => t.id === id)) return;
+      this.healthTab = id;
+      this.syncUrl(true);
     },
 
     /** Opening or switching a chat replaces the URL; changing section pushes a history entry. */

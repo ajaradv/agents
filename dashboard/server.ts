@@ -894,7 +894,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     }
 
     // Section routes (/needs, /health, /fleet, /agents) are the same page; app.js reads the path.
-    if (path === "/" || path === "/index.html" || /^\/(harbor|health|fleet|agents|needs)\/?$/.test(path) || /^\/ships\/[a-z][a-z0-9_-]{0,63}\/?$/.test(path)) {
+    if (path === "/" || path === "/index.html" || /^\/(harbor|health|fleet|agents|needs)\/?$/.test(path) || /^\/health\/(status|usage|metrics|diagnostics)\/?$/.test(path) || /^\/ships\/[a-z][a-z0-9_-]{0,63}\/?$/.test(path)) {
       const html = await readFile(join(publicDir, "index.html"), "utf8");
       return new Response(html, {
         headers: { "Content-Type": "text/html; charset=utf-8" },

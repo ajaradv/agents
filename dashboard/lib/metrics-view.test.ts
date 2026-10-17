@@ -46,9 +46,21 @@ describe("fleet metrics dashboard", () => {
     expect(html).toContain("Ship &lt;it&gt;");
     expect(html).toContain('aria-pressed="true" hx-get="/partials/fleet-metrics?days=7"');
     expect(html).toContain("Spend per day by role");
-    expect(html).toMatch(/Checks passed<\/span><b>50%<\/b>/);
+    expect(html).toMatch(/d-stat-title">Checks passed<\/div><div class="d-stat-value[^"]*">50%</);
     expect(html).toContain("1 task-assigned");
     expect(v.metricsDashboardHtml(0)).toContain("last 30 days");
-    expect((v.metricsDashboardHtml(7).match(/class="bar"/g) ?? []).length).toBe(7);
+    expect((v.metricsDashboardHtml(7).match(/class="echart"/g) ?? []).length).toBe(3);
+    // Chart options carry every day of the period, stacked by role, with gaps as zero (bars) or null (lines).
+    const spend = v.spendChart(d.daily, 7) as { xAxis: { data: string[] }; series: { name: string; data: number[] }[] };
+    expect(spend.xAxis.data).toHaveLength(7);
+    expect(spend.series.map((x) => x.name)).toEqual(["lead", "alice"]);
+    expect(spend.series[0]!.data.slice(0, 6)).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(spend.series[0]!.data[6]).toBeCloseTo(0.06);
+    const perTurn = v.perTurnChart(d.daily, 7) as { series: { data: (number | null)[] }[] };
+    expect(perTurn.series[0]!.data[0]).toBeNull();
+    expect(perTurn.series[0]!.data[6]).toBeCloseTo(0.03);
+    const checks = v.checksChart(d.checksDaily, 7) as { series: { name: string; data: number[] }[] };
+    expect(checks.series.map((x) => [x.name, x.data[6]])).toEqual([["passed", 1], ["failed", 1]]);
+    expect(v.spendChart([], 7)).toBeNull();
   });
 });

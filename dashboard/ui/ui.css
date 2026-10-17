@@ -1,0 +1,63 @@
+/*
+ * Tailwind CSS 4 utilities and daisyUI 5 components for the dashboard, built to
+ * public/ui.css with `just css` (bun run build:css). Loaded before pixel.css.
+ *
+ * - No Tailwind preflight: pixel.css keeps its own base styles.
+ * - Everything here is in CSS layers, so pixel.css (unlayered) wins any clash.
+ * - daisyUI classes carry the `d-` prefix (d-btn, d-tabs, d-stats) so they never
+ *   collide with pixel.css's own .btn, .card, .tabs.
+ * - One theme, "pixel": the dashboard's colors, square corners, 2px borders.
+ */
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@source "../lib";
+@source "../public/index.html";
+@source "../public/app.js";
+
+@plugin "daisyui" {
+  themes: false;
+  prefix: "d-";
+  exclude: rootcolor, rootscrollgutter, rootscrolllock, scrollbar;
+  logs: false;
+}
+
+@plugin "daisyui/theme" {
+  name: "pixel";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+  --color-base-100: #fffaf2;
+  --color-base-200: #f4efe4;
+  --color-base-300: #e7e0d0;
+  --color-base-content: #1a1a1a;
+  --color-primary: #2436a8;
+  --color-primary-content: #f4efe4;
+  --color-secondary: #0f6e68;
+  --color-secondary-content: #fffaf2;
+  --color-accent: #9c1230;
+  --color-accent-content: #fffaf2;
+  --color-neutral: #1a1a1a;
+  --color-neutral-content: #f4efe4;
+  --color-info: #2436a8;
+  --color-info-content: #fffaf2;
+  --color-success: #1f7a45;
+  --color-success-content: #fffaf2;
+  --color-warning: #8a6200;
+  --color-warning-content: #fffaf2;
+  --color-error: #9c1230;
+  --color-error-content: #fffaf2;
+  --radius-selector: 0rem;
+  --radius-field: 0rem;
+  --radius-box: 0rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 2px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@theme {
+  --font-display: "Silkscreen", ui-sans-serif, sans-serif;
+  --font-read: "Departure Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
