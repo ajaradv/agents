@@ -189,7 +189,8 @@ export type VoyageLedger = {
   started: string;
   elapsedMs: number;
   crew: { agent: string; role: string; model: string; mode: string; turns: number; ms: number; cost: number; tokens: number; failed: number }[];
-  checks: { name: string; runs: number; passed: number; lastOk: boolean; ms: number }[];
+  /** Check and maneuver runs, one row per kind and name. */
+  checks: { kind: "check" | "maneuver"; name: string; runs: number; passed: number; lastOk: boolean; ms: number }[];
   handoffs: { kind: string; n: number }[];
   totalCost: number;
   totalTurns: number;
@@ -203,8 +204,8 @@ export function voyageLedger(id: string): VoyageLedger | null {
     .query("SELECT agent, role, model, mode, COUNT(*) AS turns, SUM(ms) AS ms, ROUND(SUM(cost), 4) AS cost, SUM(tokens) AS tokens, SUM(1 - ok) AS failed FROM turns WHERE voyage = ? GROUP BY agent, model, mode ORDER BY cost DESC")
     .all(id) as VoyageLedger["crew"];
   const checks = (d
-    .query("SELECT name, COUNT(*) AS runs, SUM(ok) AS passed, SUM(ms) AS ms, (SELECT ok FROM runs r2 WHERE r2.voyage = runs.voyage AND r2.name = runs.name ORDER BY id DESC LIMIT 1) AS last_ok FROM runs WHERE voyage = ? GROUP BY name ORDER BY name")
-    .all(id) as { name: string; runs: number; passed: number; ms: number; last_ok: number }[]).map((c) => ({ name: c.name, runs: c.runs, passed: c.passed, ms: c.ms, lastOk: c.last_ok === 1 }));
+    .query("SELECT kind, name, COUNT(*) AS runs, SUM(ok) AS passed, SUM(ms) AS ms, (SELECT ok FROM runs r2 WHERE r2.voyage = runs.voyage AND r2.kind = runs.kind AND r2.name = runs.name ORDER BY id DESC LIMIT 1) AS last_ok FROM runs WHERE voyage = ? GROUP BY kind, name ORDER BY kind, name")
+    .all(id) as { kind: string; name: string; runs: number; passed: number; ms: number; last_ok: number }[]).map((c) => ({ kind: c.kind === "maneuver" ? ("maneuver" as const) : ("check" as const), name: c.name, runs: c.runs, passed: c.passed, ms: c.ms, lastOk: c.last_ok === 1 }));
   const handoffs = d.query("SELECT kind, COUNT(*) AS n FROM handoffs WHERE voyage = ? GROUP BY kind ORDER BY kind").all(id) as VoyageLedger["handoffs"];
   const end = v.docked ? Date.parse(v.docked) : Date.now();
   return {
@@ -219,7 +220,28 @@ export function voyageLedger(id: string): VoyageLedger | null {
   };
 }
 
-const mins = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.round(ms / 60_000)}m`);
+export type VoyageTotals = { id: string; goal: string; branch: string; started: string; docked: string | null; commits: number | null; outcome: string; turns: number; cost: number; checks: number; checksPassed: number; handoffs: number };
+
+/** A ship's docked voyages, newest first, with their totals (the voyage_totals view). */
+export function dockedVoyages(ship: string, limit = 10): VoyageTotals[] {
+  try {
+    return (metricsDb()
+      // Checks only: a maneuver's run is the sum of its checks, which are counted already.
+      .query(`SELECT t.id, t.goal, t.branch, t.started, t.docked, t.commits, v.outcome, t.turns, t.cost, t.handoffs,
+        (SELECT COUNT(*) FROM runs r WHERE r.voyage = t.id AND r.kind = 'check') AS checks,
+        (SELECT COALESCE(SUM(ok), 0) FROM runs r WHERE r.voyage = t.id AND r.kind = 'check') AS checksPassed
+        FROM voyage_totals t JOIN voyages v ON v.id = t.id WHERE t.ship = ? AND t.docked IS NOT NULL ORDER BY t.started DESC LIMIT ?`)
+      .all(ship, limit) as VoyageTotals[]);
+  } catch {
+    return [];
+  }
+}
+
+export const mins = (ms: number) => {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  const m = Math.round(ms / 60_000);
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`;
+};
 
 /** The ledger as a short markdown section for the voyage note. */
 export function ledgerMarkdown(l: VoyageLedger): string {
@@ -229,13 +251,19 @@ export function ledgerMarkdown(l: VoyageLedger): string {
     for (const c of l.crew) lines.push(`| ${c.agent} | ${c.model || "?"} | ${c.mode} | ${c.turns}${c.failed ? ` (${c.failed} failed)` : ""} | ${mins(c.ms ?? 0)} | $${(c.cost ?? 0).toFixed(3)} |`);
     lines.push("");
   }
-  if (l.checks.length) lines.push(`Checks: ${l.checks.map((c) => `${c.name} ${c.lastOk ? "passed" : "failed"}${c.runs > 1 ? ` (${c.passed}/${c.runs} runs passed)` : ""}`).join("; ")}.`, "");
+  for (const [kind, label] of [["check", "Checks"], ["maneuver", "Maneuvers"]] as const) {
+    const rows = l.checks.filter((c) => c.kind === kind);
+    if (rows.length) lines.push(`${label}: ${rows.map((c) => `${c.name} ${c.lastOk ? "passed" : "failed"}${c.runs > 1 ? ` (${c.passed}/${c.runs} runs passed)` : ""}`).join("; ")}.`, "");
+  }
   if (l.handoffs.length) lines.push(`Handoffs: ${l.handoffs.map((h) => `${h.n} ${h.kind}`).join(", ")}.`, "");
   return lines.join("\n");
 }
 
 /** One line for the dock message. */
 export function ledgerLine(l: VoyageLedger): string {
-  const checks = l.checks.length ? `; checks: ${l.checks.map((c) => `${c.name} ${c.lastOk ? "passed" : "failed"}`).join(", ")}` : "";
-  return `Ledger: ${mins(l.elapsedMs)}, ${l.totalTurns} turns, $${l.totalCost.toFixed(2)}${checks}.`;
+  const part = (kind: "check" | "maneuver", label: string) => {
+    const rows = l.checks.filter((c) => c.kind === kind);
+    return rows.length ? `; ${label}: ${rows.map((c) => `${c.name} ${c.lastOk ? "passed" : "failed"}`).join(", ")}` : "";
+  };
+  return `Ledger: ${mins(l.elapsedMs)}, ${l.totalTurns} turns, $${l.totalCost.toFixed(2)}${part("check", "checks")}${part("maneuver", "maneuvers")}.`;
 }

@@ -24,6 +24,7 @@ describe("fleet metrics and the voyage ledger", () => {
     m.recordRun({ ship: "pochteca", agent: "pochteca-lead", kind: "check", name: "frontend", ok: true, ms: 13_000 });
     m.recordRun({ ship: "pochteca", agent: "pochteca-lead", kind: "check", name: "pytest", ok: true, ms: 13_000 });
     m.recordHandoff({ ship: "pochteca", from: "pochteca-lead", to: "pochteca-designer", kind: "task-assigned", size: 80 });
+    m.recordRun({ ship: "pochteca", agent: "pochteca-scout", kind: "maneuver", name: "verify", ok: true, ms: 26_300 });
     m.recordVoyageDock("2026-10-17-tailwind", { commits: 1, outcome: "done" });
     expect(m.openVoyageId("pochteca")).toBeNull();
     const l = m.voyageLedger("2026-10-17-tailwind")!;
@@ -31,10 +32,14 @@ describe("fleet metrics and the voyage ledger", () => {
     expect(l.totalCost).toBeCloseTo(0.16);
     expect(l.crew.map((c) => c.role)).toEqual(["designer", "lead"]);
     expect(l.checks).toEqual([
-      { name: "frontend", runs: 2, passed: 1, ms: 13_300, lastOk: true },
-      { name: "pytest", runs: 1, passed: 1, ms: 13_000, lastOk: true },
+      { kind: "check", name: "frontend", runs: 2, passed: 1, ms: 13_300, lastOk: true },
+      { kind: "check", name: "pytest", runs: 1, passed: 1, ms: 13_000, lastOk: true },
+      { kind: "maneuver", name: "verify", runs: 1, passed: 1, ms: 26_300, lastOk: true },
     ]);
-    expect(m.ledgerLine(l)).toMatch(/^Ledger: 5m, 2 turns, \$0\.16; checks: frontend passed, pytest passed\.$/);
+    expect(m.ledgerLine(l)).toMatch(/^Ledger: 5m, 2 turns, \$0\.16; checks: frontend passed, pytest passed; maneuvers: verify passed\.$/);
+    expect(m.ledgerMarkdown(l)).toContain("Maneuvers: verify passed.");
+    // Docked totals count checks only (a maneuver's run is the sum of its checks).
+    expect(m.dockedVoyages("pochteca")).toMatchObject([{ id: "2026-10-17-tailwind", turns: 2, checks: 3, checksPassed: 2, commits: 1, outcome: "done" }]);
     expect(m.ledgerMarkdown(l)).toContain("| pochteca-designer | openrouter/anthropic/claude-sonnet-5.5 |");
   });
   test("views answer cost by role and model, and check pass rates", () => {
@@ -43,7 +48,10 @@ describe("fleet metrics and the voyage ledger", () => {
     const rate = m.metricsDb().query("SELECT pass_rate FROM check_pass_rates WHERE name = 'frontend'").get() as { pass_rate: number };
     expect(rate.pass_rate).toBe(0.5);
     const tot = m.metricsDb().query("SELECT turns, checks, checks_passed, handoffs FROM voyage_totals").get();
-    expect(tot).toEqual({ turns: 2, checks: 3, checks_passed: 2, handoffs: 1 });
+    expect(tot).toEqual({ turns: 2, checks: 4, checks_passed: 3, handoffs: 1 });
+  });
+  test("durations read in hours past an hour", () => {
+    expect([m.mins(42_000), m.mins(5 * 60_000), m.mins(60 * 60_000), m.mins(95 * 60_000)]).toEqual(["42s", "5m", "1h", "1h 35m"]);
   });
   test("roles and modes", () => {
     expect(m.roleOf("pochteca-lead", "pochteca")).toBe("lead");

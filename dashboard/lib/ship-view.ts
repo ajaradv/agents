@@ -4,6 +4,9 @@ import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { humanizeError, plainSummary } from "./humanize.ts";
 import { listOrders, ORDER_TOOLS, type OrderMeta } from "./order-note.ts";
 import { escapeHtml } from "./quota.ts";
+import { gateStatus, type GateReport } from "./gates.ts";
+import { liveLedgerHtml, pastLedgerHtml } from "./ledger-view.ts";
+import { voyageId } from "./metrics.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
 import { listTasks, taskProgress, type VoyageTask } from "./voyage-tasks.ts";
@@ -242,6 +245,17 @@ function maneuverHtml(m: Maneuver): string {
   </article>`;
 }
 
+/** The voyage ledger: live for the voyage under sail (with its gates), and past voyages. */
+async function ledgerParts(ship: ShipRow, voyage: Voyage | null, labels: Map<string, string>): Promise<{ live: string; past: string }> {
+  const label = (id: string) => labels.get(id) ?? id;
+  let live = "";
+  if (voyage) {
+    const gates = await Promise.all((["task", "dock"] as const).filter((st) => ship.gates[st].length).map((st) => gateStatus(ship, st).catch(() => null)));
+    live = liveLedgerHtml(voyageId(voyage.file), label, gates.filter((g): g is GateReport => Boolean(g)));
+  }
+  return { live, past: pastLedgerHtml(ship.id, label) };
+}
+
 export async function shipDeckHtml(shipId: string): Promise<string | null> {
   const ship = (await readShips()).find((s) => s.id === shipId);
   if (!ship) return null;
@@ -282,7 +296,7 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
       </div>
     </div>
 
-    ${ship.id === "fleet" ? await ordersPanelHtml() : voyageHtml(ship, voyage, voyages, ready, cards)}
+    ${ship.id === "fleet" ? await ordersPanelHtml() : voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels))}
 
     <section class="stack">
       <h3>Crew</h3>
@@ -433,10 +447,13 @@ async function ordersPanelHtml(): Promise<string> {
 
 // ---------------------------------------------------------------- shipyard + voyage
 
-function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: boolean, cards: CrewCard[]): string {
+function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: boolean, cards: CrewCard[], ledger: { live: string; past: string }): string {
   const api = `/api/ships/${encodeURIComponent(ship.id)}`;
   const past = all.filter((v) => v.status === "docked").slice(0, 3);
-  const pastHtml = past.length
+  // Past voyages with their ledgers (metrics database); the plain list only when it has none.
+  const pastHtml = ledger.past
+    ? ledger.past
+    : past.length
     ? `<details class="fold"><summary>${past.length} past voyage${past.length === 1 ? "" : "s"}</summary><ul class="meter-list">${past
         .map((v) => `<li><span>${escapeHtml(v.goal.slice(0, 140))}</span><span class="muted">${escapeHtml(v.started.slice(0, 10))}</span></li>`)
         .join("")}</ul></details>`
@@ -447,6 +464,7 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
       <div class="between"><h3>Under sail</h3><span class="muted">since ${escapeHtml(new Date(voyage.started).toLocaleString())}</span></div>
       <p class="voyage-goal">${escapeHtml(voyage.goal)}</p>
       ${tasksHtml(listTasks(ship.id, voyage.file), cards)}
+      ${ledger.live}
       <p class="muted">Goal sent to ${escapeHtml(to)} · record: <code>${escapeHtml(voyage.file.replace(/^.*\/fleet\/voyages\//, "vault fleet/voyages/"))}</code></p>
       <form class="row shipyard-form" data-api="${api}/dock">
         <input class="field" name="summary" placeholder="How it ended (optional, goes in the voyage record)" />
