@@ -4,3 +4,7 @@ orchestrator: firstmate
 crew: []
 factory: null
 mode: no-mistakes
+isolation: vm
+checks:
+  pytest: just pytest
+  lint: just lint
