@@ -29,7 +29,7 @@ describe("voyage ledger on the deck", () => {
     expect(html).toContain("2 turns · $0.02 · checks 1/1");
     expect(html).toContain("<td>Scout</td>");
     expect(html).toContain('<span class="warn">1 failed</span>');
-    expect(html).toMatch(/phase is-bad[^>]*>✗ verify/);
+    expect(html).toMatch(/d-badge-error"[^>]*>✗ verify/);
     expect(html).toContain("2 commits");
     expect(v.pastLedgerHtml("nothing", label)).toBe("");
   });
@@ -40,7 +40,7 @@ describe("voyage ledger on the deck", () => {
     const html = v.liveLedgerHtml("v2", label, [{ stage: "dock", commit: "abcdef1234", dirty: false, green: false, gates: [{ name: "pytest", state: "green" }, { name: "frontend", state: "missing" }] }]);
     expect(html).toContain("Ledger · 2m · 1 turn · <$0.01");
     expect(html).toContain("Dock gates");
-    expect(html).toMatch(/phase is-ok[^>]*>✓ pytest/);
+    expect(html).toMatch(/d-badge-success d-badge-soft"[^>]*>✓ pytest/);
     expect(html).toContain("frontend not run on this commit (abcdef1)");
     expect(html).toContain("1 handoff between crewmates and the helm");
     expect(v.liveLedgerHtml("missing", label, [])).toBe("");

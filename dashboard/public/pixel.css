@@ -922,7 +922,7 @@ body.chat-open { overflow: hidden; }
   .log-kind { grid-column: 2; }
   .log-text { grid-column: 1 / -1; }
 }
-.maneuver { border: 2px solid var(--ink); background: var(--sheet); padding: 0.7rem; display: grid; gap: 0.4rem; }
+.maneuver { padding: 0.7rem; display: grid; gap: 0.4rem; }
 .maneuver h4, .maneuver p { margin: 0; overflow-wrap: anywhere; }
 .phase-chain { list-style: none; display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0; padding: 0; }
 .phase { font-size: 0.7rem; padding: 0.2rem 0.45rem; border: 2px solid var(--ink); background: var(--bone); }
@@ -946,9 +946,7 @@ body.chat-open { overflow: hidden; }
 .voyage-goal { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
 .voyage textarea.field { width: 100%; resize: vertical; min-height: 3.2rem; }
 .voyage form.row .field { flex: 1; min-width: 12rem; }
-.shipyard { border: 2px solid var(--ink); background: var(--sheet); }
-.shipyard > summary { padding: 0.55rem 0.7rem; cursor: pointer; }
-.shipyard-cols { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding: 0 0.8rem 0.8rem; }
+.shipyard-cols { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 @media (max-width: 900px) { .shipyard-cols { grid-template-columns: minmax(0, 1fr); } }
 .shipyard h4 { margin: 0; }
 .checklist, .crew-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; }
@@ -967,24 +965,29 @@ body.chat-open { overflow: hidden; }
 
 .bubble-row.is-crew .bubble { border-style: dashed; background: var(--bone); }
 
-.voyage-progress { height: 12px; border: 2px solid var(--ink); background: var(--sheet); }
-.voyage-progress span { display: block; height: 100%; background: repeating-linear-gradient(90deg, var(--ultra) 0 6px, #3b4fc4 6px 12px); }
 .voyage-tasks { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; }
 .vtask { display: grid; grid-template-columns: 1.3rem minmax(0, 1fr); gap: 0.35rem; font-size: 0.8rem; overflow-wrap: anywhere; }
 .vtask.is-done .vtask-mark { color: #1f7a45; }
 .vtask.is-working .vtask-mark { color: var(--ultra); }
 .vtask.is-blocked .vtask-mark, .vtask.is-blocked strong { color: var(--vermilion); }
-.ledger { border: 2px solid var(--ink); background: var(--sheet); }
-.ledger > summary { padding: 0.45rem 0.6rem; cursor: pointer; font-size: 0.85rem; }
-.ledger > .stack-tight { padding: 0 0.6rem 0.6rem; }
 .ledger-table td.num, .ledger-table th.num { text-align: right; white-space: nowrap; }
 .ledger-table th, .ledger-table td { overflow-wrap: normal; word-break: normal; }
 .ledger-table code { font-size: 0.75rem; overflow-wrap: anywhere; }
 .fleet-metrics .d-table { min-width: 36rem; }
+/* ---------- daisyUI on the deck (d- prefix): the pixel type on top of the components ---------- */
+.ship-deck .d-btn, .ship-deck .d-badge, .ship-deck .d-collapse-title, .orders-panel .d-btn { font-family: "Silkscreen", ui-sans-serif, sans-serif; text-transform: uppercase; letter-spacing: 0.04em; }
+.ship-deck .d-collapse-title { font-size: 0.8rem; min-height: 0; padding-block: 0.6rem; }
+.ship-deck .d-input, .ship-deck .d-select, .ship-deck .d-textarea { font-family: var(--read); }
+.ship-deck .d-progress { height: 0.75rem; }
+.ship-deck .crew-card.d-card { display: grid; }
+.ship-deck .d-badge { font-size: 0.65rem; }
+.ledger-chips .d-badge { font-family: var(--read); text-transform: none; letter-spacing: 0; font-size: 0.72rem; }
+
 /* ---------- Helm ---------- */
 .helm-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
-.helm-proposal { border: 2px solid var(--ink); background: var(--sheet); padding: 0.6rem; display: grid; gap: 0.35rem; min-width: 0; }
+.helm-proposal { padding: 0.6rem; display: grid; gap: 0.35rem; min-width: 0; }
 .helm-proposal p { margin: 0; overflow-wrap: anywhere; }
+.helm-proposal p.muted { font-family: var(--read); text-transform: none; letter-spacing: 0; font-size: 0.8rem; }
 .helm-what code { font-size: 0.78rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---------- Fleet metrics ---------- */

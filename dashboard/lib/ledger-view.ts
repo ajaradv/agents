@@ -12,17 +12,17 @@ import { escapeHtml } from "./quota.ts";
 const usd = (n: number) => (n > 0 && n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
 
 function runChip(c: VoyageLedger["checks"][number]): string {
-  const cls = c.lastOk ? "is-ok" : "is-bad";
+  const cls = c.lastOk ? "d-badge-success" : "d-badge-error";
   const runs = c.runs > 1 ? ` ${c.passed}/${c.runs}` : "";
-  return `<li class="phase ${cls}" title="${escapeHtml(`${c.kind} ${c.name}: ${c.passed} of ${c.runs} runs passed, ${mins(c.ms)} in all; latest ${c.lastOk ? "passed" : "failed"}`)}">${c.lastOk ? "✓" : "✗"} ${escapeHtml(c.name)}${runs}</li>`;
+  return `<li class="d-badge d-badge-soft d-badge-sm ${cls}" title="${escapeHtml(`${c.kind} ${c.name}: ${c.passed} of ${c.runs} runs passed, ${mins(c.ms)} in all; latest ${c.lastOk ? "passed" : "failed"}`)}">${c.lastOk ? "✓" : "✗"} ${escapeHtml(c.name)}${runs}</li>`;
 }
 
 function gateChips(r: GateReport): string {
   const mark = { green: "✓", failed: "✗", missing: "·", "unknown-check": "?" } as const;
-  const cls = { green: "is-ok", failed: "is-bad", missing: "", "unknown-check": "is-bad" } as const;
+  const cls = { green: "d-badge-success d-badge-soft", failed: "d-badge-error d-badge-soft", missing: "d-badge-ghost", "unknown-check": "d-badge-error d-badge-outline" } as const;
   const why = { green: "passed on this commit", failed: "failed on this commit", missing: "not run on this commit", "unknown-check": "not one of the ship's checks" } as const;
   return `<span class="ledger-gates"><span class="muted">${r.stage === "task" ? "Task gates" : "Dock gates"}</span><ul class="phase-chain ledger-chips">${r.gates
-    .map((g) => `<li class="phase ${cls[g.state]}" title="${escapeHtml(`${g.name} ${why[g.state]}${r.commit ? ` (${r.commit.slice(0, 7)})` : ""}`)}">${mark[g.state]} ${escapeHtml(g.name)}</li>`)
+    .map((g) => `<li class="d-badge d-badge-sm ${cls[g.state]}" title="${escapeHtml(`${g.name} ${why[g.state]}${r.commit ? ` (${r.commit.slice(0, 7)})` : ""}`)}">${mark[g.state]} ${escapeHtml(g.name)}</li>`)
     .join("")}</ul>${r.dirty ? `<span class="warn">uncommitted changes</span>` : ""}</span>`;
 }
 
@@ -39,7 +39,7 @@ function crewTable(l: VoyageLedger, label: (id: string) => string): string {
       </tr>`,
     )
     .join("");
-  return `<div class="table-wrap"><table class="spend-table ledger-table"><thead><tr><th>Crewmate</th><th>Model</th><th class="num">Turns</th><th class="num">Time</th><th class="num">Cost</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="overflow-x-auto metric-table"><table class="d-table d-table-zebra d-table-sm bg-base-100"><thead><tr><th>Crewmate</th><th>Model</th><th class="num">Turns</th><th class="num">Time</th><th class="num">Cost</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function runsHtml(l: VoyageLedger): string {
@@ -60,9 +60,9 @@ export function liveLedgerHtml(id: string, label: (id: string) => string, gates:
   if (!l) return "";
   const handoffs = handoffLine(l);
   const gateHtml = gates.filter((g) => g.gates.length).map(gateChips).join("");
-  return `<details class="ledger fold" open>
-    <summary>Ledger · ${mins(l.elapsedMs)} · ${l.totalTurns} turn${l.totalTurns === 1 ? "" : "s"} · ${usd(l.totalCost)}</summary>
-    <div class="stack-tight">
+  return `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100 ledger" open>
+    <summary class="d-collapse-title">Ledger · ${mins(l.elapsedMs)} · ${l.totalTurns} turn${l.totalTurns === 1 ? "" : "s"} · ${usd(l.totalCost)}</summary>
+    <div class="d-collapse-content stack-tight">
       ${crewTable(l, label)}
       <div class="ledger-runs">${runsHtml(l)}${gateHtml}</div>
       ${handoffs ? `<p class="muted" title="${escapeHtml(l.handoffs.map((h) => `${h.n} ${h.kind}`).join(", "))}">${handoffs} between crewmates and the helm</p>` : ""}
@@ -93,5 +93,5 @@ export function pastLedgerHtml(ship: string, label: (id: string) => string, limi
   const past = dockedVoyages(ship, limit);
   if (!past.length) return "";
   const cost = past.reduce((s, v) => s + v.cost, 0);
-  return `<details class="fold"><summary>${past.length} past voyage${past.length === 1 ? "" : "s"} · ${usd(cost)}</summary><ul class="ledger-list">${past.map((v) => pastRow(v, label)).join("")}</ul></details>`;
+  return `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100"><summary class="d-collapse-title">${past.length} past voyage${past.length === 1 ? "" : "s"} · ${usd(cost)}</summary><ul class="d-collapse-content ledger-list">${past.map((v) => pastRow(v, label)).join("")}</ul></details>`;
 }

@@ -167,7 +167,7 @@ export async function harborHtml(): Promise<string> {
 
 function crewCardHtml(c: CrewCard): string {
   const t = c.target;
-  return `<article class="crew-card is-${c.status}">
+  return `<article class="d-card d-card-border bg-base-100 crew-card is-${c.status}">
     ${portrait(t, 64)}
     <div class="stack-tight crew-body">
       <div class="between">
@@ -176,18 +176,18 @@ function crewCardHtml(c: CrewCard): string {
       </div>
       <p class="crew-activity">${escapeHtml(plain(c.activity).slice(0, 220))}</p>
       <p class="muted crew-meta">${t.backupModel ? `<span class="warn" title="${escapeHtml(`Configured: ${t.model ?? ""}. ${t.backupReason ?? ""}`)}">on backup ${escapeHtml(t.backupModel)}</span>` : escapeHtml(t.model ?? "")}${c.lastAt ? ` · ${ago(c.lastAt)}` : ""} · 7d ${usd(c.cost7d)} over ${c.turns7d} turn${c.turns7d === 1 ? "" : "s"}${c.errors7d ? ` · <a class="warn" href="#ship-log" @click.prevent="showFailedLog()">${c.errors7d} failed</a>` : ""}</p>
-      <div class="row"><a class="btn btn-ink" href="?chat=${encodeURIComponent(t.id)}" data-chat="${escapeHtml(t.id)}">Chat</a></div>
+      <div class="row"><a class="d-btn d-btn-neutral d-btn-sm" href="?chat=${encodeURIComponent(t.id)}" data-chat="${escapeHtml(t.id)}">Chat</a></div>
     </div>
   </article>`;
 }
 
 function fmCrewHtml(w: ChatTarget): string {
-  return `<article class="crew-card is-firstmate">
+  return `<article class="d-card d-card-border bg-base-100 crew-card is-firstmate">
     ${portrait(w, 48)}
     <div class="stack-tight crew-body">
       <div class="between"><h4>${escapeHtml(w.label)}</h4>${w.state && w.state !== "unknown" ? `<span class="crew-status">${escapeHtml(w.state)}</span>` : ""}</div>
       <p class="muted crew-meta">Firstmate ${escapeHtml(w.role ?? "crew")}</p>
-      <div class="row"><a class="btn" href="?chat=${encodeURIComponent(w.id)}" data-chat="${escapeHtml(w.id)}">Chat</a></div>
+      <div class="row"><a class="d-btn d-btn-sm" href="?chat=${encodeURIComponent(w.id)}" data-chat="${escapeHtml(w.id)}">Chat</a></div>
     </div>
   </article>`;
 }
@@ -239,8 +239,8 @@ function maneuverHtml(m: Maneuver): string {
     })
     .join("");
   const err = m.phases.find((p) => p.error && p.status !== "pass");
-  return `<article class="maneuver">
-    <div class="between"><h4>${escapeHtml(m.adwName)}</h4><span class="detent${m.status === "fail" ? " detent-hot" : ""}">${escapeHtml(m.status)}</span></div>
+  return `<article class="d-card d-card-border bg-base-100 maneuver">
+    <div class="between"><h4>${escapeHtml(m.adwName)}</h4><span class="d-badge d-badge-sm ${m.status === "fail" ? "d-badge-error" : "d-badge-outline"}">${escapeHtml(m.status)}</span></div>
     <p class="muted">${escapeHtml(m.request.slice(0, 200))}</p>
     <ol class="phase-chain">${chain || `<li class="muted">No phases recorded</li>`}</ol>
     ${err ? `<p class="warn">${escapeHtml(err.name)}: ${escapeHtml((err.error ?? "").slice(0, 300))}</p>` : ""}
@@ -257,19 +257,19 @@ async function helmHtml(ship: ShipRow): Promise<string> {
   if (!aboard && !open.length && !changes.length) return "";
   const val = (v: string | null) => (v === null ? "none" : v.length > 60 ? `${v.slice(0, 59)}…` : v);
   const history = changes.length
-    ? `<details class="fold"><summary>Config changes · ${changes.length} recent · live in fleet/home/ships/${escapeHtml(ship.id)}.yaml</summary><ul class="meter-list">${changes
+    ? `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100"><summary class="d-collapse-title">Config changes · ${changes.length} recent · live in fleet/home/ships/${escapeHtml(ship.id)}.yaml</summary><ul class="d-collapse-content meter-list">${changes
         .map((c) => `<li><span><code>${escapeHtml(c.key)}</code> ${escapeHtml(val(c.old))} → ${escapeHtml(val(c.new))}${c.why ? ` <span class="muted">· ${escapeHtml(c.why.slice(0, 120))}</span>` : ""}</span><span class="muted">${escapeHtml(c.by)} · ${escapeHtml(timeAgo(c.ts))}</span></li>`)
         .join("")}</ul></details>`
     : "";
   const api = `/api/ships/${encodeURIComponent(ship.id)}/helm`;
   const kindLabel: Record<string, string> = { check: "New check", gate: "New gate", maneuver: "New maneuver", retire_maneuver: "Retire maneuver", allow_host: "Allow a host", note: "Note" };
-  const card = (p: Proposal) => `<li class="helm-proposal">
+  const card = (p: Proposal) => `<li class="d-card d-card-border bg-base-100 helm-proposal">
       <div class="between"><strong>${escapeHtml(kindLabel[p.kind] ?? p.kind)}</strong><span class="muted">${escapeHtml(timeAgo(p.ts))}</span></div>
       <p class="helm-what"><code>${escapeHtml(proposalLine(p))}</code></p>
       <p class="muted">${escapeHtml(p.why)}</p>
       <form class="row shipyard-form" data-api="${api}/${p.id}/apply">
-        ${p.kind === "note" ? "" : `<button class="btn btn-ink" type="submit">Apply</button>`}
-        <button class="btn" type="submit" data-api="${api}/${p.id}/dismiss">${p.kind === "note" ? "Read" : "Dismiss"}</button>
+        ${p.kind === "note" ? "" : `<button class="d-btn d-btn-neutral d-btn-sm" type="submit">Apply</button>`}
+        <button class="d-btn d-btn-sm" type="submit" data-api="${api}/${p.id}/dismiss">${p.kind === "note" ? "Read" : "Dismiss"}</button>
         <span class="muted" data-note></span>
       </form>
     </li>`;
@@ -277,7 +277,7 @@ async function helmHtml(ship: ShipRow): Promise<string> {
   return `<section class="stack helm">
       <div class="between"><h3>Helm</h3>${
         aboard
-          ? `<form class="row shipyard-form" data-api="${api}/review"><button class="btn" type="submit" data-then="note">Ask for a review</button><span class="muted" data-note></span></form>`
+          ? `<form class="row shipyard-form" data-api="${api}/review"><button class="d-btn d-btn-sm" type="submit" data-then="note">Ask for a review</button><span class="muted" data-note></span></form>`
           : `<span class="muted">No helmsman aboard</span>`
       }</div>
       ${open.length ? `<ul class="helm-list">${open.map(card).join("")}</ul>` : !aboard ? "" : `<p class="muted">No open proposals. The helmsman reviews the ship's checks, gates, maneuvers, and VM allowlist after each voyage docks.</p>`}
@@ -323,17 +323,17 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
   return `<div class="ship-deck stack">
     <div class="ship-head between">
       <div class="row">
-        <a class="btn" href="/harbor" data-harbor>← Harbor</a>
+        <a class="d-btn d-btn-sm" href="/harbor" data-harbor>← Harbor</a>
         <div>
           <h3 class="ship-name">${escapeHtml(ship.id)}</h3>
           <p class="muted path">${escapeHtml(ship.path)}</p>
         </div>
       </div>
       <div class="row-wrap">
-        <span class="detent">${st.label}</span>
-        <span class="detent">${escapeHtml(ship.mode || "mode unset")}</span>
-        <span class="detent">Orchestrator: ${escapeHtml(ship.orchestrator)}</span>
-        <span class="detent">7d ${usd(cost7d)}</span>
+        <span class="d-badge d-badge-outline d-badge-sm">${st.label}</span>
+        <span class="d-badge d-badge-outline d-badge-sm">${escapeHtml(ship.mode || "mode unset")}</span>
+        <span class="d-badge d-badge-outline d-badge-sm">Orchestrator: ${escapeHtml(ship.orchestrator)}</span>
+        <span class="d-badge d-badge-outline d-badge-sm">7d ${usd(cost7d)}</span>
       </div>
     </div>
 
@@ -424,18 +424,18 @@ async function ordersPanelHtml(): Promise<string> {
     const steps = o.order ? o.order.steps : [];
     const buttons =
       m.status === "queued"
-        ? `<form class="row shipyard-form" data-api="${api}/go"><button class="btn btn-ink" type="submit">Go</button><span class="muted" data-note></span></form>
-           <form class="shipyard-form" data-api="${api}/cancel" data-confirm="Cancel this order?"><button class="btn" type="submit">Cancel</button></form>`
+        ? `<form class="row shipyard-form" data-api="${api}/go"><button class="d-btn d-btn-neutral d-btn-sm" type="submit">Go</button><span class="muted" data-note></span></form>
+           <form class="shipyard-form" data-api="${api}/cancel" data-confirm="Cancel this order?"><button class="d-btn d-btn-sm" type="submit">Cancel</button></form>`
         : m.status === "needs-captain"
-          ? `<form class="row shipyard-form" data-api="${api}/retry"><button class="btn btn-ink" type="submit">Retry from step ${m.resume ?? 1}</button><span class="muted" data-note></span></form>
-             <form class="shipyard-form" data-api="${api}/cancel" data-confirm="Cancel this order?"><button class="btn" type="submit">Cancel</button></form>`
+          ? `<form class="row shipyard-form" data-api="${api}/retry"><button class="d-btn d-btn-neutral d-btn-sm" type="submit">Retry from step ${m.resume ?? 1}</button><span class="muted" data-note></span></form>
+             <form class="shipyard-form" data-api="${api}/cancel" data-confirm="Cancel this order?"><button class="d-btn d-btn-sm" type="submit">Cancel</button></form>`
           : m.status === "approved"
-            ? `<form class="shipyard-form" data-api="${api}/cancel" data-confirm="Cancel this order?"><button class="btn" type="submit">Cancel</button></form>`
+            ? `<form class="shipyard-form" data-api="${api}/cancel" data-confirm="Cancel this order?"><button class="d-btn d-btn-sm" type="submit">Cancel</button></form>`
             : "";
     return `<li class="order-row${hot ? " is-hot" : ""}">
       <div class="between">
         <strong>${escapeHtml(m.title)}</strong>
-        <span class="detent${hot ? " detent-hot" : m.status === "done" ? " detent-ok" : ""}">${ORDER_LABEL[m.status]}</span>
+        <span class="d-badge d-badge-sm ${hot ? "d-badge-error" : m.status === "done" ? "d-badge-success d-badge-soft" : "d-badge-outline"}">${ORDER_LABEL[m.status]}</span>
       </div>
       <p class="muted">${escapeHtml(o.slug)} · by ${escapeHtml(m.submitted_by)} · ship ${escapeHtml(m.ship)} · ${steps.filter((s) => s.phase === "step").length} step(s), ${steps.filter((s) => s.phase === "acceptance").length} check(s)</p>
       ${m.reason ? `<p class="warn">${escapeHtml(m.reason)}</p>` : ""}
@@ -468,23 +468,23 @@ async function ordersPanelHtml(): Promise<string> {
   const tools = Object.entries(ORDER_TOOLS)
     .map(([name, t]) => `<code>${escapeHtml(name)}</code>${t.params.length ? ` ${escapeHtml(t.params.join(", "))}` : ""}`)
     .join(" · ");
-  const writeForm = `<details class="fold order-write">
-      <summary>Write an order</summary>
-      <form class="stack shipyard-form" data-api="/api/orders">
+  const writeForm = `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100 order-write">
+      <summary class="d-collapse-title">Write an order</summary>
+      <form class="d-collapse-content stack shipyard-form" data-api="/api/orders">
         <div class="form-grid">
-          <label class="stack-tight">Title <input class="field" name="title" required placeholder="Kinwork status round" /></label>
-          <label class="stack-tight">Ship <select class="field" name="ship">${ships.map((s) => `<option${s === "fleet" ? " selected" : ""}>${escapeHtml(s)}</option>`).join("")}</select></label>
+          <label class="stack-tight">Title <input class="d-input d-input-sm" name="title" required placeholder="Kinwork status round" /></label>
+          <label class="stack-tight">Ship <select class="d-select d-select-sm" name="ship">${ships.map((s) => `<option${s === "fleet" ? " selected" : ""}>${escapeHtml(s)}</option>`).join("")}</select></label>
         </div>
-        <label class="stack-tight">Steps <textarea class="field order-body" name="body" rows="14" spellcheck="false">${escapeHtml(template)}</textarea></label>
+        <label class="stack-tight">Steps <textarea class="d-textarea w-full order-body" name="body" rows="14" spellcheck="false">${escapeHtml(template)}</textarea></label>
         <p class="muted">One fleet tool call per step with literal <code>key=value</code> arguments (quote values with spaces) and an indented <code>expect:</code> line. Tools: ${tools}. Your orders are approved when submitted.</p>
-        <div class="row"><button class="btn" type="submit" formnovalidate data-api="/api/orders/check" data-then="note">Check</button><button class="btn btn-ink" type="submit">Submit</button><span class="muted" data-note></span></div>
+        <div class="row"><button class="d-btn d-btn-sm" type="submit" formnovalidate data-api="/api/orders/check" data-then="note">Check</button><button class="d-btn d-btn-neutral d-btn-sm" type="submit">Submit</button><span class="muted" data-note></span></div>
       </form>
     </details>`;
   return `<section class="voyage stack orders-panel">
     <div class="between"><h3>Orders</h3><span class="muted">Alice runs each exactly as written, after your Go</span></div>
     ${open.length ? `<ul class="order-list">${open.map(row).join("")}</ul>` : `<p class="muted">No open orders. Planners queue them with <code>bin/order new</code>, or write one below; they show here for your Go.</p>`}
     ${writeForm}
-    ${closed.length ? `<details class="fold"><summary>${closed.length} recent order${closed.length === 1 ? "" : "s"}</summary><ul class="order-list">${closed.map(row).join("")}</ul><p class="muted">Each order's report (steps, evidence, planned vs actual) is at the end of its note in the vault: fleet/orders/.</p></details>` : ""}
+    ${closed.length ? `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100"><summary class="d-collapse-title">${closed.length} recent order${closed.length === 1 ? "" : "s"}</summary><div class="d-collapse-content"><ul class="order-list">${closed.map(row).join("")}</ul><p class="muted">Each order's report (steps, evidence, planned vs actual) is at the end of its note in the vault: fleet/orders/.</p></div></details>` : ""}
   </section>`;
 }
 
@@ -497,7 +497,7 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
   const pastHtml = ledger.past
     ? ledger.past
     : past.length
-    ? `<details class="fold"><summary>${past.length} past voyage${past.length === 1 ? "" : "s"}</summary><ul class="meter-list">${past
+    ? `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100"><summary class="d-collapse-title">${past.length} past voyage${past.length === 1 ? "" : "s"}</summary><ul class="d-collapse-content meter-list">${past
         .map((v) => `<li><span>${escapeHtml(v.goal.slice(0, 140))}</span><span class="muted">${escapeHtml(v.started.slice(0, 10))}</span></li>`)
         .join("")}</ul></details>`
     : "";
@@ -510,8 +510,8 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
       ${ledger.live}
       <p class="muted">Goal sent to ${escapeHtml(to)} · record: <code>${escapeHtml(voyage.file.replace(/^.*\/fleet\/voyages\//, "vault fleet/voyages/"))}</code></p>
       <form class="row shipyard-form" data-api="${api}/dock">
-        <input class="field" name="summary" placeholder="How it ended (optional, goes in the voyage record)" />
-        <button class="btn" type="submit">Dock</button><span class="muted" data-note></span>
+        <input class="d-input d-input-sm" name="summary" placeholder="How it ended (optional, goes in the voyage record)" />
+        <button class="d-btn d-btn-sm" type="submit">Dock</button><span class="muted" data-note></span>
       </form>
       ${pastHtml}
     </section>`;
@@ -525,10 +525,10 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
   return `<section class="voyage stack">
     <h3>Set a course</h3>
     <form class="stack shipyard-form" data-api="${api}/voyage">
-      <textarea class="field" name="goal" rows="2" required placeholder="What should this voyage achieve? e.g. Ship the V4 home page with mobile fixes"></textarea>
+      <textarea class="d-textarea w-full" name="goal" rows="2" required placeholder="What should this voyage achieve? e.g. Ship the V4 home page with mobile fixes"></textarea>
       <div class="row">
-        <label class="row">Send to <select class="field" name="to">${targets.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.label)}</option>`).join("")}</select></label>
-        <button class="btn btn-ink" type="submit">Set sail</button><span class="muted" data-note></span>
+        <label class="row">Send to <select class="d-select d-select-sm" name="to">${targets.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.label)}</option>`).join("")}</select></label>
+        <button class="d-btn d-btn-neutral d-btn-sm" type="submit">Set sail</button><span class="muted" data-note></span>
       </div>
     </form>
     ${pastHtml}
@@ -559,30 +559,30 @@ function shipyardHtml(
       <span class="muted">${escapeHtml(model)}</span>
       <form class="row shipyard-form" data-api="${api}/crew">
         <input type="hidden" name="role" value="${escapeHtml(r)}" />
-        <label class="row">Daily $ <input class="field budget-field" name="budget" type="number" min="0" step="0.5" value="${budget ?? ""}" placeholder="none" /></label>
-        <button class="btn" type="submit">Save</button>
+        <label class="row">Daily $ <input class="d-input d-input-sm budget-field" name="budget" type="number" min="0" step="0.5" value="${budget ?? ""}" placeholder="none" /></label>
+        <button class="d-btn d-btn-sm" type="submit">Save</button>
         <span class="muted">today ${usd(spent)}${budget ? ` of ${usd(budget)}` : ""}</span>
         <span class="muted" data-note></span>
       </form>
       <form class="shipyard-form" data-api="${api}/crew" data-confirm="Send ${escapeHtml(r)} ashore? Its session stays on disk.">
-        <button class="btn" type="submit" name="remove" value="${escapeHtml(r)}">Ashore</button>
+        <button class="d-btn d-btn-sm" type="submit" name="remove" value="${escapeHtml(r)}">Ashore</button>
       </form>
     </li>`;
   });
   const available = roles.filter((r) => !ship.crew.includes(r.id));
-  return `<details class="fold shipyard"${open ? " open" : ""}>
-    <summary>Shipyard · ${checklist.filter((c) => c.required && !c.ok).length ? "not ready" : "ready"} · ${ship.crew.length} aboard</summary>
-    <div class="shipyard-cols">
+  return `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100 shipyard"${open ? " open" : ""}>
+    <summary class="d-collapse-title">Shipyard · ${checklist.filter((c) => c.required && !c.ok).length ? "not ready" : "ready"} · ${ship.crew.length} aboard</summary>
+    <div class="d-collapse-content shipyard-cols">
       <div class="stack">
         <h4>Checklist</h4>
         <ul class="checklist">${checklist.map(checkRow).join("")}</ul>
         ${factory ? "" : `<p class="muted">No factory (SSSF) on this ship, so it runs no maneuvers.</p>`}
         <form class="row shipyard-form" data-api="${api}/orchestrator">
-          <label class="row">Voyages run by <select class="field" name="orchestrator">
+          <label class="row">Voyages run by <select class="d-select d-select-sm" name="orchestrator">
             <option value="firstmate"${ship.orchestrator === "firstmate" ? " selected" : ""}>Firstmate</option>
             <option value="lead"${ship.orchestrator === "lead" ? " selected" : ""}>This ship's crew</option>
           </select></label>
-          <button class="btn" type="submit">Save</button><span class="muted" data-note></span>
+          <button class="d-btn d-btn-sm" type="submit">Save</button><span class="muted" data-note></span>
         </form>
       </div>
       <div class="stack">
@@ -591,11 +591,11 @@ function shipyardHtml(
         ${
           available.length
             ? `<form class="stack shipyard-form" data-api="${api}/crew">
-          <label class="stack-tight">Bring aboard <select class="field" name="add">${available
+          <label class="stack-tight">Bring aboard <select class="d-select d-select-sm" name="add">${available
             .map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.id)} · ${escapeHtml(r.model)}</option>`)
             .join("")}</select></label>
           <p class="muted">${available.map((r) => `<strong>${escapeHtml(r.id)}</strong>: ${escapeHtml(r.description)}`).join("<br />")}</p>
-          <div class="row"><button class="btn btn-ink" type="submit">Bring aboard</button><span class="muted" data-note></span></div>
+          <div class="row"><button class="d-btn d-btn-neutral d-btn-sm" type="submit">Bring aboard</button><span class="muted" data-note></span></div>
         </form>`
             : `<p class="muted">Every crew role is aboard. New roles: agents/&lt;role&gt;/agent.yaml with <code>crew: true</code>.</p>`
         }
@@ -611,9 +611,7 @@ function tasksHtml(tasks: VoyageTask[], cards: CrewCard[]): string {
   const p = taskProgress(tasks);
   const pct = Math.round((p.done / p.total) * 100);
   const label = (id: string | null) => (id ? cards.find((c) => c.target.id === id)?.target.label ?? id : "unassigned");
-  return `<div class="voyage-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${p.total}" aria-valuenow="${p.done}" aria-label="Tasks done">
-      <span style="width:${pct}%"></span>
-    </div>
+  return `<progress class="d-progress d-progress-primary w-full voyage-progress" value="${p.done}" max="${p.total}" aria-label="Tasks done" title="${pct}%"></progress>
     <p class="muted">${p.done} of ${p.total} tasks done${p.blocked ? ` · <span class="warn">${p.blocked} blocked</span>` : ""}</p>
     <ol class="voyage-tasks">${tasks
       .map(
