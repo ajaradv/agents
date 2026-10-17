@@ -15,3 +15,7 @@ gates:
   dock:
     - frontend
     - pytest
+maneuvers:
+  verify:
+    checks: [lint, pytest, frontend]
+    by: [lead, scout, designer]

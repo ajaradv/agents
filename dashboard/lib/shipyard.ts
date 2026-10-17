@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { describeManeuver, maneuverAvailability } from "./maneuvers.ts";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isMap, parseDocument } from "yaml";
@@ -292,6 +293,13 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}${ledger ? ` ${ledgerLine(ledger)}` : ""}` };
 }
 
+/** The lead's view of the ship's maneuvers, for the voyage brief. */
+function maneuverBrief(ship: ShipRow): string[] {
+  const all = maneuverAvailability(ship, "lead");
+  if (!all.length) return ["No maneuvers on this ship."];
+  return ["Maneuvers (maneuver_start; locked ones cannot start):", ...all.map((m) => `- ${describeManeuver(m)}`)];
+}
+
 /** The opening message a crewmate (or Firstmate) gets when a voyage starts. */
 export function voyageBrief(ship: ShipRow, v: Voyage): string {
   if (v.to === `${ship.id}-lead`) {
@@ -300,7 +308,7 @@ export function voyageBrief(ship: ShipRow, v: Voyage): string {
       "",
       `Voyage record (vault): ${v.file}`,
       `Crew aboard: ${ship.crew.filter((r) => r !== "lead").map((r) => `${ship.id}-${r}`).join(", ") || "only you"}.`,
-      ship.adws.length ? `Maneuvers available: ${ship.adws.join(", ")}.` : "No SSSF factory on this ship.",
+      ...maneuverBrief(ship),
       ...(ship.gates.task.length || ship.gates.dock.length
         ? [`Gates (checks that must pass on the latest commit): ${ship.gates.task.length ? `a task is done only after ${ship.gates.task.join(", ")} pass (they run when it is reported done)` : ""}${ship.gates.task.length && ship.gates.dock.length ? "; " : ""}${ship.gates.dock.length ? `the voyage docks only after ${ship.gates.dock.join(", ")} pass` : ""}. Commit before reporting a task done.`]
         : []),

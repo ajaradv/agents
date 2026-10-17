@@ -1,17 +1,20 @@
 import { randomBytes } from "node:crypto";
 import { closeSync, mkdirSync, openSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { hostRunning } from "./agent-host.ts";
 import { postBus } from "./bus-post.ts";
-import { listWorkflows, once, updateWorkflow, upsertWorkflow } from "./journal.ts";
+import { getWorkflow, listWorkflows, once, updateWorkflow, upsertWorkflow } from "./journal.ts";
 import { pidAlive } from "./session.ts";
 import { acceptCrewLine } from "./chat-bridge.ts";
 import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { fleetInboxRoot } from "./paths.ts";
 import { recentManeuvers, shipTraceDb } from "./ship-maneuvers.ts";
 import { logShipEvent, recentShipEvents } from "./ship-log.ts";
-import { recordHandoff } from "./metrics.ts";
-import { describeGates, gateStatus, runGates } from "./gates.ts";
+import { recordHandoff, recordRun } from "./metrics.ts";
+import { describeGates, gateFolder, gateStatus, runGates } from "./gates.ts";
+import { describeManeuver, findManeuver, launchRefusal, maneuverAvailability, type ManeuverAvailability } from "./maneuvers.ts";
+import { runCheck, tail, treeState } from "./ship-checks.ts";
 import { openVoyage, type Voyage } from "./shipyard.ts";
 import { addTask, getTask, listTasks, taskProgress, TASK_STATUSES, updateTask, type TaskStatus, type VoyageTask } from "./voyage-tasks.ts";
 import { Database } from "bun:sqlite";
@@ -26,8 +29,6 @@ import { existsSync } from "node:fs";
  */
 
 type Res = { ok: boolean; message: string; [k: string]: unknown };
-
-const ADW_RE = /^adw_[a-z0-9_]+$/;
 
 async function aboard(shipId: string, from: string): Promise<{ ship: ShipRow; role: string } | { error: Res }> {
   const ship = (await readShips()).find((s) => s.id === shipId);
@@ -79,7 +80,7 @@ export async function voyageStatus(shipId: string, from: string): Promise<Res> {
     tasks: tasks.map((t) => ({ id: t.id, title: t.title, assignee: t.assignee, kind: t.kind, status: t.status, note: t.note.slice(0, 300), adwId: t.adwId })),
     crew,
     lead: leadOf(a.ship),
-    adws: a.ship.adws,
+    maneuvers: maneuverAvailability(a.ship, a.role).map((m) => ({ name: m.name, yours: m.yours, about: describeManeuver(m) })),
     gates: {
       task: a.ship.gates.task.length ? describeGates(await gateStatus(a.ship, "task")) : "none",
       dock: a.ship.gates.dock.length ? describeGates(await gateStatus(a.ship, "dock")) : "none",
@@ -191,40 +192,122 @@ function maneuverLogDir(shipId: string): string {
   return join(fleetInboxRoot(), "ships", shipId, "maneuvers");
 }
 
-export async function crewStartManeuver(shipId: string, b: { from: string; adw?: string; prompt?: string }): Promise<Res> {
+/**
+ * Launch a declared maneuver (lib/maneuvers): the caller's role must be given
+ * it (`by`), unless the captain gave a Go (fleet tool maneuver_start), and a
+ * locked one never starts. `withGo` comes from the node, never from a crewmate's
+ * request body.
+ */
+export async function crewStartManeuver(shipId: string, b: { from: string; maneuver?: string; adw?: string; prompt?: string }, opts: { withGo?: boolean } = {}): Promise<Res> {
   const a = await aboard(shipId, b.from);
   if ("error" in a) return a.error;
-  if (a.role !== "lead") return { ok: false, message: "Only the lead launches maneuvers." };
   const v = await needVoyage(a.ship);
   if ("ok" in v) return v;
-  const adw = String(b.adw ?? "");
-  if (!ADW_RE.test(adw) || !a.ship.adws.includes(adw)) {
-    return { ok: false, message: a.ship.adws.length ? `Pick one of this ship's ADWs: ${a.ship.adws.join(", ")}.` : `${shipId} has no SSSF factory; assign the work to a crewmate instead.` };
+  const all = maneuverAvailability(a.ship, a.role);
+  const name = String(b.maneuver ?? b.adw ?? "").trim();
+  const m = findManeuver(all, name);
+  if (!m) {
+    const yours = all.filter((x) => x.yours).map((x) => x.name);
+    return { ok: false, message: all.length ? `No maneuver ${name || "(none named)"} on ${shipId}. ${yours.length ? `Yours: ${yours.join(", ")}.` : "None is yours to launch."} voyage_status lists them all.` : `${shipId} has no maneuvers; assign the work to a crewmate instead.` };
   }
+  const refusal = launchRefusal(m, a.role, Boolean(opts.withGo));
+  if (refusal) return { ok: false, message: refusal };
   const prompt = String(b.prompt ?? "").trim();
-  if (prompt.length < 10) return { ok: false, message: "Give the maneuver a full prompt: the intent, the files, and what done means." };
-  const adwId = randomBytes(4).toString("hex");
-  const task = await addTask(shipId, { voyage: v.file, title: `${adw}: ${prompt.slice(0, 120)}`, detail: prompt, kind: "maneuver", adwId, status: "working", createdBy: b.from });
+  if (m.kind === "adw" && prompt.length < 10) return { ok: false, message: "Give the maneuver a full prompt: the intent, the files, and what done means." };
+  const runId = randomBytes(4).toString("hex");
+  const task = await addTask(shipId, { voyage: v.file, title: `${m.name}: ${(prompt || m.checks.join(" → ")).slice(0, 120)}`, detail: prompt || describeManeuver(m), kind: "maneuver", adwId: runId, status: "working", createdBy: b.from });
   mkdirSync(maneuverLogDir(shipId), { recursive: true });
-  const log = join(maneuverLogDir(shipId), `${adwId}.log`);
+  recordHandoff({ ship: shipId, from: b.from, to: `maneuver:${m.name}`, kind: "maneuver-start", size: prompt.length });
+  if (m.kind === "checks") {
+    upsertWorkflow("maneuver", runId, { ship: shipId, taskId: task.id, maneuver: m.name, kind: "checks", by: b.from }, { trace: `maneuver-${runId}` });
+    logShipEvent(shipId, b.from, "maneuver", `${m.name} launched (${runId}): ${m.checks.join(" → ")}`, { maneuver: m.name, adwId: runId, task: task.id, trace: `maneuver-${runId}` });
+    void runCheckManeuver(a.ship, m, runId, task.id, b.from);
+    return { ok: true, message: `Maneuver ${m.name} (${m.checks.join(" → ")}) launched as ${runId} (task #${task.id}). It stops at the first failure; you get a crew message from the helm with the result.`, adwId: runId, task: task.id };
+  }
+  const adw = m.adw!;
+  const log = join(maneuverLogDir(shipId), `${runId}.log`);
   const fd = openSync(log, "a");
   let proc: ReturnType<typeof Bun.spawn>;
   try {
     // Detached (its own process group): a fleet node restart must not take the maneuver down with it.
-    proc = Bun.spawn(["uv", "run", `adws/${adw}.py`, prompt, "--adw-id", adwId], { cwd: a.ship.path, stdout: fd, stderr: fd, stdin: "ignore", detached: true });
+    proc = Bun.spawn(["uv", "run", `adws/${adw}.py`, prompt, "--adw-id", runId], { cwd: a.ship.path, stdout: fd, stderr: fd, stdin: "ignore", detached: true });
   } finally {
     // The child has its own copy of the log descriptor; keeping ours leaks one per maneuver.
     closeSync(fd);
   }
-  running.set(adwId, { taskId: task.id, ship: shipId });
+  running.set(runId, { taskId: task.id, ship: shipId });
   // A journal workflow, so a restarted node can find it again by pid and settle it.
-  upsertWorkflow("maneuver", adwId, { ship: shipId, taskId: task.id, adw, pid: proc.pid, log }, { trace: `maneuver-${adwId}` });
-  logShipEvent(shipId, b.from, "maneuver", `${adw} launched (${adwId})`, { adw, adwId, task: task.id, log, trace: `maneuver-${adwId}` });
+  upsertWorkflow("maneuver", runId, { ship: shipId, taskId: task.id, adw, maneuver: m.name, pid: proc.pid, log, by: b.from }, { trace: `maneuver-${runId}` });
+  logShipEvent(shipId, b.from, "maneuver", `${m.name} launched (${runId})`, { adw, maneuver: m.name, adwId: runId, task: task.id, log, trace: `maneuver-${runId}` });
   void proc.exited.then(async (code) => {
-    running.delete(adwId);
-    await settleOnce(a.ship, task.id, adwId, code);
+    running.delete(runId);
+    await settleOnce(a.ship, task.id, runId, code);
   });
-  return { ok: true, message: `Maneuver ${adw} launched as ${adwId} (task #${task.id}). You get a crew message when it finishes; voyage_status shows its phases meanwhile.`, adwId, task: task.id };
+  return { ok: true, message: `Maneuver ${m.name} (${adw}) launched as ${runId} (task #${task.id}).${m.gates.length ? ` When it passes, the ${m.gates.join(" and ")} gates run before it counts as done.` : ""} You get a crew message when it finishes; voyage_status shows its phases meanwhile.`, adwId: runId, task: task.id };
+}
+
+/**
+ * A deterministic maneuver: the ship's checks in order, on the voyage's
+ * worktree, stopping at the first failure. Each phase's output is an artifact
+ * (fleet/inbox/ships/<ship>/maneuvers/<run>/<n>-<check>.log), and handoff.json
+ * is the envelope the next step reads (SSSF shape: phases, verdicts, artifacts).
+ */
+async function runCheckManeuver(ship: ShipRow, m: ManeuverAvailability, runId: string, taskId: number, by: string): Promise<void> {
+  const dir = join(maneuverLogDir(ship.id), runId);
+  const started = Date.now();
+  const phases: { name: string; ok: boolean; ms: number; artifact: string }[] = [];
+  let ok = true;
+  let failure = "";
+  try {
+    await mkdir(dir, { recursive: true });
+    const tree = await treeState(gateFolder(ship));
+    for (const [i, check] of m.checks.entries()) {
+      const t0 = Date.now();
+      const res = await runCheck(ship.id, by, check);
+      const artifact = join(dir, `${i + 1}-${check}.log`);
+      await writeFile(artifact, res.message, "utf8");
+      phases.push({ name: check, ok: res.ok, ms: Date.now() - t0, artifact });
+      if (!res.ok) {
+        ok = false;
+        failure = tail(res.message, 3000);
+        break;
+      }
+    }
+    if (ok && m.gates.length) {
+      for (const stage of m.gates) {
+        const g = await runGates(ship, stage, "helm");
+        phases.push({ name: `${stage} gates`, ok: g.report.green, ms: 0, artifact: "" });
+        if (!g.report.green) {
+          ok = false;
+          failure = `${describeGates(g.report)}${g.failures ? `\n\n${g.failures}` : ""}`;
+          break;
+        }
+      }
+    }
+    const envelope = { maneuver: m.name, run: runId, ship: ship.id, task: taskId, by, commit: tree.commit, dirty: tree.dirty, ok, failedAt: ok ? null : (phases.at(-1)?.name ?? null), ms: Date.now() - started, phases, skipped: m.checks.slice(phases.length) };
+    await writeFile(join(dir, "handoff.json"), `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
+    recordRun({ ship: ship.id, agent: by, kind: "maneuver", name: m.name, ok, ms: Date.now() - started, deterministic: true, detail: ok ? `passed: ${phases.map((p) => p.name).join(" → ")}` : `failed at ${envelope.failedAt}`, commit: tree.commit, dirty: tree.dirty });
+  } catch (e) {
+    ok = false;
+    failure = `The maneuver could not run: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  const secs = Math.round((Date.now() - started) / 1000);
+  const note = ok
+    ? `Maneuver ${m.name} passed in ${secs}s: ${phases.map((p) => p.name).join(" → ")}. Artifacts: ${dir}`
+    : `Maneuver ${m.name} failed${phases.length ? ` at ${phases.at(-1)!.name}` : ""} after ${secs}s. Artifacts: ${dir}\n\n${failure}`;
+  await finishManeuverTask(ship, taskId, runId, ok, note, by);
+  updateWorkflow(runId, { status: ok ? "done" : "failed" });
+}
+
+/** Settle a maneuver's task and tell whoever launched it, the lead, and Alice. */
+async function finishManeuverTask(ship: ShipRow, taskId: number, runId: string, ok: boolean, note: string, by: string, actor = "helm"): Promise<void> {
+  await updateTask(ship.id, taskId, { status: ok ? "done" : "blocked", note, by: actor });
+  recordHandoff({ ship: ship.id, from: actor, to: by, kind: ok ? "maneuver-done" : "maneuver-failed", size: note.length });
+  for (const who of new Set([by, leadOf(ship)].filter((x): x is string => Boolean(x) && crewIds(ship).includes(x!)))) {
+    await acceptCrewLine(who, actor, `Maneuver ${runId} (task #${taskId}) ${ok ? "finished" : "failed"}. ${note}`);
+  }
+  // Alice keeps the fleet picture: the event router wakes her with this (batched).
+  await postBus("alice", { from: actor, kind: ok ? "maneuver-finished" : "maneuver-failed", ship: ship.id, summary: `Maneuver ${runId} (task #${taskId}) on ${ship.id} ${ok ? "finished" : "failed"}. ${note}`.slice(0, 400), ref: runId });
 }
 
 function traceStatus(shipPath: string, adwId: string): { status: string | null; ended: boolean } {
@@ -247,15 +330,26 @@ async function settleManeuver(ship: ShipRow, taskId: number, adwId: string, exit
   if (!t || t.status === "done" || t.status === "blocked") return;
   const run = recentManeuvers(ship.path, 20).find((m) => m.adwId === adwId);
   const failed = run?.phases.find((p) => p.status === "fail" || p.status === "error");
-  const ok = exitCode === 0 && !failed && run?.status !== "fail";
-  const note = ok
+  let ok = exitCode === 0 && !failed && run?.status !== "fail";
+  let note = ok
     ? `Maneuver passed${run ? `: ${run.phases.map((p) => p.name).join(" → ")}` : ""}.`
     : `Maneuver failed${failed ? ` at ${failed.name}${failed.error ? `: ${failed.error.slice(0, 300)}` : ""}` : exitCode !== null ? ` (exit ${exitCode})` : ""}. Log: fleet/inbox/ships/${ship.id}/maneuvers/${adwId}.log`;
-  await updateTask(ship.id, taskId, { status: ok ? "done" : "blocked", note, by: "sssf" });
-  const lead = leadOf(ship);
-  if (lead) await acceptCrewLine(lead, "sssf", `Maneuver ${adwId} (task #${taskId}) ${ok ? "finished" : "failed"}. ${note}`);
-  // Alice keeps the fleet picture: the event router wakes her with this (batched).
-  await postBus("alice", { from: "sssf", kind: ok ? "maneuver-finished" : "maneuver-failed", ship: ship.id, summary: `Maneuver ${adwId} (task #${taskId}) on ${ship.id} ${ok ? "finished" : "failed"}. ${note}`.slice(0, 400), ref: adwId });
+  const w = getWorkflow(adwId)?.data as { maneuver?: string; by?: string } | undefined;
+  const decl = w?.maneuver ? findManeuver(maneuverAvailability(ship, "lead"), w.maneuver) : undefined;
+  // Success is earned: a maneuver that declares gates passes only when they do.
+  if (ok && decl?.gates.length) {
+    for (const stage of decl.gates) {
+      const g = await runGates(ship, stage, "helm");
+      if (!g.report.green) {
+        ok = false;
+        note = `The ADW passed, but its gates did not: ${describeGates(g.report)}${g.failures ? `\n\n${g.failures}` : ""}`;
+        break;
+      }
+    }
+    if (ok) note += ` Gates green: ${decl.gates.join(", ")}.`;
+  }
+  recordRun({ ship: ship.id, agent: w?.by ?? `${ship.id}-lead`, kind: "maneuver", name: w?.maneuver ?? run?.adwName ?? "adw", ok, ms: run?.startedAt ? Date.now() - Date.parse(run.startedAt) : 0, cost: run?.cost ?? 0, deterministic: false, detail: note.slice(0, 300) });
+  await finishManeuverTask(ship, taskId, adwId, ok, note, w?.by ?? `${ship.id}-lead`, "sssf");
 }
 
 /** After a dashboard restart the exit callback is gone; settle from the trace db. */
@@ -274,10 +368,19 @@ async function settleOnce(ship: ShipRow, taskId: number, adwId: string, exitCode
  */
 export async function recoverManeuvers(): Promise<void> {
   const ships = await readShips();
-  for (const w of listWorkflows<{ ship: string; taskId: number; pid: number }>("maneuver", "running")) {
+  for (const w of listWorkflows<{ ship: string; taskId: number; pid: number; kind?: string; maneuver?: string; by?: string }>("maneuver", "running")) {
     const ship = ships.find((s) => s.id === w.data.ship);
     if (!ship) {
       updateWorkflow(w.id, { status: "failed", data: { error: "ship no longer registered" } });
+      continue;
+    }
+    // Check maneuvers run inside the node, so a restart ended them: say so and let the crew launch it again.
+    if (w.data.kind === "checks") {
+      await once(w.id, "settle", async () => {
+        await finishManeuverTask(ship, w.data.taskId, w.id, false, `Maneuver ${w.data.maneuver ?? ""} was interrupted by a fleet node restart. Launch it again.`, w.data.by ?? `${ship.id}-lead`);
+        return { interrupted: true };
+      });
+      updateWorkflow(w.id, { status: "failed" });
       continue;
     }
     running.set(w.id, { taskId: w.data.taskId, ship: ship.id });

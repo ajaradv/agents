@@ -3,6 +3,7 @@ import { acceptCrewLine, FLEET_OFFICERS, postCaptainLine, postLine } from "./cha
 import { readCaptainChat } from "./chat.ts";
 import { chatAllowed, chatTarget, listChatTargets, refreshAgentTargets } from "./chat-targets.ts";
 import { crewStartManeuver } from "./crew-api.ts";
+import { describeManeuver, maneuverAvailability } from "./maneuvers.ts";
 import { describeAction, holdGoRequest, tier2ArgError, type GoRequest } from "./go-gate.ts";
 import { getWorkflow, journalEvent, listWorkflows, once, updateWorkflow } from "./journal.ts";
 import { newSession } from "./session-rotate.ts";
@@ -156,8 +157,9 @@ export async function shipManeuvers(ship: string): Promise<Res> {
   const runs = recentManeuvers(row.path);
   return {
     ok: true,
-    message: runs.length ? `${runs.length} recent maneuver(s) on ${ship}.` : `No maneuvers on ${ship}${row.adws.length ? "" : " (no factory)"}.`,
+    message: runs.length ? `${runs.length} recent SSSF run(s) on ${ship}.` : `No SSSF runs on ${ship}.`,
     adws: row.adws,
+    declared: maneuverAvailability(row, "lead").map(describeManeuver),
     maneuvers: runs.map((m) => ({
       adwId: m.adwId,
       adw: m.adwName,
@@ -248,7 +250,8 @@ export async function runFleetAction(tool: string, a: Record<string, string>): P
       break;
     case "maneuver_start": {
       if (!ship!.crew.includes("lead")) return { ok: false, message: `${ship!.id} has no lead aboard to run a maneuver; crew the ship first.` };
-      res = await crewStartManeuver(ship!.id, { from: `${ship!.id}-lead`, adw: a.adw, prompt: a.prompt });
+      // The captain's Go authorises it (any role), but a locked maneuver stays locked.
+      res = await crewStartManeuver(ship!.id, { from: `${ship!.id}-lead`, maneuver: a.adw, prompt: a.prompt }, { withGo: true });
       break;
     }
     case "agent_abort":

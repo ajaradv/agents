@@ -320,6 +320,30 @@ def vm_env(ship: dict, agent_id: str, inbox: Path) -> dict[str, str]:
     return env
 
 
+def launchable_maneuvers(ship: dict, role: str, ship_path: Path) -> list[str]:
+    """Maneuvers this role may launch itself (dashboard/lib/maneuvers.ts decides; this only picks who gets the tool).
+
+    Declared ones whose `by` names the role (default: the lead), never `go: true`
+    ones; for the lead, also the repo's ADWs nobody declared.
+    """
+    decls = ship.get("maneuvers") if isinstance(ship.get("maneuvers"), dict) else {}
+    names: list[str] = []
+    named: set[str] = set()
+    for name, m in decls.items():
+        if not isinstance(m, dict):
+            continue
+        named.update({str(name), str(m.get("adw") or "")})
+        by = m.get("by") or ["lead"]
+        by = [by] if isinstance(by, str) else [str(r) for r in by]
+        if m.get("go") is not True and role in by:
+            names.append(str(name))
+    if role == "lead":
+        adws = ship_path / "adws"
+        found = sorted(p.stem for p in adws.glob("adw_*.py")) if adws.is_dir() else []
+        names += [a for a in found if a not in named]
+    return names
+
+
 def resolve_crewmate(agent_id: str) -> tuple[dict, dict] | None:
     """`<ship>-<role>` for a role listed under `crew:` in fleet/ships/<ship>.yaml.
 
@@ -560,6 +584,7 @@ def prepare_pi_launch(
                 os.environ.pop(k, None)
         checks = aboard.get("checks") if isinstance(aboard.get("checks"), dict) else {}
         os.environ["FLEET_SHIP_CHECKS"] = ",".join(sorted(str(k) for k in checks))
+        os.environ["FLEET_SHIP_MANEUVERS"] = ",".join(launchable_maneuvers(aboard, role, ship_path))
         if str(aboard.get("isolation") or "") == "vm":
             # R4: this crewmate's built-in tools run in a micro-VM with only the repo and its memory mounted.
             (fleet_inbox_root() / agent_id / "memory").mkdir(parents=True, exist_ok=True)

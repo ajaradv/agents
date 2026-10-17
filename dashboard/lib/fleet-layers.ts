@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import { parseManeuvers, type ManeuverDecl } from "./maneuvers.ts";
 import { join } from "node:path";
 import { parse as yamlParse } from "yaml";
 import { aliceVault, ROOT } from "./paths.ts";
@@ -25,6 +26,8 @@ export type ShipRow = {
   checks: Record<string, string>;
   /** Checks that must pass on the latest commit: before a task is done (task) and before docking (dock). */
   gates: { task: string[]; dock: string[] };
+  /** Declared maneuvers: what each runs, who launches it, what it needs (lib/maneuvers). */
+  maneuvers: ManeuverDecl[];
 };
 
 /** Package registries and GitHub (read over HTTPS): what a crewmate's VM reaches unless the ship says otherwise. */
@@ -84,6 +87,7 @@ export function parseShipYaml(text: string, fallbackId: string): Omit<ShipRow, "
       task: strList((y.gates as Record<string, unknown> | null)?.task),
       dock: strList((y.gates as Record<string, unknown> | null)?.dock),
     },
+    maneuvers: parseManeuvers(y.maneuvers),
   };
 }
 

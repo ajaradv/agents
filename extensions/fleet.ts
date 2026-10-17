@@ -247,8 +247,8 @@ export default function (pi: ExtensionAPI) {
     name: "maneuver_start",
     ...RARE,
     label: "Launch a maneuver",
-    description: "Launch an SSSF maneuver (ADW) on a ship under sail, through its lead. The prompt is the full brief: intent, files, what done means." + GO,
-    parameters: Type.Object({ ship: Type.String(), adw: Type.String({ description: "One of the ship's ADWs (ship_maneuvers lists them)" }), prompt: Type.String(), ...OrderArgs }),
+    description: "Launch one of a ship's maneuvers (a checks chain or an SSSF ADW) on a ship under sail, through its lead. For an ADW the prompt is the full brief: intent, files, what done means." + GO,
+    parameters: Type.Object({ ship: Type.String(), adw: Type.String({ description: "The maneuver's name, or an ADW (ship_maneuvers lists them)" }), prompt: Type.String(), ...OrderArgs }),
     async execute(_id, p) {
       return text(await action("maneuver_start", { ship: p.ship, adw: p.adw, prompt: p.prompt }, p));
     },

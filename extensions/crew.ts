@@ -5,8 +5,9 @@
  * host sets FLEET_DASHBOARD_URL.
  *
  * Everyone aboard: voyage_status, crew_message, task_report, run_check (the
- * host commands the captain lists for the ship; FLEET_SHIP_CHECKS names them).
- * The lead (<ship>-lead) also gets: task_add, task_update, maneuver_start.
+ * host commands the captain lists for the ship; FLEET_SHIP_CHECKS names them),
+ * and maneuver_start when the ship gives the role maneuvers (FLEET_SHIP_MANEUVERS).
+ * The lead (<ship>-lead) also gets: task_add, task_update.
  */
 
 import { StringEnum } from "@mariozechner/pi-ai";
@@ -96,6 +97,23 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
+  // Maneuvers this role may launch (bin/launch reads the ship's declarations; the node enforces them).
+  const maneuvers = (process.env.FLEET_SHIP_MANEUVERS ?? "").split(",").filter((m) => /^[a-z][a-z0-9_-]{0,40}$/.test(m));
+  if (maneuvers.length) {
+    pi.registerTool({
+      name: "maneuver_start",
+      label: "Launch a maneuver",
+      description: `Run one of the ship's maneuvers: repeatable, gated work. Yours: ${maneuvers.join(", ")} (voyage_status says what each runs). A checks maneuver runs the ship's checks in order on the latest commit and needs no prompt; an SSSF maneuver needs a full prompt read by every agent in its chain: the intent, verified paths, and what done means. It becomes a task; you get a crew message when it finishes or fails.`,
+      parameters: Type.Object({
+        maneuver: StringEnum(maneuvers as [string, ...string[]]),
+        prompt: Type.Optional(Type.String()),
+      }),
+      async execute(_id, p) {
+        return text(await call("POST", "maneuvers", { maneuver: p.maneuver, prompt: p.prompt ?? "" }));
+      },
+    });
+  }
+
   if (!isLead) return;
 
   pi.registerTool({
@@ -133,16 +151,5 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "maneuver_start",
-    label: "Launch an SSSF maneuver",
-    description: "Lead only. Run one of the ship's SSSF ADWs (voyage_status lists them) for repeatable, gated work such as plan → build → test. The prompt is read by every agent in the chain: state the intent, verified paths, and what done means. It becomes a task; you get a crew message from sssf when it finishes or fails.",
-    parameters: Type.Object({
-      adw: Type.String({ description: "ADW name, e.g. adw_plan_build_test" }),
-      prompt: Type.String(),
-    }),
-    async execute(_id, p) {
-      return text(await call("POST", "maneuvers", { adw: p.adw, prompt: p.prompt }));
-    },
-  });
+
 }

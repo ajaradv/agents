@@ -97,3 +97,40 @@ gates:
   (stage `dock` or `task`) runs the ones that are not green and sends a notice
   with the result.
 - `voyage_status` shows the gates to the crew; the lead's voyage brief names them.
+
+## Maneuvers
+
+A ship declares its maneuvers: what each one runs, who may launch it, and what
+the ship needs before it unlocks:
+
+```yaml
+maneuvers:
+  verify:                       # deterministic: the ship's checks in order
+    checks: [lint, pytest, frontend]
+    by: [lead, scout, designer] # who may launch it (default: the lead)
+  build:                        # an SSSF ADW from the repo's adws/
+    adw: adw_plan_build_test
+    needs: [designer]           # roles that must be aboard
+    gates: [task]               # gate stages the ship must declare
+  release:
+    adw: adw_ship
+    go: true                    # only on the captain's Go
+```
+
+- **Locked** when a needed role is not aboard, a gate stage is not declared,
+  a check is not one of the ship's checks, or the ADW is not in `adws/`.
+  A locked maneuver never starts, even with a Go.
+- **Who launches**: crewmates whose role is in `by` get the `maneuver_start`
+  tool with those names (bin/launch); the node checks the role again. The
+  captain's Go (Alice's `maneuver_start`) may launch any unlocked maneuver.
+  ADWs in the repo that no declaration names stay the lead's.
+- **Checks maneuvers** run on the host, in the voyage's worktree, stopping at
+  the first failure. Each phase's output is saved under
+  `fleet/inbox/ships/<ship>/maneuvers/<run>/`, with `handoff.json` as the
+  envelope (commit, phases, verdicts, artifacts). A fleet node restart ends a
+  running one; the crew is told to launch it again.
+- **Gates** listed on a maneuver must pass before it counts as done, for an
+  ADW too.
+- Every run is a task and a `runs` row (kind `maneuver`) in the metrics
+  database; `voyage_status` and the lead's voyage brief list the maneuvers
+  and which are locked.
