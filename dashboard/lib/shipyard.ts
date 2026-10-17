@@ -44,11 +44,20 @@ export function deleteKey(doc: ReturnType<typeof parseDocument>, map: string, ke
   if (isMap(doc.get(map))) doc.deleteIn([map, key]);
 }
 
+/**
+ * A ship file's text. Long values are never folded onto two lines and flow
+ * lists are not padded: bin/launch reads ship files with a line-based reader,
+ * and a captain's file should keep its shape.
+ */
+export function shipYamlText(doc: ReturnType<typeof parseDocument>): string {
+  return doc.toString({ lineWidth: 0, flowCollectionPadding: false });
+}
+
 export async function editShip(id: string, edit: (doc: ReturnType<typeof parseDocument>) => void): Promise<void> {
   const path = shipFile(id);
   const doc = parseDocument(await readFile(path, "utf8"));
   edit(doc);
-  await writeFile(path, doc.toString(), "utf8");
+  await writeFile(path, shipYamlText(doc), "utf8");
 }
 
 export async function setCrew(

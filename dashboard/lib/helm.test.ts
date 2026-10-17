@@ -110,3 +110,15 @@ describe("proposal writes", () => {
     expect(order).toEqual(["a start", "a end", "b start", "b end"]);
   });
 });
+
+describe("ship file text", () => {
+  test("long commands stay on one line and flow lists keep their shape", async () => {
+    const { shipYamlText } = await import("./shipyard.ts");
+    const long = 'docker compose -f docker-compose.local.yml run --rm --no-deps node sh -c "npm ci && npm run build"';
+    const doc = parseDocument(`id: x\nchecks:\n  frontend: ${long}\nmaneuvers:\n  verify:\n    checks: [lint, pytest]\n`);
+    doc.setIn(["crew"], doc.createNode(["lead"]));
+    const text = shipYamlText(doc);
+    expect(text).toContain(`  frontend: ${long}\n`);
+    expect(text).toContain("checks: [lint, pytest]");
+  });
+});
