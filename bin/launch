@@ -395,6 +395,15 @@ def vm_skill_dirs(agent: dict) -> list[str]:
     return [str(d.resolve()) for d in dirs if d.is_dir()]
 
 
+def experiments_for(agent_id: str) -> list[str]:
+    """Experimental extensions for this agent (fleet/home/config/experiments.json: {"cheap-reads": ["kinwork-designer"]})."""
+    try:
+        cfg = json.loads((FLEET_HOME / "config" / "experiments.json").read_text())
+    except (OSError, ValueError):
+        return []
+    return [name for name, agents in (cfg.items() if isinstance(cfg, dict) else []) if isinstance(agents, list) and agent_id in agents and (ROOT / "extensions" / f"{name}.ts").is_file()]
+
+
 def launchable_maneuvers(ship: dict, role: str, ship_path: Path) -> list[str]:
     """Maneuvers this role may launch itself (dashboard/lib/maneuvers.ts decides; this only picks who gets the tool).
 
@@ -829,7 +838,7 @@ def prepare_pi_launch(
     if agent_type == "assistant":
         # Crewmates also work as a crew: tasks, crew messages, maneuvers (crew.ts).
         isolated = bool(aboard) and str(aboard.get("isolation") or "") == "vm"
-        for name in ("tool-gate", "ask-captain", "canvas", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()) + (("gondolin",) if isolated else ()):
+        for name in ("tool-gate", "ask-captain", "canvas", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()) + (("gondolin",) if isolated else ()) + tuple(experiments_for(agent_id)):
             ref = str(ROOT / "extensions" / f"{name}.ts")
             if ref not in ext_refs:
                 ext_refs.append(ref)

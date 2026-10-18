@@ -60,6 +60,7 @@ describe("tool standard", () => {
       ...(await toolsOf(`${EXT}crew.ts`, { ...base, FLEET_SHIP: "demo", FLEET_AGENT_ID: "demo-helmsman" })),
       ...(await toolsOf(`${EXT}canvas.ts`, base)),
       ...(await toolsOf(`${EXT}ask-captain.ts`, base)),
+      ...(await toolsOf(`${EXT}cheap-reads.ts`, base)),
     ];
     expect(all.length).toBeGreaterThan(15);
     const long = all.filter((t) => t.description.length > MAX_DESCRIPTION).map((t) => `${t.name}: ${t.description.length}`);

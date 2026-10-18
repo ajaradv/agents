@@ -36,6 +36,7 @@
     "extensions/subagent.ts",
     "extensions/subagent/**/*.ts",
     "extensions/tool-gate.ts",
-    "extensions/tool-gate/**/*.ts"
+    "extensions/tool-gate/**/*.ts",
+    "extensions/cheap-reads.ts"
   ]
 }

@@ -27,6 +27,7 @@ import { VAULT_FILTERS, vaultTasksReport, type VaultFilter } from "./lib/vault-t
 import { scheduledVaultCheck } from "./lib/vault-doctor.ts";
 import { decideGate, judgeCall, recordLocalStop, screenResult } from "./lib/tool-gate.ts";
 import { adviseCompaction, cutPoint } from "./lib/compaction-advisor.ts";
+import { askAboutFiles } from "./lib/cheap-reads.ts";
 import { dashLog } from "./lib/log.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
 import { backfillMetrics } from "./lib/metrics-backfill.ts";
@@ -369,6 +370,14 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     const input = b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
     recordLocalStop({ agent: from, tool: String(b.tool ?? ""), input, cwd: String(b.cwd ?? ""), why: String(b.why ?? "").slice(0, 200) });
     return Response.json({ ok: true });
+  }
+  // Cheap reads (an experiment, lib/cheap-reads.ts): answers about files instead of the files.
+  if (path === "/api/jev/files" && req.method === "POST") {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ error: "calls come from a live agent session" }, { status: 403 });
+    const b = await body(req);
+    const files = Array.isArray(b.files) ? (b.files as { path?: unknown; content?: unknown }[]).map((f) => ({ path: String(f.path ?? ""), content: String(f.content ?? "") })) : [];
+    return Response.json(await askAboutFiles((b.question ?? {}) as Record<string, unknown>, files));
   }
   // The compaction advisor (lib/compaction-advisor.ts), asked by context-guard after a settled run.
   if ((path === "/api/compaction/advise" || path === "/api/compaction/cut") && req.method === "POST") {
