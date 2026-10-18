@@ -132,9 +132,9 @@ REQUEST=$(jq -n --rawfile msg "$TMP/msg" --arg model "$TS_MODEL" \
     questions: {
       route: {
         type: "choice",
-        instructions: "The captain wrote `message` on the fleet dashboard. Which ONE recipient should own it? Prefer a single agent when one agent'"'"'s job covers it, a group when it needs that group'"'"'s members working together, and firstmate when it is project or ship work that needs triage, planning, or crews. Pick `ask` when nothing clearly fits.",
+        instructions: "The captain wrote `message` on the fleet dashboard. Which ONE recipient should own it? Prefer a single agent when one agent'"'"'s job covers it, a group when it needs that group'"'"'s members working together, and firstmate when it is project or ship work that needs triage, planning, or crews. Fleet commands and fleet questions belong to the omni agent (alice) even when they name a ship or describe the work: setting sail on a ship (\"<ship>, set sail: <goal>\" starts a voyage; the ship'"'"'s crew does the work), docking, crew or budget changes, stopping an agent, and questions about what a ship or the fleet is doing. Pick `ask` when nothing clearly fits.",
         criteria: ($ac + $gc + {
-          firstmate: "Send to Firstmate: work on a project or ship that needs triage, a plan, or crews (features, bugfixes, refactors, research tasks), or questions about Firstmate'"'"'s own tasks already in flight. Not fleet commands (set sail or dock a voyage, change a crew, stop an agent), which go to the omni agent even when they name a ship.",
+          firstmate: "Send to Firstmate: work on a project or ship that needs triage, a plan, or crews (features, bugfixes, refactors, research tasks) and is not phrased as a fleet command, or questions about Firstmate'"'"'s own tasks already in flight. Not fleet commands (set sail or dock a voyage, even with a goal; change a crew; stop an agent) and not questions about what a ship is doing: those go to the omni agent.",
           ask: "No option clearly fits, or the message is ambiguous; ask the captain."
         })
       }

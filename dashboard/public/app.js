@@ -611,6 +611,7 @@ function dashboardApp() {
         const [r, rg] = await Promise.all([fetch("/api/chat-targets"), fetch("/api/groups")]);
         const j = await r.json();
         this.rail = { agents: j.agents || [], workers: j.workers || [] };
+        this.refreshFaces();
         this.groups = (await rg.json()).groups || [];
         if (this.chatGroup) this.chatGroup = this.groups.find((g) => g.id === this.chatGroup.id) || null;
         const cur = this.findTarget(this.chatId);
@@ -958,6 +959,36 @@ function dashboardApp() {
       return [g.lead].concat(g.members.filter((m) => m !== g.lead)).slice(0, 3).map((id) => this.findTarget(id)).filter(Boolean);
     },
 
+    /**
+     * A chat bubble's face: the portrait when the rail knows it; a symbol for the fleet's own
+     * senders (helm, sssf, gate); otherwise initials marked with data-face, so refreshFaces can
+     * swap in the portrait when the rail loads after the history replayed.
+     */
+    bubbleFace(t) {
+      const id = (t && t.id) || "";
+      const known = this.findTarget(id);
+      const art = (known && known.art) || (t && t.art);
+      if (art) return `<img class="avatar" src="${art}" alt="" width="48" height="48" />`;
+      const glyph = { helm: "⚓", sssf: "⚙️", gate: "🛡️", go: "✅", vault: "📚", "vault-doctor": "📚" }[id];
+      if (glyph) return `<span class="avatar portrait-initials is-system" title="${escapeHtml(id)}">${glyph}</span>`;
+      return `<span class="avatar portrait-initials" data-face="${escapeHtml(id)}">${escapeHtml(this.initials(known || t))}</span>`;
+    },
+
+    /** Swap initials in chat bubbles for portraits the rail has now (history can replay before the rail loads). */
+    refreshFaces() {
+      document.querySelectorAll(".bubble-row .portrait-initials[data-face]").forEach((el) => {
+        const t = this.findTarget(el.dataset.face);
+        if (!t || !t.art) return;
+        const img = document.createElement("img");
+        img.className = "avatar";
+        img.src = t.art;
+        img.alt = "";
+        img.width = 48;
+        img.height = 48;
+        el.replaceWith(img);
+      });
+    },
+
     initials(t) {
       const words = String((t && (t.label || t.id)) || "?").replace(/[^A-Za-z0-9 ]+/g, " ").trim().split(/\s+/);
       return ((words[0] || "?")[0] + (words[1] ? words[1][0] : (words[0] || "")[1] || "")).toUpperCase();
@@ -1199,9 +1230,7 @@ function dashboardApp() {
       } else if (m.kind === "question" && m.go) {
         // A fleet action held by the server until the captain says Go (lib/go-gate.ts).
         row.className = "bubble-row is-agent is-question is-go";
-        const face = t.art
-          ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
-          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
+        const face = this.bubbleFace(t);
         const summary = (m.questions && m.questions[0] && m.questions[0].question) || m.text;
         row.innerHTML = `${face}<div class="bubble question-block">
           <span class="bubble-name">${escapeHtml(t.label || m.role)} wants to act on the fleet</span>
@@ -1212,9 +1241,7 @@ function dashboardApp() {
         row.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => this.answerGo(m.go.id, b.dataset.go, row)));
       } else if (m.kind === "question" && Array.isArray(m.questions) && m.questions.length) {
         row.className = "bubble-row is-agent is-question";
-        const face = t.art
-          ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
-          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
+        const face = this.bubbleFace(t);
         row.innerHTML = `${face}<div class="bubble question-block">
           <span class="bubble-name">${escapeHtml(t.label || m.role)} asks</span>
           ${this.questionsHtml(m)}
@@ -1230,9 +1257,7 @@ function dashboardApp() {
         // A crewmate wrote to this agent (lead ↔ crew); show who, not the thread's agent.
         const from = this.findTarget(m.role) || { id: m.role, label: m.role, art: null };
         row.className = "bubble-row is-agent is-crew";
-        const face = from.art
-          ? `<img class="avatar" src="${from.art}" alt="" width="48" height="48" />`
-          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(from))}</span>`;
+        const face = this.bubbleFace(from);
         row.innerHTML = `${face}<div class="bubble"><span class="bubble-name">${escapeHtml(from.label)} → ${escapeHtml(t.label || tid)}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
       } else if (m.role === "system" || m.role === "dashboard") {
         row.className = "bubble-row is-system";
@@ -1245,9 +1270,7 @@ function dashboardApp() {
         const face = mine ? "/art/captain.png" : t.art;
         const to = this.chatGroup ? ` → ${t.label}` : "";
         const name = mine ? "You" + to : t.label || m.role;
-        const avatar = face
-          ? `<img class="avatar" src="${face}" alt="" width="48" height="48" />`
-          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
+        const avatar = mine ? `<img class="avatar" src="${face}" alt="" width="48" height="48" />` : this.bubbleFace(t);
         row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}${!mine && m.step ? " · thinking" : ""}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
         if (!mine) {
           row.dataset.role = m.role;
