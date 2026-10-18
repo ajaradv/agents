@@ -2,7 +2,7 @@ import { hostRunning } from "./node-client.ts";
 import { listChatTargets, type ChatTarget } from "./chat-targets.ts";
 import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { humanizeError, plainSummary } from "./humanize.ts";
-import { listOrders, ORDER_TOOLS, type OrderMeta } from "./order-note.ts";
+import { editableBody, listOrders, ORDER_TOOLS, type OrderMeta } from "./order-note.ts";
 import { escapeHtml } from "./quota.ts";
 import { gateStatus, type GateReport } from "./gates.ts";
 import { liveLedgerHtml, pastLedgerHtml } from "./ledger-view.ts";
@@ -412,9 +412,20 @@ const ORDER_LABEL: Record<OrderMeta["status"], string> = {
   cancelled: "Cancelled",
 };
 
-/** The fleet deck's orders panel: Go, Retry, Cancel, and what each order did. */
+/** A running order's progress from the fleet log: the step Alice is on, and whether she paused to answer the captain. */
+export function orderProgress(slug: string, total: number, events = recentShipEvents("fleet", 800)): { step: number; total: number; chatPaused: boolean } {
+  const mine = events.filter((e) => e.payload?.order === slug);
+  const done = mine.filter((e) => e.kind === "order-step" && e.payload?.ok === true).map((e) => Number(e.payload?.step) || 0);
+  const step = Math.min(total, (done.length ? Math.max(...done) : 0) + 1);
+  // Newest first: paused for chat when an order-chat comes before any later start.
+  const last = mine.find((e) => e.kind === "order-chat" || e.kind === "order-start");
+  return { step, total, chatPaused: last?.kind === "order-chat" };
+}
+
+/** The fleet deck's orders panel: Go, Retry, Cancel, edit and delete, and what each order did. */
 async function ordersPanelHtml(): Promise<string> {
   const all = (await listOrders()).filter((o) => o.meta);
+  const events = recentShipEvents("fleet", 800);
   const open = all.filter((o) => !["done", "failed", "cancelled"].includes(o.meta!.status));
   const closed = all.filter((o) => ["done", "failed", "cancelled"].includes(o.meta!.status)).slice(0, 5);
   const row = (o: (typeof all)[number]) => {
@@ -422,6 +433,29 @@ async function ordersPanelHtml(): Promise<string> {
     const api = `/api/orders/${encodeURIComponent(o.slug)}`;
     const hot = m.status === "queued" || m.status === "needs-captain";
     const steps = o.order ? o.order.steps : [];
+    const del = `<form class="shipyard-form" data-api="${api}/delete" data-confirm="Delete this order? The note moves to fleet/orders/deleted/."><button class="d-btn d-btn-sm d-btn-ghost" type="submit">Delete</button></form>`;
+    const editable = (m.status === "queued" || m.status === "approved") && o.text;
+    const edit = editable
+      ? `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100 order-edit">
+          <summary class="d-collapse-title">Edit</summary>
+          <form class="d-collapse-content stack shipyard-form" data-api="${api}/edit">
+            <label class="stack-tight">Title <input class="d-input d-input-sm" name="title" required value="${escapeHtml(m.title)}" /></label>
+            <label class="stack-tight">Steps <textarea class="d-textarea w-full order-body" name="body" rows="12" spellcheck="false">${escapeHtml(editableBody(o.text))}</textarea></label>
+            <div class="row"><button class="d-btn d-btn-neutral d-btn-sm" type="submit">Save</button><span class="muted" data-note></span></div>
+          </form>
+        </details>`
+      : "";
+    const progress =
+      m.status === "running" && steps.length
+        ? (() => {
+            const pr = orderProgress(o.slug, steps.length, events);
+            const cur = steps.find((s) => s.n === pr.step);
+            return `<div class="stack-tight order-progress">
+              <p><strong>Step ${pr.step} of ${pr.total}</strong>${cur ? `: <code>${escapeHtml(cur.tool)}</code> ${escapeHtml(Object.entries(cur.args).map(([k, v]) => `${k}=${v}`).join(" ").slice(0, 160))}${cur.phase === "acceptance" ? ' <span class="muted">(check)</span>' : ""}` : ""}${pr.chatPaused ? ' <span class="d-badge d-badge-sm d-badge-info d-badge-soft">paused to answer you</span>' : ""}</p>
+              <progress class="d-progress d-progress-primary w-full" value="${pr.step - 1}" max="${pr.total}"></progress>
+            </div>`;
+          })()
+        : "";
     const buttons =
       m.status === "queued"
         ? `<form class="row shipyard-form" data-api="${api}/go"><button class="d-btn d-btn-neutral d-btn-sm" type="submit">Go</button><span class="muted" data-note></span></form>
@@ -432,6 +466,7 @@ async function ordersPanelHtml(): Promise<string> {
           : m.status === "approved"
             ? `<form class="shipyard-form" data-api="${api}/cancel" data-confirm="Cancel this order?"><button class="d-btn d-btn-sm" type="submit">Cancel</button></form>`
             : "";
+    const actions = `${buttons}${editable || m.status === "cancelled" ? del : ""}`;
     return `<li class="order-row${hot ? " is-hot" : ""}">
       <div class="between">
         <strong>${escapeHtml(m.title)}</strong>
@@ -444,7 +479,9 @@ async function ordersPanelHtml(): Promise<string> {
           ? `<ol class="order-steps">${steps.map((s) => `<li${m.resume && s.n < m.resume ? ' class="is-done"' : ""}><code>${escapeHtml(s.tool)}</code> ${escapeHtml(Object.entries(s.args).map(([k, v]) => `${k}=${v}`).join(" ").slice(0, 200))}${s.phase === "acceptance" ? ' <span class="muted">(check)</span>' : ""}</li>`).join("")}</ol>`
           : ""
       }
-      ${buttons ? `<div class="row">${buttons}</div>` : ""}
+      ${progress}
+      ${actions ? `<div class="row">${actions}</div>` : ""}
+      ${edit}
     </li>`;
   };
   const ships = (await readShips()).map((s) => s.id);

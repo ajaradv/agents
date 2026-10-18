@@ -58,11 +58,12 @@ try {
     result: r.problems.length ? `${r.problems.length} problem(s) in ${r.notes} notes (${r.links} links checked)` : `0 problems in ${r.notes} notes (${r.links} links checked)`,
   };
   if (fixed.length) out.fixed = fixed;
-  if (r.problems.length) out.problems = r.problems.map((p) => ({ check: p.check, note: p.note, detail: p.detail, fixable: Boolean(p.fixable) }));
+  // Always the list, even empty, so the count reads the same way every time (docs/tool-standards.md).
+  out.problems = r.problems.map((p) => ({ check: p.check, note: p.note, detail: p.detail, fixable: Boolean(p.fixable) }));
   const help: string[] = [];
   if (!fix && r.problems.some((p) => p.fixable)) help.push("bin/vault-doctor --fix");
-  if (r.problems.length) help.push("bin/vault-doctor --json");
-  if (help.length) out.help = help;
+  help.push(r.problems.length ? "bin/vault-doctor --json" : "bin/vault-doctor --help");
+  out.help = help;
   console.log(encode(out));
 } catch (e) {
   console.log(encode({ error: `could not read the vault at ${vault}: ${e instanceof Error ? e.message : String(e)}`, suggestion: "pass --vault <path> to the vault folder" }));

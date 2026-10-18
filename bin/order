@@ -8,6 +8,7 @@
 //   bin/order list [--status queued]
 //   bin/order approve <slug>      (the captain's Go; the dashboard's Go button does the same)
 //   bin/order cancel <slug>
+//   bin/order format              the body format and the tools a step may call (docs/orders.md)
 //
 // The body has ## Intent, ## Steps (numbered, one fleet tool call each, with an
 // indented expect: line), and optional ## Acceptance (read tools). `new` and
@@ -17,7 +18,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { encode } from "@toon-format/toon";
-import { approveOrder, cancelOrder, createOrder, listOrders, ORDER_STATUSES, parseOrder, readOrder, withMeta, type OrderMeta } from "../dashboard/lib/order-note.ts";
+import { approveOrder, cancelOrder, createOrder, listOrders, ORDER_STATUSES, ORDER_TOOLS, parseOrder, readOrder, withMeta, type OrderMeta } from "../dashboard/lib/order-note.ts";
 import { NODE_PORT, nodeStateDir } from "../dashboard/lib/paths.ts";
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -25,13 +26,14 @@ const [cmd, ...rest] = process.argv.slice(2);
 const HELP: Record<string, string> = {
   "": `command: order
 summary: Queue fleet orders for Alice, check them, list them, and approve or cancel them
-usage: bin/order [new|check|list|approve|cancel] ...
-commands[5]{command,what}:
+usage: bin/order [new|check|list|approve|cancel|format] ...
+commands[6]{command,what}:
   new,"write a queued order from a body on stdin (--ship, --by, --title)"
   check,validate an order or a body file and show its steps
   list,"list orders, optionally by --status"
   approve,give the captain's Go to a queued order
   cancel,cancel an order
+  format,"the body format and every tool a step may call, with its parameters"
 flags[1]{flag,description}:
   --help,"show this help (also after a command, e.g. bin/order new --help)"
 examples[3]:
@@ -49,6 +51,13 @@ flags[4]{flag,default,description}:
 examples[2]:
   bin/order new --ship kinwork --by claude-code --title "Kinwork status round" < body.md
   bin/order new --by alice --title "Dock pochteca" < dock.md`,
+  format: `command: order format
+summary: The order body format and every tool a step may call, with its parameters
+usage: bin/order format
+flags[1]{flag,description}:
+  --help,show this help
+examples[1]:
+  bin/order format`,
   check: `command: order check
 summary: Validate an order (by slug) or a body or note file, and count its steps
 usage: bin/order check <slug | file>
@@ -82,7 +91,7 @@ examples[1]:
   bin/order cancel 2026-10-18-kinwork-status`,
 };
 
-const FLAGS: Record<string, string[]> = { new: ["--title", "--by", "--ship"], check: [], list: ["--status"], approve: [], cancel: [] };
+const FLAGS: Record<string, string[]> = { new: ["--title", "--by", "--ship"], check: [], list: ["--status"], approve: [], cancel: [], format: [] };
 
 function out(o: Record<string, unknown>): void {
   console.log(encode(o));
@@ -137,7 +146,7 @@ async function rows(status = "") {
 async function main(): Promise<void> {
   if (cmd === "--help" || cmd === "-h" || (cmd && rest.includes("--help"))) {
     const h = HELP[cmd.startsWith("-") ? "" : cmd];
-    if (h === undefined) fail(`unknown command ${cmd}`, "commands: new, check, list, approve, cancel (bin/order --help)", 2);
+    if (h === undefined) fail(`unknown command ${cmd}`, "commands: new, check, list, approve, cancel, format (bin/order --help)", 2);
     console.log(h);
     return;
   }
@@ -157,8 +166,41 @@ async function main(): Promise<void> {
     });
     return;
   }
-  if (!(cmd in FLAGS)) fail(`unknown command ${cmd}`, "commands: new, check, list, approve, cancel (bin/order --help)", 2);
+  if (!(cmd in FLAGS)) fail(`unknown command ${cmd}`, "commands: new, check, list, approve, cancel, format (bin/order --help)", 2);
   checkFlags(cmd);
+
+  if (cmd === "format") {
+    out({
+      result: "An order body: ## Intent (context), ## Steps (numbered fleet tool calls), optional ## Acceptance (read tools, run after the steps)",
+      template: [
+        "## Intent",
+        "",
+        "Why this order exists, in a sentence or two (Alice does not act on it).",
+        "",
+        "## Steps",
+        "",
+        "1. `ship_tasks` ship=kinwork",
+        "   expect: the open voyage and its tasks, if any",
+        '2. `fleet_chat` to=kinwork-lead text="Status for the captain, please."',
+        "   expect: the message lands in kinwork-lead's thread",
+        "",
+        "## Acceptance",
+        "",
+        "- `agent_chat_read` agent=kinwork-lead n=5",
+        "  expect: the message above is in the thread",
+      ].join("\n"),
+      rules: [
+        "one tool call per step, the tool name in backticks",
+        "literal key=value arguments; quote values with spaces; no placeholders or variables",
+        "every step and check has an indented expect: line (terse is fine; say 'if any' when empty is fine)",
+        "acceptance lines use read tools only",
+        "check before submitting: bin/order check <file>; the captain gives the Go; Alice runs it exactly as written",
+      ],
+      tools: Object.entries(ORDER_TOOLS).map(([name, t]) => ({ tool: name, kind: t.read ? "read" : "acts (covered by the order's Go)", params: t.params.join(" ") || "none", required: t.required.join(" ") || "none" })),
+      help: ["bin/order check ./body.md", 'bin/order new --ship <ship> --by claude-code --title "<title>" < body.md', "docs/orders.md"],
+    });
+    return;
+  }
 
   if (cmd === "new") {
     const title = flag("title");

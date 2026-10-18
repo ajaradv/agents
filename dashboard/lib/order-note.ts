@@ -321,3 +321,38 @@ export async function cancelOrder(slug: string): Promise<{ ok: boolean; message:
   await updateOrder(slug, { status: "cancelled", ended: new Date().toISOString() });
   return { ok: true, message: "Cancelled." };
 }
+
+/** Orders that have not started can change: queued, or approved and still waiting for Alice. */
+const EDITABLE: OrderStatus[] = ["queued", "approved"];
+
+/** The note's body for editing: Intent, Steps, Acceptance (no frontmatter, no Report). */
+export function editableBody(text: string): string {
+  const body = text.replace(/\r\n?/g, "\n").replace(/^---\n[\s\S]*?\n---\n?/, "");
+  const cut = body.search(/^## Report\s*$/m);
+  return (cut < 0 ? body : body.slice(0, cut)).trim();
+}
+
+/** New title and steps for an order that has not started; the body must parse, status and dates stay. */
+export async function editOrder(slug: string, title: string, body: string): Promise<{ ok: boolean; message: string }> {
+  const r = await readOrder(slug);
+  if (!r.meta) return { ok: false, message: r.errors[0] ?? "No such order." };
+  if (!EDITABLE.includes(r.meta.status)) return { ok: false, message: `${slug} is ${r.meta.status}; only an order that has not started can be edited.` };
+  if (title.trim().length < 3) return { ok: false, message: "Give the order a title." };
+  const text = withMeta(`\n${body.trim()}\n`, { ...r.meta, title: title.trim() });
+  const parsed = parseOrder(text);
+  if (parsed.errors.length) return { ok: false, message: parsed.errors.join(" · ") };
+  await writeOrderText(slug, text);
+  const steps = parsed.order!.steps.filter((s) => s.phase === "step").length;
+  return { ok: true, message: `Saved: ${steps} step(s), ${parsed.order!.steps.length - steps} check(s).` };
+}
+
+/** Delete an order that has not started, or one that was cancelled: the note moves to fleet/orders/deleted/. */
+export async function deleteOrder(slug: string): Promise<{ ok: boolean; message: string }> {
+  const r = await readOrder(slug);
+  if (!r.meta) return { ok: false, message: r.errors[0] ?? "No such order." };
+  if (![...EDITABLE, "cancelled"].includes(r.meta.status)) return { ok: false, message: `${slug} is ${r.meta.status}; cancel it first, or keep it for its report.` };
+  const dir = join(ordersDir(), "deleted");
+  await mkdir(dir, { recursive: true });
+  await rename(orderFile(slug)!, join(dir, `${slug}.md`));
+  return { ok: true, message: "Deleted (the note is in fleet/orders/deleted/)." };
+}

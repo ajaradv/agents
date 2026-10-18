@@ -69,6 +69,7 @@ printf '%s\n' "${rows[@]}"
 if [ ${#todo[@]} -eq 0 ]; then
   echo "result: ready"
   echo "next: on the phone, ssh avega@${host:-<mac>.ts.net}, then run herdr"
+  echo "help[1]: bin/phone-check --help"
   exit 0
 fi
 echo "result: ${#todo[@]} of ${#rows[@]} checks need doing"

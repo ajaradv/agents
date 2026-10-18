@@ -35,7 +35,7 @@ import { dashLog } from "./lib/log.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
 import { backfillMetrics } from "./lib/metrics-backfill.ts";
 import { notifyCaptain, onNoticesChange, startDigestClock, type NoticeKind } from "./lib/notify.ts";
-import { checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
+import { captainWrote, checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
 import { nodeToken, tokenMatches } from "./lib/node-auth.ts";
 import { NODE_CODE_VERSION } from "./lib/node-version.ts";
 import type { NodeAgentState, NodeState } from "./lib/node-client.ts";
@@ -475,6 +475,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   if (path === "/v1/captain-line") {
     const line = b.line as ChatLine | undefined;
     if (!line?.ts || typeof line.text !== "string") return Response.json({ ok: false, error: "bad line" }, { status: 400 });
+    captainWrote(agentId);
     await acceptCaptainLine(agentId, line);
     stateChanged();
     return Response.json({ ok: true });

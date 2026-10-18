@@ -31,7 +31,7 @@ import { escapeHtml } from "./lib/quota.ts";
 import { describeGates, runGates } from "./lib/gates.ts";
 import { addSubscription, pushNewNeeds, removeSubscription, sendToAll, subscriptions, validSub, vapidKeys } from "./lib/push.ts";
 import { ackNotice, notifyCaptain, quietState, snooze, wake } from "./lib/notify.ts";
-import { approveOrder, cancelOrder, checkOrderBody, createOrder, retryOrder } from "./lib/order-note.ts";
+import { approveOrder, cancelOrder, checkOrderBody, createOrder, deleteOrder, editOrder, retryOrder } from "./lib/order-note.ts";
 import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
@@ -512,10 +512,16 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return Response.json({ ok: true, message: `Submitted ${r.slug}; Alice starts it when she is free.` });
     }
 
-    const orderAction = path.match(/^\/api\/orders\/(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]{0,63})\/(go|cancel|retry)$/);
+    const orderAction = path.match(/^\/api\/orders\/(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]{0,63})\/(go|cancel|retry|edit|delete)$/);
     if (orderAction && req.method === "POST") {
       const [, slug, action] = orderAction as unknown as [string, string, string];
-      const res = action === "go" ? await approveOrder(slug) : action === "retry" ? await retryOrder(slug) : await cancelOrder(slug);
+      const b = action === "edit" ? ((await req.json().catch(() => ({}))) as { title?: string; body?: string }) : {};
+      const res =
+        action === "go" ? await approveOrder(slug)
+        : action === "retry" ? await retryOrder(slug)
+        : action === "edit" ? await editOrder(slug, String(b.title ?? ""), String(b.body ?? ""))
+        : action === "delete" ? await deleteOrder(slug)
+        : await cancelOrder(slug);
       if (res.ok) {
         await kickNodeOrders();
         sseBroadcast("ship", "fleet");

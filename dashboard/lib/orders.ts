@@ -9,6 +9,7 @@ import { dashLog } from "./log.ts";
 import { callMismatch, listOrders, ORDER_TOOLS, ordersDir, updateOrder, type Order, type OrderStep } from "./order-note.ts";
 import { postBus } from "./bus-post.ts";
 import { getWorkflow, resetSteps, stepFinished, stepStarted, steps as journalSteps, updateWorkflow, upsertWorkflow } from "./journal.ts";
+import { onAgentTool } from "./ship-events.ts";
 import { logShipEvent, recentShipEvents } from "./ship-log.ts";
 import { officerBudgetRefusal } from "./shipyard.ts";
 
@@ -50,6 +51,10 @@ type Running = {
   unplannedReads: string[];
   refused: string[];
   lastActive: number;
+  /** The captain wrote to Alice mid-order: pause after the step being worked on (R2 chat priority). */
+  chatPending?: boolean;
+  /** Paused for the captain's message; resumes by itself once Alice has answered and gone quiet. */
+  chatPaused?: boolean;
 };
 
 let running: Running | null = null;
@@ -86,7 +91,7 @@ function brief(order: Order, from: number): string {
     "2. Check the result against its expect line.",
     `3. Call order_step with order="${order.meta.order}", step=<n>, ok (true when the expect line holds), result (one line on what came back), evidence (event id, task number, timestamp, or path).`,
     `Acceptance checks are items too: run and log each one like a step. Only after the last item call order_finish with status "done". If an item cannot be done as written, call order_step with ok=false and why, then order_finish with status "blocked". Do not improvise around the plan, skip items, or add fleet calls; the server refuses calls that do not match.`,
-    "If the captain messages you meanwhile, answer in a line and carry on.",
+    "If the captain messages you meanwhile, keep going until order_step tells you to pause; then answer the captain and end your turn. The order resumes by itself.",
     "",
     ...(order.intent ? ["Intent (context only, do not act on it):", order.intent, ""] : []),
     "Items:",
@@ -110,6 +115,8 @@ function report(r: Running, outcome: string): string {
   const refused = mine.filter((e) => e.kind === "order-step" && e.payload?.reason === "unplanned").map((e) => e.summary);
   const pauses = mine.filter((e) => e.kind === "order-finish" && e.payload?.ok === false).map((e) => `${e.ts} ${e.summary}`);
   const reads = [...new Set(mine.filter((e) => e.kind === "order-read").map((e) => String(e.payload?.tool ?? "")))];
+  const own = mine.filter((e) => e.kind === "order-tool").map((e) => e.summary.replace(/^Alice used /, ""));
+  const chats = mine.filter((e) => e.kind === "order-chat").length;
   const cell = (s: string, n: number) => s.replace(/\|/g, "\\|").replace(/\s+/g, " ").slice(0, n);
   const rows = r.order.steps.map((s) => {
     const rec = [...steps].reverse().find((e) => e.payload?.step === s.n);
@@ -128,6 +135,8 @@ function report(r: Running, outcome: string): string {
     "",
     refused.length ? refused.map((x) => `- ${x}`).join("\n") : "- every fleet call matched its planned step; nothing unplanned was run",
     ...(reads.length ? [`- reads outside the plan (allowed, they change nothing): ${reads.join(", ")}`] : []),
+    ...(own.length ? [`- Alice's own tools during the order (recorded, not refused): ${own.length}`, ...own.slice(0, 30).map((t) => `  - \`${cell(t, 140)}\``), ...(own.length > 30 ? [`  - … ${own.length - 30} more in the fleet log`] : [])] : []),
+    ...(chats ? [`- paused ${chats} time${chats > 1 ? "s" : ""} to answer the captain`] : []),
     ...(pauses.length ? ["", "**Pauses**", "", ...pauses.map((p) => `- ${p}`)] : []),
   ].join("\n");
 }
@@ -200,6 +209,16 @@ async function resume(order: Order): Promise<void> {
   onChange();
 }
 
+/** Alice answered the captain and went quiet: carry on from the next step. */
+async function resumeAfterChat(r: Running): Promise<void> {
+  r.chatPaused = false;
+  r.chatPending = false;
+  r.lastActive = Date.now();
+  log(r.order, "order-start", `Resumed "${r.order.meta.title}" at step ${r.next} after answering the captain`, { step: r.next, resumed: true });
+  await acceptCrewLine(EXECUTOR, "orders", `${brief(r.order, r.next)}\n\n(Resuming after you answered the captain: steps before ${r.next} are done and logged.)`);
+  onChange();
+}
+
 async function tick(): Promise<void> {
   const all = await listOrders();
   if (!booted) {
@@ -226,7 +245,8 @@ async function tick(): Promise<void> {
       running = null;
       onChange();
     } else if (!hostRunning(EXECUTOR) && !hostWaiting(EXECUTOR) && Date.now() - running.lastActive > STALL_MS) {
-      await pause(`Alice's turn ended at step ${running.next} without finishing the order`);
+      if (running.chatPaused) await resumeAfterChat(running);
+      else await pause(`Alice's turn ended at step ${running.next} without finishing the order`);
     }
     return;
   }
@@ -248,6 +268,7 @@ export function kickOrders(): Promise<void> {
 
 export function startOrderWatcher(changed: () => void = () => {}): void {
   onChange = changed;
+  onAgentTool(noteAgentTool);
   void kickOrders();
   setInterval(() => void kickOrders(), POLL_MS);
   try {
@@ -361,6 +382,13 @@ export async function orderStep(order: string, n: number, ok: boolean, result: s
   if (ok) r.next += 1;
   updateWorkflow(r.slug, { data: { next: r.next } });
   const left = r.order.steps.length - r.next + 1;
+  if (ok && left > 0 && r.chatPending) {
+    r.chatPending = false;
+    r.chatPaused = true;
+    log(r.order, "order-chat", `Paused after step ${n} so Alice can answer the captain`, { step: n });
+    onChange();
+    return { ok: true, message: `Step ${n} logged (event ${event}). The captain wrote to you: answer them now, then end your turn. Do not continue the order in this turn; it resumes at step ${r.next} by itself once you have answered.` };
+  }
   return {
     ok: true,
     message: ok
@@ -395,6 +423,22 @@ export async function orderFinish(order: string, status: "done" | "blocked", why
   onChange();
   setTimeout(() => void kickOrders(), 1000);
   return { ok: true, message: `Order ${r.slug} is done; the report is in the note.` };
+}
+
+/** The captain wrote to an agent; if it is Alice mid-order, she pauses after her current step to answer. */
+export function captainWrote(agentId: string): void {
+  if (running && agentId === EXECUTOR && !running.chatPaused) running.chatPending = true;
+}
+
+/** Alice's own tools while an order runs, tagged with the order in the fleet log (R4: recorded, not refused). */
+const QUIET_TOOLS = new Set([...Object.keys(ORDER_TOOLS), "order_step", "order_finish"]);
+export function noteAgentTool(agentId: string, summary: string): void {
+  const r = running;
+  if (!r || agentId !== EXECUTOR) return;
+  const tool = summary.split(":")[0]!.trim();
+  if (QUIET_TOOLS.has(tool)) return; // fleet calls are logged as order calls already
+  r.lastActive = Date.now();
+  log(r.order, "order-tool", `Alice used ${summary.slice(0, 200)}`, { tool, step: r.next });
 }
 
 /** For tests. */

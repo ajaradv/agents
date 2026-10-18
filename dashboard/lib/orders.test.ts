@@ -156,3 +156,65 @@ describe("independent expect check", () => {
   });
 });
 
+
+describe("chat priority and Alice's own tools", () => {
+  test("the captain's message pauses the order after the current step; it resumes once Alice goes quiet", async () => {
+    orders._resetOrdersForTest();
+    orders._setExpectCheckForTest(async () => null);
+    for (const o of await notes.listOrders()) if (o.meta && !["done", "failed", "cancelled"].includes(o.meta.status)) await notes.updateOrder(o.slug, { status: "cancelled" });
+    const { slug } = await notes.createOrder({ title: "Chat while running", ship: "kinwork", by: "captain", body: BODY, status: "approved" });
+    await orders.kickOrders();
+    expect(orders.runningOrder()?.slug).toBe(slug);
+    // Alice's own tools are tagged with the order; fleet calls are not doubled.
+    orders.noteAgentTool("alice", "bash: git log -3");
+    orders.noteAgentTool("alice", "ship_tasks");
+    orders.noteAgentTool("kinwork-designer", "bash: ls");
+    orders.captainWrote("alice");
+    expect((await orders.checkOrderCall("ship_tasks", { ship: "kinwork" }, true, { order: slug, step: 1 })).ok).toBe(true);
+    const logged = await orders.orderStep(slug, 1, true, "no voyage", "ship_tasks");
+    expect(logged.message).toContain("answer them now");
+    expect(orders.runningOrder()?.chatPaused).toBe(true);
+    // Alice answers and her turn ends: the watcher resumes at step 2 instead of pausing for the captain.
+    orders.runningOrder()!.lastActive = Date.now() - 60_000;
+    await orders.kickOrders();
+    expect(orders.runningOrder()?.slug).toBe(slug);
+    expect(orders.runningOrder()?.chatPaused).toBe(false);
+    expect((await notes.readOrder(slug)).meta!.status).toBe("running");
+    const events = recentShipEvents("fleet", 200).filter((e) => e.payload?.order === slug);
+    expect(events.filter((e) => e.kind === "order-tool").map((e) => e.summary)).toEqual(["Alice used bash: git log -3"]);
+    expect(events.some((e) => e.kind === "order-chat")).toBe(true);
+    // Finish it: the report lists Alice's own tools and the pause.
+    for (const [n, tool, args] of [[2, "fleet_chat", { to: "kinwork-designer", text: "Status, please." }], [3, "agent_chat_read", { agent: "kinwork-designer", n: "3" }]] as const) {
+      expect((await orders.checkOrderCall(tool, args, tool !== "fleet_chat", { order: slug, step: n })).ok).toBe(true);
+      orders.recordOrderCall(n, tool, args, "ok");
+      expect((await orders.orderStep(slug, n, true, "ok", tool)).ok).toBe(true);
+    }
+    expect((await orders.orderFinish(slug, "done", "")).ok).toBe(true);
+    const text = readFileSync(join(notes.ordersDir(), `${slug}.md`), "utf8");
+    expect(text).toContain("Alice's own tools during the order");
+    expect(text).toContain("git log -3");
+    expect(text).toContain("paused 1 time to answer the captain");
+  });
+});
+
+describe("editing and deleting orders", () => {
+  test("an order that has not started can be edited (it must still parse) and deleted; a running one cannot", async () => {
+    const { slug } = await notes.createOrder({ title: "Edit me", ship: "kinwork", by: "claude-code", body: BODY });
+    const before = await notes.readOrder(slug);
+    expect(notes.editableBody(before.text)).toStartWith("## Intent");
+    expect((await notes.editOrder(slug, "Edit me", "## Steps\n\nnot a step\n")).ok).toBe(false);
+    const edited = await notes.editOrder(slug, "Edited", BODY.replace("n=3", "n=5"));
+    expect(edited).toEqual({ ok: true, message: "Saved: 2 step(s), 1 check(s)." });
+    const after = await notes.readOrder(slug);
+    expect(after.meta!.title).toBe("Edited");
+    expect(after.meta!.status).toBe("queued");
+    expect(after.text).toContain("n=5");
+    expect((await notes.deleteOrder(slug)).ok).toBe(true);
+    expect((await notes.readOrder(slug)).meta).toBeNull();
+    expect(readFileSync(join(notes.ordersDir(), "deleted", `${slug}.md`), "utf8")).toContain("Edited");
+    const { slug: busy } = await notes.createOrder({ title: "Busy", ship: "kinwork", by: "captain", body: BODY, status: "running" });
+    expect((await notes.editOrder(busy, "x y z", BODY)).ok).toBe(false);
+    expect((await notes.deleteOrder(busy)).ok).toBe(false);
+    await notes.updateOrder(busy, { status: "cancelled" });
+  });
+});
