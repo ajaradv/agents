@@ -31,3 +31,28 @@ effect at the next launch either way.
 **History:** every write appends to `config_changes` in the metrics database
 (ship, key, old, new, by, why; the helmsman's reason carries over on Apply).
 The deck's Helm section lists recent changes.
+
+## Routines
+
+A ship's recurring work lives under `routines:`, a map by id (so the overlay
+can change one routine or switch it off: `enabled: false`, or `null` to drop
+one the base declares):
+
+```yaml
+routines:
+  helm-review:
+    every: weekly fri 16:30
+    job: helm-review          # reviews this ship; skipped while no helmsman is aboard
+  nightly-checks:
+    every: daily 02:00
+    agent: lead               # a role: runs on <ship>-lead
+    prompt: Run the ship's checks and report anything failing.
+```
+
+- Schedules: `every 6h`, `daily 08:30`, `weekly mon 09:00` (local time).
+- An agent routine is skipped while its role is ashore or over its daily crew
+  budget; its turns count against that budget.
+- Templates carry a default helm review. Fleet-wide routines (node jobs,
+  Alice's weekly report) live in `fleet/config/routines.yaml`.
+- Health > Diagnostics > Routines lists both layers with last run, result, and
+  next run. Engine: `dashboard/lib/routines.ts`.

@@ -17,7 +17,7 @@ import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStat
 import { recoverManeuvers } from "./lib/crew-api.ts";
 import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
 import { startRoutines, type Routine } from "./lib/routines.ts";
-import { findShip } from "./lib/shipyard.ts";
+import { budgetRefusal, findShip } from "./lib/shipyard.ts";
 import { materializeAllShips } from "./lib/ship-config.ts";
 import { freeRegistryAge, refreshFreeModels } from "./lib/free-models.ts";
 import { readShips } from "./lib/fleet-layers.ts";
@@ -194,7 +194,7 @@ function startRuntime(): void {
   const helmReview = async (r: Routine): Promise<string> => {
     const ship = r.ship ? await findShip(r.ship) : undefined;
     if (!ship) throw new Error(`no ship named ${r.ship ?? "(none)"}`);
-    if (!hasHelmsman(ship)) throw new Error(`${ship.id} has no helmsman aboard`);
+    if (!hasHelmsman(ship)) return `skipped: ${ship.id} has no helmsman aboard`;
     await acceptCrewLine(`${ship.id}-helmsman`, "helm", helmDigest(ship, `scheduled review (${r.every})`).slice(0, 8000));
     return `review sent to ${ship.id}-helmsman; proposals appear in Needs you`;
   };
@@ -202,6 +202,7 @@ function startRuntime(): void {
     jobs: { "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview },
     runAgent: async (agentId, text) => void (await acceptCrewLine(agentId, "routine", text)),
     agentExists: (agentId) => allChatTargetIds().includes(agentId),
+    budgetRefusal: (ship, agentId) => budgetRefusal(ship, agentId),
   });
   // Fleet metrics (lib/metrics.ts): import history from ship logs and voyage notes once.
   setTimeout(() => {

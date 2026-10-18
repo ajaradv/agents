@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,8 +8,20 @@ const prev = process.env.FLEET_INBOX;
 process.env.FLEET_INBOX = inbox;
 const { mkdirSync } = await import("node:fs");
 mkdirSync(join(inbox, ".node"), { recursive: true });
+// Ships come from scratch folders, never the real fleet/ships.
+const shipsBase = join(inbox, "ships-base");
+const shipsOverlay = join(inbox, "ships-overlay");
+mkdirSync(shipsBase, { recursive: true });
+mkdirSync(shipsOverlay, { recursive: true });
+const prevShips = { base: process.env.FLEET_SHIPS_DIR, overlay: process.env.FLEET_SHIP_OVERLAY_DIR };
+process.env.FLEET_SHIPS_DIR = shipsBase;
+process.env.FLEET_SHIP_OVERLAY_DIR = shipsOverlay;
 const r = await import("./routines.ts");
 afterAll(() => {
+  for (const [k, v] of [["FLEET_SHIPS_DIR", prevShips.base], ["FLEET_SHIP_OVERLAY_DIR", prevShips.overlay]] as const) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
   if (prev === undefined) delete process.env.FLEET_INBOX;
   else process.env.FLEET_INBOX = prev;
   rmSync(inbox, { recursive: true, force: true });
@@ -33,12 +45,12 @@ describe("routines file", () => {
   test("bad routines are reported and skipped, good ones kept", () => {
     const f = join(inbox, "r.yaml");
     writeFileSync(f, `routines:\n  - { id: ok-one, every: daily 08:00, job: due-tasks }\n  - { id: Bad, every: daily 08:00, job: x }\n  - { id: both, every: daily 08:00, job: x, agent: alice, prompt: hi }\n  - { id: no-prompt, every: daily 08:00, agent: alice }\n  - { id: when, every: sometimes, job: x }\n  - { id: ok-one, every: daily 09:00, job: x }\n`);
-    const { routines, problems } = r.loadRoutines(f);
+    const { routines, problems } = r.loadFleetRoutines(f);
     expect(routines.map((x) => x.id)).toEqual(["ok-one"]);
     expect(problems.length).toBe(5);
   });
   test("the fleet's routines.yaml reads cleanly and names only built-in jobs", () => {
-    const { routines, problems } = r.loadRoutines(join(import.meta.dir, "..", "..", "fleet", "config", "routines.yaml"));
+    const { routines, problems } = r.loadFleetRoutines(join(import.meta.dir, "..", "..", "fleet", "config", "routines.yaml"));
     expect(problems).toEqual([]);
     for (const x of routines) if (x.job) expect(["vault-doctor", "free-models", "due-tasks", "helm-review"]).toContain(x.job);
     for (const x of routines) if (x.job === "helm-review") expect(x.ship).toBeTruthy();
@@ -70,5 +82,38 @@ describe("running routines", () => {
     expect(ran.filter((id) => id === "report")).toEqual(["report"]);
     expect(await r.tickRoutines(new Date(2026, 10, 2, 12, 1), deps, f)).toEqual([]);
     expect(sent.length).toBe(2);
+  });
+});
+
+describe("ship routines", () => {
+  const empty = join(inbox, "empty.yaml");
+  beforeAll(() => {
+    writeFileSync(empty, "routines: []\n");
+    writeFileSync(join(shipsBase, "kinwork.yaml"), "id: kinwork\nroutines:\n  nightly-checks:\n    every: daily 02:00\n    agent: lead\n    prompt: Run the checks and report.\n  helm-review:\n    every: weekly fri 16:30\n    job: helm-review\n  old-one:\n    every: daily 03:00\n    job: helm-review\n  bad:\n    every: sometimes\n    job: helm-review\n");
+    writeFileSync(join(shipsOverlay, "kinwork.yaml"), "routines:\n  helm-review:\n    enabled: false\n  old-one: null\n");
+  });
+  test("a ship's routines come from its merged config: the overlay changes one by id or removes it", () => {
+    const { routines, problems } = r.loadShipRoutines();
+    expect(routines.map((x) => `${x.id}${x.enabled ? "" : " (off)"}`)).toEqual(["kinwork/nightly-checks", "kinwork/helm-review (off)"]);
+    expect(routines.every((x) => x.layer === "kinwork" && x.ship === "kinwork")).toBe(true);
+    expect(problems).toEqual(['kinwork/bad has a schedule the node does not read: "sometimes"']);
+  });
+  test("a ship routine runs on the role aboard that ship; skipped while the role is ashore or over budget", async () => {
+    const sent: string[] = [];
+    let aboard = false;
+    let broke = false;
+    const deps = { jobs: {}, runAgent: async (a: string) => void sent.push(a), agentExists: (a: string) => aboard && a === "kinwork-lead", budgetRefusal: async () => (broke ? "kinwork-lead has spent its budget" : null) };
+    await r.tickRoutines(new Date(2026, 9, 20, 1, 0), deps, empty); // schedules for 02:00
+    await r.tickRoutines(new Date(2026, 9, 20, 2, 1), deps, empty);
+    expect(sent).toEqual([]);
+    expect(r.routinesHtml()).toContain("skipped: lead is not aboard kinwork");
+    aboard = true;
+    broke = true;
+    await r.tickRoutines(new Date(2026, 9, 21, 2, 1), deps, empty);
+    expect(sent).toEqual([]);
+    expect(r.routinesHtml()).toContain("skipped: kinwork-lead has spent its budget");
+    broke = false;
+    await r.tickRoutines(new Date(2026, 9, 22, 2, 1), deps, empty);
+    expect(sent).toEqual(["kinwork-lead"]);
   });
 });

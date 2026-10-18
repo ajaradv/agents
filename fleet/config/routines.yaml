@@ -7,6 +7,9 @@
 #   agent     an agent id: it gets `prompt` as a message and a turn, and reports with notify_captain
 #   job       or a built-in node job: vault-doctor, free-models, due-tasks, helm-review (needs `ship`)
 #   enabled   false to keep a routine declared but off (default true)
+#
+# A ship's own routines (its helm review, a nightly check sweep) live under
+# `routines:` in fleet/ships/<ship>.yaml or its overlay; see docs/ship-config.md.
 
 routines:
   # Node jobs (these were hard-coded timers before).
@@ -24,20 +27,6 @@ routines:
     title: Due vault tasks (a notice the day one comes due)
     every: every 3h
     job: due-tasks
-
-  # Reviews.
-  - id: fleet-helm-review
-    title: Fleet helmsman reviews the fleet's own tools
-    every: weekly fri 16:00
-    job: helm-review
-    ship: fleet
-
-  - id: pochteca-helm-review
-    title: Pochteca helmsman reviews the ship
-    every: weekly fri 16:30
-    job: helm-review
-    ship: pochteca
-    enabled: false
 
   # Agent routines.
   - id: weekly-fleet-report

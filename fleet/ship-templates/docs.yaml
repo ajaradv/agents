@@ -4,3 +4,10 @@ checks:
   lint: npx --yes markdownlint-cli2 "**/*.md"
 gates:
   dock: [lint]
+
+# Routines (lib/routines.ts): the helm review skips itself while no helmsman is aboard.
+routines:
+  helm-review:
+    title: Helmsman reviews the ship
+    every: weekly fri 16:30
+    job: helm-review

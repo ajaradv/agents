@@ -4,3 +4,10 @@ orchestrator: firstmate
 crew: []
 factory: null
 mode: local-only
+
+# Routines this ship runs on its own (lib/routines.ts; Health > Diagnostics > Routines).
+routines:
+  helm-review:
+    title: Fleet helmsman reviews the fleet's own tools
+    every: weekly fri 16:00
+    job: helm-review
