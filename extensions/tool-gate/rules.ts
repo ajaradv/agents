@@ -51,6 +51,8 @@ function secretPath(p: string, home: string): string | null {
     [new RegExp(`^${esc(h)}/\\.config/(op|gh|gcloud)(/|$)`), "a credentials folder"],
     [new RegExp(`^${esc(h)}/\\.pi/agent/auth\\.json$`), "pi's stored logins"],
     [new RegExp(`^${esc(h)}/Library/Keychains(/|$)`), "the keychain"],
+    // macOS asks the captain to approve these ("bun would like to access data from other apps").
+    [new RegExp(`^${esc(h)}/Library/(Containers(/|$)|Group( |\\\\|$))`), "another app's data"],
     [/(^|\/)\.env(\.(local|production|development|prod|dev|test))?$/, "an .env file"],
     [/(^|\/)fleet\/home\/\.env$/, "the fleet's 1Password environment"],
     [/\.(pem|p12|pfx|key)$/, "a private key file"],
@@ -94,6 +96,8 @@ const DANGER: [RegExp, string][] = [
   [/\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+)+(\/|~|\$HOME|\/Users\/?[a-z]*\/?|\.\.)(\s|$|\/\*?(\s|$))/, "deletes a home or root folder"],
   [/\b(mkfs|diskutil\s+(erase|partition)|dd\s+[^;]*of=\/dev\/)/, "erases a disk"],
   [/\b(op\s+(read|item\s+get|inject|run)|security\s+(find-generic-password|find-internet-password|dump-keychain))\b/, "reads secrets"],
+  // The op CLI looks into the 1Password app's data on start, which asks the captain; agents get keys in their environment.
+  [/(^|[\s;&|(])op\s+(whoami|signin|vault|item|account|document|user|group|connect|service-account|plugin|events-api)\b/, "runs the 1Password CLI"],
   [/\bchmod\s+(-R\s+)?777\s+\//, "opens permissions on system folders"],
   [/\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f)\b.*\b(origin\/)?(main|master)\b/, "throws away work on main"],
 ];
