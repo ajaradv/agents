@@ -23,6 +23,8 @@ import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
 import { toolFailuresHtml } from "./lib/tool-failures.ts";
 import { vaultDoctorHtml } from "./lib/vault-doctor.ts";
 import { toolGateHtml } from "./lib/tool-gate.ts";
+import { jevHtml } from "./lib/compaction-advisor.ts";
+import { jevSpend } from "./lib/jev.ts";
 import { escapeHtml } from "./lib/quota.ts";
 import { describeGates, runGates } from "./lib/gates.ts";
 import { addSubscription, pushNewNeeds, removeSubscription, sendToAll, subscriptions, validSub, vapidKeys } from "./lib/push.ts";
@@ -530,6 +532,9 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       });
     }
 
+    if (path === "/partials/jev" && req.method === "GET") {
+      return new Response(jevHtml(escapeHtml, jevSpend(7)), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
     if (path === "/partials/tool-gate" && req.method === "GET") {
       return new Response(toolGateHtml(escapeHtml), { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }

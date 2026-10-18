@@ -26,6 +26,7 @@ import { toolText, VIEWS } from "./lib/tool-out.ts";
 import { VAULT_FILTERS, vaultTasksReport, type VaultFilter } from "./lib/vault-tasks.ts";
 import { scheduledVaultCheck } from "./lib/vault-doctor.ts";
 import { decideGate, judgeCall, recordLocalStop, screenResult } from "./lib/tool-gate.ts";
+import { adviseCompaction, cutPoint } from "./lib/compaction-advisor.ts";
 import { dashLog } from "./lib/log.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
 import { backfillMetrics } from "./lib/metrics-backfill.ts";
@@ -368,6 +369,16 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     const input = b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
     recordLocalStop({ agent: from, tool: String(b.tool ?? ""), input, cwd: String(b.cwd ?? ""), why: String(b.why ?? "").slice(0, 200) });
     return Response.json({ ok: true });
+  }
+  // The compaction advisor (lib/compaction-advisor.ts), asked by context-guard after a settled run.
+  if ((path === "/api/compaction/advise" || path === "/api/compaction/cut") && req.method === "POST") {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ ok: false }, { status: 403 });
+    const b = await body(req);
+    if (path === "/api/compaction/cut") return Response.json({ instructions: await cutPoint(Array.isArray(b.requests) ? b.requests.map(String) : []) });
+    const st = (b.state ?? {}) as Record<string, unknown>;
+    const state = { current_request: String(st.current_request ?? ""), previous_work: String(st.previous_work ?? ""), recent_turn: String(st.recent_turn ?? ""), tools_this_turn: Array.isArray(st.tools_this_turn) ? st.tools_this_turn.map(String) : [] };
+    return Response.json(await adviseCompaction({ agent: from, mode: String(b.mode ?? "observe"), tokens: Number(b.tokens) || 0, percent: Number(b.percent) || 0, state }));
   }
   if (path === "/api/gate/screen" && req.method === "POST") {
     const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
