@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   acceptCaptainLine,
+  acceptCrewLine,
   getAllLastChatTurns,
   getHeadlessChatState,
   registerChatBroadcaster,
@@ -14,7 +15,9 @@ import { allChatTargetIds, chatAllowed, chatTarget, refreshAgentTargets, startCh
 import type { ChatLine } from "./lib/chat.ts";
 import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
-import { helmPropose } from "./lib/helm.ts";
+import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
+import { startRoutines, type Routine } from "./lib/routines.ts";
+import { findShip } from "./lib/shipyard.ts";
 import { materializeAllShips } from "./lib/ship-config.ts";
 import { freeRegistryAge, refreshFreeModels } from "./lib/free-models.ts";
 import { readShips } from "./lib/fleet-layers.ts";
@@ -151,32 +154,25 @@ function startRuntime(): void {
   startRecallIndexer();
   // Ship config (lib/ship-config.ts): the merged view of every ship, as JSON for bin/launch.
   void readShips().then((ships) => materializeAllShips(ships.map((s) => s.id))).catch((e) => console.error("[node] ship config:", e));
-  // Free model lanes (lib/free-models.ts): refresh the registry when it is a day old (checked every 6 hours).
-  const freeRefresh = () => {
+  // Routines (lib/routines.ts, fleet/config/routines.yaml): the jobs below and agent routines, on their schedules.
+  // Free model lanes (lib/free-models.ts): refresh the registry when it is a day old.
+  const freeRefresh = async (): Promise<string> => {
     const age = freeRegistryAge();
-    if (age && Date.now() - Date.parse(age) < 20 * 3_600_000) return;
-    void refreshFreeModels()
-      .then((n) => n && console.error(`[node] free models: ${JSON.stringify(n)}`))
-      .catch((e) => console.error("[node] free models:", e));
+    if (age && Date.now() - Date.parse(age) < 20 * 3_600_000) return "registry is fresh";
+    const n = await refreshFreeModels();
+    return n ? `refreshed: ${JSON.stringify(n).slice(0, 200)}` : "refreshed";
   };
-  setTimeout(freeRefresh, 60_000);
-  setInterval(freeRefresh, 6 * 3_600_000);
   // Vault doctor (lib/vault-doctor.ts): check the vault soon after start and every 6 hours; a notice only for new problems.
-  const vaultCheck = () => {
-    try {
-      const { result, fresh } = scheduledVaultCheck();
-      if (fresh.length) {
-        notifyCaptain({ from: "vault-doctor", kind: "info", summary: `Vault doctor: ${fresh.length} new problem${fresh.length > 1 ? "s" : ""} (${result.problems.length} in all)`, detail: fresh.slice(0, 8).map((p) => `${p.note}: ${p.detail}`).join("\n"), ref: "health/diagnostics" });
-      }
-    } catch (e) {
-      console.error("[node] vault doctor:", e);
+  const vaultCheck = (): string => {
+    const { result, fresh } = scheduledVaultCheck();
+    if (fresh.length) {
+      notifyCaptain({ from: "vault-doctor", kind: "info", summary: `Vault doctor: ${fresh.length} new problem${fresh.length > 1 ? "s" : ""} (${result.problems.length} in all)`, detail: fresh.slice(0, 8).map((p) => `${p.note}: ${p.detail}`).join("\n"), ref: "health/diagnostics" });
     }
+    return `${result.problems.length} problem${result.problems.length === 1 ? "" : "s"}${fresh.length ? `, ${fresh.length} new` : ""}`;
   };
-  setTimeout(vaultCheck, 3 * 60_000);
-  setInterval(vaultCheck, 6 * 3_600_000);
   // Due vault tasks (lib/vault-tasks.ts): a notice the day a task with a due: date comes due, once per task and date.
-  const dueCheck = () => {
-    try {
+  const dueCheck = (): string => {
+    {
       const file = join(nodeStateDir(), "due-reminded.json");
       let sent: string[] = [];
       try {
@@ -191,12 +187,22 @@ function startRuntime(): void {
         sent.push(`${t.id}@${t.due}`);
       }
       if (fresh.length) writeFileSync(file, JSON.stringify(sent.slice(-500)), "utf8");
-    } catch (e) {
-      console.error("[node] due tasks:", e);
+      return fresh.length ? `${fresh.length} reminder${fresh.length > 1 ? "s" : ""} sent` : "nothing due";
     }
   };
-  setTimeout(dueCheck, 4 * 60_000);
-  setInterval(dueCheck, 3 * 3_600_000);
+  // Helm review (lib/helm.ts): the ship's helmsman gets the review digest as a crew message, and a turn.
+  const helmReview = async (r: Routine): Promise<string> => {
+    const ship = r.ship ? await findShip(r.ship) : undefined;
+    if (!ship) throw new Error(`no ship named ${r.ship ?? "(none)"}`);
+    if (!hasHelmsman(ship)) throw new Error(`${ship.id} has no helmsman aboard`);
+    await acceptCrewLine(`${ship.id}-helmsman`, "helm", helmDigest(ship, `scheduled review (${r.every})`).slice(0, 8000));
+    return `review sent to ${ship.id}-helmsman; proposals appear in Needs you`;
+  };
+  startRoutines({
+    jobs: { "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview },
+    runAgent: async (agentId, text) => void (await acceptCrewLine(agentId, "routine", text)),
+    agentExists: (agentId) => allChatTargetIds().includes(agentId),
+  });
   // Fleet metrics (lib/metrics.ts): import history from ship logs and voyage notes once.
   setTimeout(() => {
     try {
