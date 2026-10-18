@@ -25,7 +25,10 @@ export type GateHold = GateCall & { id: string; ts: string; summary: string; jev
 type Jev = (call: GateCall) => Promise<{ choice: "safe" | "inspect" | "stop"; confidence: number } | { error: string }>;
 
 const ALLOW_FOR_MS = 30 * 60_000;
-const CONFIDENT = 0.6;
+/** Jev's answer counts when its pick has a majority (safe) or a clear lead (stop); anything less is held. */
+const SAFE_MIN = 0.5;
+const STOP_MIN = 0.6;
+const confident = (v: { choice: string; confidence: number }) => (v.choice === "safe" ? v.confidence >= SAFE_MIN : v.choice === "stop" ? v.confidence >= STOP_MIN : false);
 
 const LOG = `CREATE TABLE IF NOT EXISTS gate_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, agent TEXT NOT NULL, tool TEXT NOT NULL,
@@ -134,7 +137,7 @@ export async function judgeCall(c: GateCall, jev: Jev = askJev, opts: { observe?
   const summary = describeCall(c);
   if (opts.observe) {
     const v = await jev(c);
-    const would = "error" in v || v.choice === "inspect" || v.confidence < CONFIDENT ? "hold" : v.choice === "safe" ? "allow" : "stop";
+    const would = "error" in v || !confident(v) ? "hold" : v.choice === "safe" ? "allow" : "stop";
     log(c, `observe-${would}`, "error" in v ? "fallback" : "jev", "error" in v ? v.error : `${v.choice} ${v.confidence}`);
     return { decision: "allow", source: "error" in v ? "fallback" : "jev", message: `Observed (the gate would ${would} this).` };
   }
@@ -143,7 +146,7 @@ export async function judgeCall(c: GateCall, jev: Jev = askJev, opts: { observe?
     return { decision: "allow", source: "allowance", message: "Allowed by the captain." };
   }
   const v = await jev(c);
-  if ("error" in v || v.choice === "inspect" || v.confidence < CONFIDENT) {
+  if ("error" in v || !confident(v)) {
     const jevSays = "error" in v ? v.error : `Jev: ${v.choice} (${Math.round(v.confidence * 100)}%)`;
     return hold(c, summary, jevSays, "error" in v ? "fallback" : "jev");
   }

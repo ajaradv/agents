@@ -214,7 +214,7 @@ every assistant by `bin/launch`). Two layers:
 2. **Jev** (`dashboard/lib/tool-gate.ts`), for the asked calls: one choice
    question with secrets redacted, about 0.1–0.3 s. safe → allowed;
    stop → blocked and logged (ship log, Health tool failures); inspect or
-   unsure (under 60%) → held in Needs you with **Allow once** / **Deny**. With
+   unsure (safe under 50%, stop under 60%) → held in Needs you with **Allow once** / **Deny**. With
    no answer from Jev or the node, the call is held or blocked, never allowed.
 
 **Mode** (`FLEET_TOOL_GATE`, default `observe`): `observe` enforces the local
@@ -225,8 +225,10 @@ disables the gate. Health > Diagnostics shows the gate's last day. Switch to
 
 Measured on last week's 985 fleet tool calls: the local rules decide 89%
 (allow) and send 11% to Jev; none stopped. Before calibration Jev would have
-held 14 of 20 sampled asked calls, mostly harmless scratch edits, which is why
-the gate starts in observe mode.
+held 14 of 20 sampled asked calls, mostly harmless scratch edits. With its
+question naming the agent's folders and what normal work looks like, 7 of 20;
+with safe accepted at a majority, about 3 of 20 (1–2% of all calls). The gate
+starts in observe mode to confirm that on real traffic before enforcing.
 
 Not covered yet: Firstmate (an orchestrator with its own pipeline) does not load
 the gate; Cursor agents started by the `cursor` tool run their own tools,
