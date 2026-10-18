@@ -2,6 +2,7 @@
 // Fleet orders: queue work for Alice to carry out exactly as written
 // (vault fleet/orders/<yyyy-mm-dd>-<slug>.md; format in dashboard/lib/order-note.ts).
 //
+//   bin/order                       the orders, newest first, with counts by status
 //   bin/order new --ship kinwork --by claude-code --title "Kinwork status round" < body.md
 //   bin/order check <slug | path/to/body-or-note.md>
 //   bin/order list [--status queued]
@@ -10,23 +11,106 @@
 //
 // The body has ## Intent, ## Steps (numbered, one fleet tool call each, with an
 // indented expect: line), and optional ## Acceptance (read tools). `new` and
-// `check` print every problem with its line number.
+// `check` print every problem with its line number. Output is TOON
+// (docs/tool-standards.md); errors go to stdout with a suggestion.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { encode } from "@toon-format/toon";
 import { approveOrder, cancelOrder, createOrder, listOrders, ORDER_STATUSES, parseOrder, readOrder, withMeta, type OrderMeta } from "../dashboard/lib/order-note.ts";
 import { NODE_PORT, nodeStateDir } from "../dashboard/lib/paths.ts";
 
 const [cmd, ...rest] = process.argv.slice(2);
+
+const HELP: Record<string, string> = {
+  "": `command: order
+summary: Queue fleet orders for Alice, check them, list them, and approve or cancel them
+usage: bin/order [new|check|list|approve|cancel] ...
+commands[5]{command,what}:
+  new,"write a queued order from a body on stdin (--ship, --by, --title)"
+  check,validate an order or a body file and show its steps
+  list,"list orders, optionally by --status"
+  approve,give the captain's Go to a queued order
+  cancel,cancel an order
+flags[1]{flag,description}:
+  --help,"show this help (also after a command, e.g. bin/order new --help)"
+examples[3]:
+  bin/order
+  bin/order list --status queued
+  bin/order check 2026-10-18-kinwork-status`,
+  new: `command: order new
+summary: Write a queued order from a body read on stdin (## Intent, ## Steps, optional ## Acceptance)
+usage: bin/order new --ship <ship> --by <who> --title "<title>" < body.md
+flags[4]{flag,default,description}:
+  --title,,the order's title (required)
+  --by,,who submits it (required; captain means approved at once)
+  --ship,fleet,the ship it is about
+  --help,,show this help
+examples[2]:
+  bin/order new --ship kinwork --by claude-code --title "Kinwork status round" < body.md
+  bin/order new --by alice --title "Dock pochteca" < dock.md`,
+  check: `command: order check
+summary: Validate an order (by slug) or a body or note file, and count its steps
+usage: bin/order check <slug | file>
+flags[1]{flag,description}:
+  --help,show this help
+examples[2]:
+  bin/order check 2026-10-18-kinwork-status
+  bin/order check ./body.md`,
+  list: `command: order list
+summary: List orders, newest first
+usage: bin/order list [--status <status>]
+flags[2]{flag,default,description}:
+  --status,,"only orders with this status (${ORDER_STATUSES.join(", ")})"
+  --help,,show this help
+examples[2]:
+  bin/order list
+  bin/order list --status queued`,
+  approve: `command: order approve
+summary: Give the captain's Go to a queued order (the dashboard's Go button does the same)
+usage: bin/order approve <slug>
+flags[1]{flag,description}:
+  --help,show this help
+examples[1]:
+  bin/order approve 2026-10-18-kinwork-status`,
+  cancel: `command: order cancel
+summary: Cancel an order
+usage: bin/order cancel <slug>
+flags[1]{flag,description}:
+  --help,show this help
+examples[1]:
+  bin/order cancel 2026-10-18-kinwork-status`,
+};
+
+const FLAGS: Record<string, string[]> = { new: ["--title", "--by", "--ship"], check: [], list: ["--status"], approve: [], cancel: [] };
+
+function out(o: Record<string, unknown>): void {
+  console.log(encode(o));
+}
+
+function fail(message: string, suggestion: string, code = 1): never {
+  out({ error: message, suggestion });
+  process.exit(code);
+}
+
+/** Reject flags the command does not know (they would otherwise be ignored silently). */
+function checkFlags(command: string): void {
+  const known = FLAGS[command] ?? [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (!a.startsWith("--")) continue;
+    if (!known.includes(a)) fail(`unknown flag ${a} for ${command}`, `valid flags: ${[...known, "--help"].join(", ")}`, 2);
+    i++;
+  }
+}
 
 function flag(name: string): string {
   const i = rest.indexOf(`--${name}`);
   return i >= 0 ? (rest[i + 1] ?? "") : "";
 }
 
-function die(msg: string, code = 1): never {
-  console.error(msg);
-  process.exit(code);
+function positional(): string | undefined {
+  return rest.find((a, i) => !a.startsWith("--") && !(i > 0 && rest[i - 1]!.startsWith("--")));
 }
 
 /** Tell a running fleet node to look at the orders now (it also polls every 15s). */
@@ -44,21 +128,57 @@ async function kick(): Promise<void> {
   }
 }
 
+async function rows(status = "") {
+  return (await listOrders())
+    .map((o) => ({ slug: o.slug, status: o.meta?.status ?? "malformed", by: o.meta?.submitted_by ?? "", title: o.meta?.title ?? o.errors[0] ?? "" }))
+    .filter((o) => !status || o.status === status);
+}
+
 async function main(): Promise<void> {
+  if (cmd === "--help" || cmd === "-h" || (cmd && rest.includes("--help"))) {
+    const h = HELP[cmd.startsWith("-") ? "" : cmd];
+    if (h === undefined) fail(`unknown command ${cmd}`, "commands: new, check, list, approve, cancel (bin/order --help)", 2);
+    console.log(h);
+    return;
+  }
+  if (cmd === "--version" || cmd === "-v" || cmd === "-V") {
+    console.log("1.0.0");
+    return;
+  }
+  if (!cmd) {
+    const all = await rows();
+    const counts = Object.fromEntries(ORDER_STATUSES.map((s) => [s, all.filter((o) => o.status === s).length]).filter(([, n]) => n));
+    out({
+      bin: "~/Workspace/agents/bin/order",
+      description: "Fleet orders: work Alice carries out exactly as written, after the captain's Go",
+      ...(all.length ? { counts, orders: all.slice(0, 15) } : { orders: "0 orders in the vault" }),
+      ...(all.length > 15 ? { more: `${all.length - 15} older; bin/order list for all` } : {}),
+      help: ['bin/order new --ship <ship> --by <who> --title "<title>" < body.md', "bin/order check <slug>", "bin/order --help"],
+    });
+    return;
+  }
+  if (!(cmd in FLAGS)) fail(`unknown command ${cmd}`, "commands: new, check, list, approve, cancel (bin/order --help)", 2);
+  checkFlags(cmd);
+
   if (cmd === "new") {
     const title = flag("title");
     const ship = flag("ship") || "fleet";
     const by = flag("by");
-    if (!title || !by) die('usage: bin/order new --ship <ship> --by <who> --title "..." < body.md');
+    if (!title || !by) fail("--title and --by are required", 'bin/order new --ship <ship> --by <who> --title "<title>" < body.md', 2);
     const body = await new Response(Bun.stdin.stream()).text();
+    if (!body.trim()) fail("no order body on stdin", "pipe the body in: bin/order new ... < body.md", 2);
     const r = await createOrder({ title, ship, by, body, status: by === "captain" ? "approved" : "queued" });
-    if (r.errors.length) die(`order not written:\n${r.errors.map((e) => `  ${e}`).join("\n")}`);
-    console.log(r.slug);
+    if (r.errors.length) {
+      out({ error: "order not written", problems: r.errors, suggestion: "fix the lines named above, then run it again (bin/order check <file> checks without writing)" });
+      process.exit(1);
+    }
+    out({ ok: `order ${r.slug} written`, status: by === "captain" ? "approved" : "queued", ...(by === "captain" ? {} : { next: `the captain approves it (bin/order approve ${r.slug}, or Go on the dashboard)` }) });
     await kick();
     return;
   }
   if (cmd === "check") {
-    const target = rest[0] ?? die("usage: bin/order check <slug | file>");
+    const target = positional();
+    if (!target) fail("check needs a slug or a file", "bin/order check <slug | file> (bin/order lists slugs)", 2);
     let text: string;
     if (existsSync(target)) {
       text = readFileSync(target, "utf8");
@@ -69,33 +189,31 @@ async function main(): Promise<void> {
       }
     } else {
       const r = await readOrder(target);
-      if (!r.text) die(r.errors.join("\n"));
+      if (!r.text) fail(r.errors.join("; ") || `no order ${target}`, "bin/order lists the orders", 1);
       text = r.text;
     }
     const { order, errors } = parseOrder(text);
-    if (errors.length) die(errors.map((e) => `  ${e}`).join("\n"));
-    console.log(`ok: ${order!.steps.filter((s) => s.phase === "step").length} step(s), ${order!.steps.filter((s) => s.phase === "acceptance").length} acceptance check(s)`);
+    if (errors.length) {
+      out({ error: `${errors.length} problem(s)`, problems: errors, suggestion: "fix the lines named, then check again" });
+      process.exit(1);
+    }
+    const steps = order!.steps.filter((s) => s.phase === "step");
+    out({ ok: `${steps.length} step(s), ${order!.steps.length - steps.length} acceptance check(s)`, steps: steps.map((s) => ({ n: s.n, tool: s.tool })) });
     return;
   }
   if (cmd === "list") {
     const want = flag("status");
-    if (want && !ORDER_STATUSES.includes(want as never)) die(`--status is one of ${ORDER_STATUSES.join(", ")}`);
-    for (const o of await listOrders()) {
-      const status = o.meta?.status ?? "malformed";
-      if (want && status !== want) continue;
-      console.log(`${o.slug}\t${status}\t${o.meta?.submitted_by ?? ""}\t${o.meta?.title ?? o.errors[0] ?? ""}`);
-    }
+    if (want && !ORDER_STATUSES.includes(want as never)) fail(`unknown status ${want}`, `--status is one of ${ORDER_STATUSES.join(", ")}`, 2);
+    const list = await rows(want);
+    out(list.length ? { count: list.length, orders: list } : { orders: `0 orders${want ? ` with status ${want}` : ""}` });
     return;
   }
-  if (cmd === "approve" || cmd === "cancel") {
-    const slug = rest[0] ?? die(`usage: bin/order ${cmd} <slug>`);
-    const r = cmd === "approve" ? await approveOrder(slug) : await cancelOrder(slug);
-    if (!r.ok) die(r.message);
-    console.log(`${slug}: ${r.message}`);
-    await kick();
-    return;
-  }
-  die("usage: bin/order new|check|list|approve|cancel (see the header of bin/order)");
+  const slug = positional();
+  if (!slug) fail(`${cmd} needs a slug`, `bin/order ${cmd} <slug> (bin/order lists slugs)`, 2);
+  const r = cmd === "approve" ? await approveOrder(slug) : await cancelOrder(slug);
+  if (!r.ok) fail(r.message, "bin/order lists the orders and their status", 1);
+  out({ ok: `${slug}: ${r.message}` });
+  await kick();
 }
 
 await main();

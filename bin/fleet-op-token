@@ -22,14 +22,14 @@ check() {
   [ "${#t}" -gt 300 ] || { echo "error: the token is only ${#t} characters; it was probably cut short"; return 1; }
   local vaults
   vaults="$(OP_SERVICE_ACCOUNT_TOKEN="$t" op vault list --format json 2>&1)" || { echo "error: 1Password refused it: $(printf '%s' "$vaults" | head -c 160)"; return 1; }
-  printf '%s' "$vaults" | python3 -c 'import json,sys; print("vaults: " + ", ".join(v["name"] for v in json.load(sys.stdin)))'
+  printf '%s' "$vaults" | python3 -c 'import json,sys; v=[x["name"] for x in json.load(sys.stdin)]; print(f"vaults[{len(v)}]: " + ",".join(v))'
 }
 
 case "${1:-}" in
   "")
     t="$(security find-generic-password -a "$ACCOUNT" -s "$SERVICE" -w 2>/dev/null || true)"
     if [ -z "$t" ]; then echo "result: no token stored"; echo "help[1]:"; echo "  bin/fleet-op-token --store"; exit 0; fi
-    if out="$(check "$t")"; then echo "result: token works (${#t} characters)"; echo "$out"; else echo "result: stored token does not work"; echo "$out"; echo "help[1]:"; echo "  bin/fleet-op-token --store"; fi
+    if out="$(check "$t")"; then echo "result: token works (${#t} characters)"; echo "$out"; echo "help[2]:"; echo "  bin/fleet-op-token --store"; echo "  bin/fleet-secrets | <reader>"; else echo "result: stored token does not work"; echo "$out"; echo "help[1]:"; echo "  bin/fleet-op-token --store"; fi
     unset t; exit 0 ;;
   --store)
     printf 'Paste the service account token, then press Return (nothing is shown): ' >&2

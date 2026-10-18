@@ -9,7 +9,8 @@ Usage:
 Refuses an id that already has agents/<id>/ or roles/<id>.md. Extensions are
 checked against agents/config.yaml (npm) or extensions/<name>.ts (local), the
 same rule bin/launch applies. The dashboard rail picks the agent up from
-agent.yaml on its next refresh; no dashboard change is needed.
+agent.yaml on its next refresh; no dashboard change is needed. With no
+arguments it lists the registered agents.
 """
 from __future__ import annotations
 
@@ -19,6 +20,8 @@ import importlib.util
 import re
 import sys
 from pathlib import Path
+
+import axi_cli
 
 ROOT = Path(__file__).resolve().parent.parent
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
@@ -132,8 +135,32 @@ def add_vault_inbox(text: str, agent_id: str) -> str:
     return text[: m.start()] + line + text[m.end() :]
 
 
+def home() -> int:
+    """No arguments: the registered agents (agents/<id>/agent.yaml)."""
+    rows = []
+    for y in sorted((ROOT / "agents").glob("*/agent.yaml")):
+        text = y.read_text()
+        get = lambda k: (re.search(rf"^{k}:\s*(.+)$", text, re.M) or [None, ""])[1].strip()
+        rows.append({"id": y.parent.name, "type": get("type"), "model": get("model"), "workspace": get("workspace")})
+    print("bin: ~/Workspace/agents/bin/new-agent")
+    print("description: Scaffold a registered agent: agent.yaml, role, just recipe, inbox, README row")
+    print(axi_cli.table("agents", ["id", "type", "model", "workspace"], rows))
+    print(axi_cli.hints(['bin/new-agent <id> --model <model> --description "<one sentence>" --dry-run', "bin/new-agent --help"]))
+    return 0
+
+
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    if len(sys.argv) == 1:
+        return home()
+    p = axi_cli.Parser(
+        prog="bin/new-agent",
+        description=__doc__,
+        examples=[
+            'bin/new-agent reviewer --model openrouter/anthropic/claude-sonnet-5.5 --description "Reviews pull requests" --dry-run',
+            "bin/new-agent tester --model deepseek/deepseek-flash --type crew --workspace ships --dry-run",
+            'bin/new-agent scribe --model cursor/composer-2.5 --workspace vault --why "cheap long-form notes"',
+        ],
+    )
     p.add_argument("id")
     p.add_argument("--model", required=True)
     p.add_argument("--type", default="assistant", choices=TYPES)
@@ -146,13 +173,11 @@ def main() -> int:
     sys.stdout.reconfigure(line_buffering=True)
 
     if not ID_RE.match(a.id):
-        print(f"error: id must match {ID_RE.pattern}", file=sys.stderr)
-        return 2
+        return axi_cli.fail(f"id must match {ID_RE.pattern}", "use lowercase letters, digits, and -, starting with a letter", code=2)
     agent_dir = ROOT / "agents" / a.id
     role_file = ROOT / "roles" / f"{a.id}.md"
     if agent_dir.exists() or role_file.exists():
-        print(f"error: {a.id} already exists ({agent_dir} or {role_file})", file=sys.stderr)
-        return 1
+        return axi_cli.fail(f"{a.id} already exists ({agent_dir.relative_to(ROOT)} or {role_file.relative_to(ROOT)})", "pick another id (bin/new-agent lists the agents)")
 
     extensions = [e.strip() for e in a.extensions.split(",") if e.strip()]
     launch = load_launch()
@@ -160,8 +185,7 @@ def main() -> int:
     for e in extensions:
         ok, _ref = launch.extension_allowed(e, a.type, reg)
         if not ok:
-            print(f"error: extension {e!r} is not allowed for type {a.type} (see agents/config.yaml)", file=sys.stderr)
-            return 1
+            return axi_cli.fail(f"extension {e} is not allowed for type {a.type}", "see agents/config.yaml for allowed extensions, or drop it from --extensions", code=2)
 
     justfile = ROOT / "justfile"
     readme = ROOT / "README.md"

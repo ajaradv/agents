@@ -53,7 +53,7 @@ may call it.
 |---|---|
 | Strict typecheck of the dashboard, node, and the extensions the fleet loads | `just typecheck`; `dashboard/lib/typecheck.test.ts` |
 | Every read tool has a view; views stay bounded; definitions stay short | `dashboard/lib/tool-standards.test.ts` |
-| A CLI meets AXI | `just axi-check "<command>"` |
+| A CLI meets AXI | `just axi-check "<command>"`; all scripts agents run: `just axi-check-scripts` |
 
 `just test` runs the first two. The Shipwright builds to this page (skill
 `skills/tool-standards`); a helmsman aboard the `fleet` ship may review tool
@@ -61,7 +61,11 @@ evidence (failures, oversized outputs) against it and propose fixes.
 
 ## Known gaps (2026-10-18)
 
-- The scripts agents run (`bin/stamp-ship`, `bin/new-agent`, `bin/order`,
-  `bin/plan-execution.ts`, `bin/agent-portrait`) each fail three axi-axi checks:
-  no-args prints usage and exits 2, `--help` has no examples, errors go to stderr.
 - Vendored extensions the fleet does not load are outside the typecheck.
+- Firstmate's own scripts (`fleet/home/bin/fm-*`) belong to the Firstmate home and are not checked here.
+
+The scripts agents run (`bin/stamp-ship`, `bin/new-agent`, `bin/order`,
+`bin/plan-execution.ts`, `bin/agent-portrait`, `bin/vault-doctor`,
+`bin/phone-check`, `bin/fleet-op-token`) pass axi-axi strict:
+`just axi-check-scripts` checks them all. The Python ones share `bin/axi_cli.py`
+(errors on stdout with a suggestion, examples in `--help`, TOON tables).

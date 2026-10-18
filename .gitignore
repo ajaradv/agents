@@ -5,3 +5,6 @@ node_modules/
 
 fleet/home/
 fleet/inbox/
+
+# Bytecode for bin/axi_cli.py (imported by the Python scripts in bin/)
+bin/__pycache__/axi_cli.*

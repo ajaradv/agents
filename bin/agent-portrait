@@ -19,6 +19,8 @@
 #   curl as a header read from a file descriptor, never on argv.
 # Model: PORTRAIT_MODEL (default google/gemini-3-pro-image).
 # --dry-run prints the prompt and target paths; sends nothing.
+# With no arguments it lists which agents have a portrait and the pool sizes.
+# Output is TOON-shaped (docs/tool-standards.md); errors go to stdout with a suggestion.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,29 +28,67 @@ ART="$ROOT/dashboard/public/art"
 ART_TS="$ROOT/dashboard/lib/agent-art.ts"
 MODEL="${PORTRAIT_MODEL:-google/gemini-3-pro-image}"
 
-die() { printf 'error: %s\n' "$1" >&2; exit 2; }
-usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
+# error: <what>, suggestion: <what to do>; exit 2 for bad usage, 1 for failures.
+die() { printf 'error: %s\nsuggestion: %s\n' "$1" "${2:-bin/agent-portrait --help}"; exit "${3:-2}"; }
+
+usage() {
+  cat <<'HELP'
+command: agent-portrait
+summary: Generate a rail portrait for an agent (or a Firstmate worker pool) in the fleet's pixel-art style
+usage: bin/agent-portrait <id> "<character>" [--force] [--dry-run] | --pool crew|secondmate <name> "<character>"
+flags[4]{flag,description}:
+  --pool,"write dashboard/public/art/<pool>/<name>.png (crew or secondmate) and register nothing"
+  --force,replace an existing portrait (re-roll)
+  --dry-run,print the prompt and target paths; send nothing
+  --help,show this help
+examples[3]:
+  bin/agent-portrait
+  bin/agent-portrait reviewer "a calm code reviewer in a navy coat holding a magnifying glass" --dry-run
+  bin/agent-portrait --pool crew deckhand "a young deckhand with a teal neckerchief and a coil of rope"
+HELP
+}
+
+# No arguments: which agents have a portrait, and how many faces each worker pool has.
+home() {
+  echo "bin: ~/Workspace/agents/bin/agent-portrait"
+  echo "description: Generate a rail portrait for an agent in the fleet's pixel-art style (OpenRouter image model)"
+  local ids=() n=0
+  for y in "$ROOT"/agents/*/agent.yaml; do ids+=("$(basename "$(dirname "$y")")"); done
+  echo "agents[${#ids[@]}]{id,portrait}:"
+  for id in "${ids[@]}"; do
+    if [ -f "$ART/$id.png" ]; then echo "  $id,yes"; else echo "  $id,no"; n=$((n + 1)); fi
+  done
+  echo "pools[2]{pool,faces}:"
+  for pool in crew secondmate; do echo "  $pool,$(find "$ART/$pool" -name '*.png' 2>/dev/null | wc -l | tr -d ' ')"; done
+  echo "missing: $n"
+  echo "help[2]:"
+  echo "  bin/agent-portrait <id> \"<character>\" --dry-run"
+  echo "  bin/agent-portrait --help"
+}
+
+[ $# -gt 0 ] || { home; exit 0; }
+case "${1:-}" in -v|-V|--version) echo "1.0.0"; exit 0 ;; esac
 
 ID='' CHAR='' POOL='' FORCE=false DRY=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --force) FORCE=true ;;
     --dry-run) DRY=true ;;
-    --pool) [ $# -ge 2 ] || die "--pool needs crew or secondmate"; POOL=$2; shift ;;
+    --pool) [ $# -ge 2 ] || die "--pool needs crew or secondmate" "bin/agent-portrait --pool crew <name> \"<character>\""; POOL=$2; shift ;;
     -h|--help) usage; exit 0 ;;
-    -*) die "unknown flag $1" ;;
-    *) if [ -z "$ID" ]; then ID=$1; elif [ -z "$CHAR" ]; then CHAR=$1; else die "too many arguments"; fi ;;
+    -*) die "unknown flag $1" "valid flags: --pool, --force, --dry-run, --help" ;;
+    *) if [ -z "$ID" ]; then ID=$1; elif [ -z "$CHAR" ]; then CHAR=$1; else die "too many arguments" "quote the character description as one argument" ; fi ;;
   esac
   shift
 done
-[ -n "$ID" ] && [ -n "$CHAR" ] || die "usage: bin/agent-portrait <id> \"<character>\" (see --help)"
-[[ "$ID" =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || die "bad id $ID"
+[ -n "$ID" ] && [ -n "$CHAR" ] || die "an id and a character description are both needed" "bin/agent-portrait <id> \"<who they are, look, clothes, one prop>\""
+[[ "$ID" =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || die "bad id $ID" "use lowercase letters, digits, - or _"
 case "$POOL" in
-  '') [ -f "$ROOT/agents/$ID/agent.yaml" ] || die "no agents/$ID/agent.yaml"; OUT="$ART/$ID.png" ;;
+  '') [ -f "$ROOT/agents/$ID/agent.yaml" ] || die "no agents/$ID/agent.yaml" "bin/agent-portrait lists the agents; use --pool for Firstmate worker faces"; OUT="$ART/$ID.png" ;;
   crew|secondmate) mkdir -p "$ART/$POOL"; OUT="$ART/$POOL/$ID.png" ;;
-  *) die "unknown pool $POOL (crew or secondmate)" ;;
+  *) die "unknown pool $POOL" "--pool crew or --pool secondmate" ;;
 esac
-[ ! -e "$OUT" ] || $FORCE || die "$OUT exists (pass --force to replace)"
+[ ! -e "$OUT" ] || $FORCE || die "$OUT exists" "add --force to replace it (re-roll)" 1
 
 if [ -n "$POOL" ]; then WHO="one of the fleet's ${POOL} portraits (${ID})."; else WHO="the fleet's ${ID}."; fi
 PROMPT="Create a new character portrait in EXACTLY the same style as the three reference images: 16-bit JRPG pixel-art bust portrait, chunky visible pixels, the same cream/off-white flat background, the same framing (head and shoulders, centered, slightly turned), the same limited palette of deep teal, brick red, warm gold and brown, the same dark outline and shading style. Square 1:1 image, no text, no border.
@@ -61,13 +101,14 @@ if $DRY; then
   exit 0
 fi
 
-command -v jq >/dev/null || die "jq required"
-command -v sips >/dev/null || die "sips required (macOS)"
+command -v jq >/dev/null || die "jq is not installed" "brew install jq" 1
+command -v sips >/dev/null || die "sips is not available" "run on macOS" 1
 KEY=${OPENROUTER_API_KEY:-}
 unset OPENROUTER_API_KEY
 [ -n "$KEY" ] || KEY=$(awk -F= '{ sub(/^[ \t]*export[ \t]+/, "") } $1 == "OPENROUTER_API_KEY" { v = substr($0, index($0, "=") + 1) }
   END { gsub(/^[ \t"'"'"']+|[ \t"'"'"']+$/, "", v); printf "%s", v }' "$ROOT/fleet/home/.env" 2>/dev/null)
-[ -n "$KEY" ] || die "OPENROUTER_API_KEY absent from the environment and fleet/home/.env"
+[ -n "$KEY" ] || KEY=$("$ROOT/bin/fleet-secrets" 2>/dev/null | awk -F= '$1 == "OPENROUTER_API_KEY" { print substr($0, index($0, "=") + 1) }')
+[ -n "$KEY" ] || die "no OPENROUTER_API_KEY in the environment, the service account, or fleet/home/.env" "check the 1Password setup with bin/fleet-op-token" 1
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 for n in firstmate architect alice; do
@@ -84,9 +125,9 @@ jq -n --arg model "$MODEL" --arg p "$PROMPT" \
 
 curl -sS --max-time 180 https://openrouter.ai/api/v1/chat/completions -H 'Content-Type: application/json' \
   -H @/dev/fd/3 3< <(printf 'Authorization: Bearer %s\n' "$KEY") \
-  --data-binary @"$TMP/req.json" > "$TMP/resp.json" || die "request failed"
+  --data-binary @"$TMP/req.json" > "$TMP/resp.json" || die "the request to OpenRouter failed" "check the network, then run it again" 1
 url=$(jq -r '.choices[0].message.images[0].image_url.url // empty' "$TMP/resp.json")
-[ -n "$url" ] || die "no image in response: $(jq -c '.error // .choices[0].message.content' "$TMP/resp.json" | head -c 300)"
+[ -n "$url" ] || die "no image in the response: $(jq -c '.error // .choices[0].message.content' "$TMP/resp.json" | head -c 300)" "run it again to re-roll, or try another PORTRAIT_MODEL" 1
 printf '%s' "${url#*,}" | base64 -d > "$TMP/raw.png"
 sips -s format png -z 512 512 "$TMP/raw.png" --out "$OUT" >/dev/null
 echo "wrote $OUT"

@@ -68,6 +68,19 @@ css:
 typecheck:
     cd "{{root}}" && node_modules/.bin/tsc -p .
 
+# Every script agents run, checked against the AXI principles (docs/tool-standards.md). Add new ones here.
+axi-check-scripts:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cd "{{root}}"
+    fails=0
+    for c in bin/stamp-ship bin/new-agent bin/order "bun bin/plan-execution.ts" bin/agent-portrait bin/vault-doctor bin/phone-check bin/fleet-op-token; do
+      line="$(npx -y axi-axi@0.1.0 validate "$c" --strict 2>&1 | grep '^summary')"
+      printf '%-28s %s\n' "$c" "$line"
+      case "$line" in *" 0 fail, 0 warn"*) ;; *) fails=$((fails + 1)) ;; esac
+    done
+    [ "$fails" -eq 0 ] || { echo "$fails script(s) fall short of the standard"; exit 1; }
+
 # Is this Mac ready for phone access to Herdr (Tailscale, SSH keys only, Herdr)? Read-only.
 phone-check:
     cd "{{root}}" && bin/phone-check
