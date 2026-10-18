@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
+import { statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import {
   startAgentTui,
@@ -449,7 +450,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     }
 
     if (path === "/api/needs-you" && req.method === "GET") {
-      return Response.json({ items: await collectNeedsYou({ waiting: hostWaiting, holds: currentHolds() }) });
+      return Response.json({ items: await collectNeedsYou({ waiting: hostWaiting, holds: currentHolds() }), build: pageBuild() });
     }
 
     // Quiet hours: Snooze holds interruptions; Wake ends it and compiles what was held into a digest.
@@ -921,7 +922,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     if (path === "/" || path === "/index.html" || /^\/(harbor|health|fleet|agents|needs)\/?$/.test(path) || /^\/health\/(status|usage|metrics|diagnostics)\/?$/.test(path) || /^\/ships\/[a-z][a-z0-9_-]{0,63}\/?$/.test(path)) {
       const html = await readFile(join(publicDir, "index.html"), "utf8");
       return new Response(html, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" },
       });
     }
 
@@ -929,12 +930,26 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     const file = Bun.file(filePath);
     if (await file.exists()) {
       // Vendored libraries carry their version in the file name: cache them for good.
+      // The page's own files change with every deploy: always revalidate.
       return path.startsWith("/vendor/")
         ? new Response(file, { headers: { "Cache-Control": "public, max-age=31536000, immutable" } })
-        : new Response(file);
+        : new Response(file, { headers: { "Cache-Control": "no-cache" } });
     }
 
     return new Response("not found", { status: 404 });
+}
+
+/** Which page code is on disk (the files' change times): an open tab compares it and reloads when it changes. */
+function pageBuild(): string {
+  let parts = "";
+  for (const f of ["index.html", "app.js", "md.js", "pixel.css", "ui.css"]) {
+    try {
+      parts += statSync(join(publicDir, f)).mtimeMs.toFixed(0);
+    } catch {
+      /* missing file */
+    }
+  }
+  return Bun.hash(parts).toString(36);
 }
 
 console.error(`dashboard http://${HOST}:${PORT} (repo ${ROOT})`);

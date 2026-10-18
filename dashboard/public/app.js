@@ -658,6 +658,15 @@ function dashboardApp() {
     needsBusy: false,
     needsAgain: false,
 
+    /** New page code on disk: reload, unless the captain is typing (then on the next check). */
+    checkBuild(build) {
+      if (!build) return;
+      this.pageBuild ??= build;
+      if (build === this.pageBuild) return;
+      const typing = (this.chatDraft || "").trim() || [...document.querySelectorAll("textarea, input[type=text]")].some((el) => el.value.trim());
+      if (!typing) location.reload();
+    },
+
     async refreshNeeds() {
       // One fetch at a time; a change during it triggers one more.
       if (this.needsBusy) {
@@ -668,7 +677,9 @@ function dashboardApp() {
       try {
         const [r, q] = await Promise.all([fetch("/api/needs-you"), fetch("/api/quiet")]);
         const prevNotices = new Set(this.needs.filter((i) => i.kind === "notice").map((i) => i.id));
-        this.needs = (await r.json()).items || [];
+        const body = await r.json();
+        this.needs = body.items || [];
+        this.checkBuild(body.build);
         this.quiet = await q.json().catch(() => this.quiet);
         this.renderNeeds();
         // New interrupting notices are spoken when voice is on (once the first load has set the baseline).
@@ -818,6 +829,14 @@ function dashboardApp() {
           <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-hold>Record answer</button><span class="muted" data-note></span></div>
         </div>`;
         card.querySelector("[data-hold]").addEventListener("click", () => this.answerHold(item.taskId, card));
+      } else if (item.kind !== "failed") {
+        // A kind this page does not know yet (it predates the server): say so instead of guessing.
+        card.innerHTML = `<div class="need-body">
+          <div class="need-head"><h3>Something new needs you</h3>${when}</div>
+          <p class="need-reason">This page is older than the dashboard. Reload to see it.</p>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-reload>Reload</button></div>
+        </div>`;
+        card.querySelector("[data-reload]").addEventListener("click", () => location.reload());
       } else {
         card.innerHTML = `${face}<div class="need-body">
           <div class="need-head"><h3>Your message to ${escapeHtml(item.label)} did not go through</h3>${when}</div>
