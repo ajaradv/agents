@@ -22,6 +22,7 @@ import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, on
 import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
 import { askPublic } from "./lib/public-helper.ts";
+import { toolText, VIEWS } from "./lib/tool-out.ts";
 import { dashLog } from "./lib/log.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
 import { backfillMetrics } from "./lib/metrics-backfill.ts";
@@ -230,9 +231,10 @@ async function crewApi(req: Request, shipId: string, what: string, num: string |
   // in the request ("from") is never trusted.
   const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
   if (!from) return Response.json({ ok: false, message: "Crew calls come from a crewmate's live session." }, { status: 403 });
-  let res: { ok: boolean; message: string };
+  let res: { ok: boolean; message: string; [k: string]: unknown };
   if (what === "status" && req.method === "GET") {
     res = await voyageStatus(shipId, from);
+    res = { ...res, text: toolText(res, VIEWS.voyage_status, { full: new URL(req.url).searchParams.get("full") === "true" }) };
   } else if (req.method === "POST") {
     const b = await body(req);
     if (what === "tasks" && num) res = await crewUpdateTask(shipId, Number(num), { ...b, from } as never);
@@ -316,7 +318,7 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
   if (!gate.ok) return reply({ ok: false, message: gate.message });
 
   const a = call.args;
-  let res: { ok: boolean; message: string };
+  let res: { ok: boolean; message: string; [k: string]: unknown };
   if (call.tool === "fleet_status") res = await fleetStatus(a.detail === "true");
   else if (call.tool === "ship_log") res = shipLog(a.ship ?? "", Number(a.limit) || 40, a.kind || undefined);
   else if (call.tool === "ship_tasks") res = await shipTasks(a.ship ?? "");
@@ -331,6 +333,8 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
     recordOrderCall(gate.step, call.tool, call.args, res.message);
     res = { ...res, message: `${res.message} (Step ${gate.step} call recorded; now check its expect line and call order_step.)` };
   }
+  // Read tools: what the agent sees (lib/tool-out); the JSON stays for anything else that reads it.
+  if (call.read && VIEWS[call.tool]) res = { ...res, text: toolText(res, VIEWS[call.tool], { full: q.get("full") === "true" }) };
   return reply(res);
 }
 

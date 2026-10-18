@@ -35,7 +35,9 @@ async function call(method: "GET" | "POST", what: string, params: Record<string,
       signal: AbortSignal.timeout(timeoutMs),
     });
     const j = (await res.json()) as Record<string, unknown>;
-    return method === "GET" ? JSON.stringify(j, null, 1) : String(j.message ?? (res.ok ? "done" : "failed"));
+    // Read tools come back already shaped for an agent (dashboard/lib/tool-out.ts).
+    if (method === "GET") return typeof j.text === "string" ? j.text : JSON.stringify(j, null, 1);
+    return String(j.message ?? (res.ok ? "done" : "failed"));
   } catch (e) {
     return `The fleet node did not answer (${e instanceof Error ? e.message : String(e)}). Tell the captain.`;
   }
@@ -79,10 +81,11 @@ export default function (pi: ExtensionAPI) {
       ship: Type.String({ description: "Ship id, e.g. kinwork, or fleet for officers" }),
       limit: Type.Optional(Type.Number({ description: "Rows, default 20, max 200" })),
       kind: Type.Optional(Type.String({ description: "chat-in, chat-out, question, answer, tool, turn-end, notice, task, maneuver" })),
+      full: Type.Optional(Type.Boolean({ description: "Long text uncut" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("GET", "log", { ship: p.ship, limit: p.limit, kind: p.kind, order: p.order, step: p.step }));
+      return text(await call("GET", "log", { ship: p.ship, limit: p.limit, kind: p.kind, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
     },
   });
 
@@ -114,10 +117,11 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       agent: Type.String({ description: "Agent id, e.g. kinwork-designer, architect, firstmate" }),
       n: Type.Optional(Type.Number({ description: "Lines, default 8, max 60 (long lines are shortened)" })),
+      full: Type.Optional(Type.Boolean({ description: "Long text uncut" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("GET", "chat", { agent: p.agent, n: p.n, order: p.order, step: p.step }));
+      return text(await call("GET", "chat", { agent: p.agent, n: p.n, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
     },
   });
 
@@ -128,10 +132,11 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       query: Type.String({ description: "Words to find; \"quoted phrase\" for exact" }),
       limit: Type.Optional(Type.Number({ description: "Hits, default 8, max 20" })),
+      full: Type.Optional(Type.Boolean({ description: "Long text uncut" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("GET", "recall", { query: p.query, limit: p.limit, order: p.order, step: p.step }));
+      return text(await call("GET", "recall", { query: p.query, limit: p.limit, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
     },
   });
 

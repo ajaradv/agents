@@ -27,7 +27,7 @@ function text(t: string) {
 async function call(method: "GET" | "POST", path: string, body?: Record<string, unknown>, timeoutMs = 20_000): Promise<string> {
   if (!ship || !me) return "Not aboard a ship in this session (FLEET_SHIP unset).";
   try {
-    const url = `${base}/api/crew/${encodeURIComponent(ship)}/${path}${method === "GET" ? `?from=${encodeURIComponent(me)}` : ""}`;
+    const url = `${base}/api/crew/${encodeURIComponent(ship)}/${path}${method === "GET" ? `${path.includes("?") ? "&" : "?"}from=${encodeURIComponent(me)}` : ""}`;
     const res = await fetch(url, {
       method,
       // The dashboard knows this process by FLEET_CREW_TOKEN, not by name.
@@ -36,7 +36,8 @@ async function call(method: "GET" | "POST", path: string, body?: Record<string, 
       signal: AbortSignal.timeout(timeoutMs),
     });
     const j = (await res.json()) as Record<string, unknown>;
-    if (method === "GET") return JSON.stringify(j, null, 2);
+    // Read tools come back already shaped for an agent (dashboard/lib/tool-out.ts).
+    if (method === "GET") return typeof j.text === "string" ? j.text : JSON.stringify(j, null, 2);
     return String(j.message ?? (res.ok ? "done" : "failed"));
   } catch (e) {
     return `The dashboard did not answer (${e instanceof Error ? e.message : String(e)}). Tell the captain in chat instead.`;
@@ -52,9 +53,9 @@ export default function (pi: ExtensionAPI) {
     name: "voyage_status",
     label: "Voyage status",
     description: "The ship's current voyage: goal, task list with status, assignee, and what each task waits on, the ready tasks (open, waiting on nothing), progress, each crewmate's latest activity, the lead's id, and the ship's maneuvers and gates.",
-    parameters: Type.Object({}),
-    async execute() {
-      return text(await call("GET", "status"));
+    parameters: Type.Object({ full: Type.Optional(Type.Boolean({ description: "Show long notes uncut" })) }),
+    async execute(_id, p) {
+      return text(await call("GET", p.full ? "status?full=true" : "status"));
     },
   });
 
