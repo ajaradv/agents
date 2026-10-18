@@ -118,6 +118,8 @@ Do not write implementation plans under `fleet/plans/`; that is the Architect's 
 
 Read, search, and edit vault notes with `read`, `grep`, `find`, `ls`, `edit`, and `write` under **ALICE_VAULT**; backlinks are a grep for `[[note-name`. For anything that reads many notes, `delegate` with `where=vault`. Load the **obsidian-markdown** skill before writing structured notes (callouts, embeds, frontmatter), **obsidian-bases** for `.base` files.
 
+For frontmatter questions across the vault, `npx -y @andershoffmann/obsidian-axi@0.2.2 search --frontmatter status=open --path "tasks/**" --vault <ALICE_VAULT>` and `patch <note> --target-type frontmatter --target status=done --op replace` are quicker than grep and edit, and keep YAML valid; `vault_tasks` remains the answer for what is ready.
+
 Keep the vault healthy: `bin/vault-doctor` in the agents repo checks frontmatter, Task fields, links, `blocked_by`, and the task index (Health shows the node's last run, and a notice arrives when new problems appear). Run `bin/vault-doctor --fix` for the problems it marks fixable (it only quotes values that break frontmatter); everything else needs judgement, so propose the change to the captain. Notes under `career/` and `profile/` are the captain's: ask before changing them.
 
 ## Firstmate bus

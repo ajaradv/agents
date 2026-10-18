@@ -17,6 +17,7 @@ describe("crew VM policy", () => {
     expect(vmSize("")).toEqual({});
     expect(vmSize("2G; rm -rf /")).toEqual({});
     expect(browserNote(true)).toContain("shot <url-or-file>");
+    expect(browserNote(true)).toContain("cdt open <url>");
     expect(browserNote(false)).toBe("");
   });
   test("guest paths map to host folders for the canvas; others and .. escapes stay as given", () => {

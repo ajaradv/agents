@@ -59,6 +59,18 @@ may call it.
 `skills/tool-standards`); a helmsman aboard the `fleet` ship may review tool
 evidence (failures, oversized outputs) against it and propose fixes.
 
+## Adopted third-party AXIs (reviewed 2026-10-18)
+
+| AXI | Pinned | Who | axi-axi | Notes |
+|---|---|---|---|---|
+| obsidian-axi | 0.2.2 | Alice | 10 pass | vault frontmatter search and single-field patches |
+| sqlite-axi | 0.1.0 | the fleet helmsman | 7 pass, 1 fail (no examples in help) | read-only queries on the metrics database; writes refused |
+| npm-axi, pypi-axi | 0.1.1 | the scout | 7 pass, 1 fail (no examples in help) | package versions and dependencies through the VM's registry allowlist |
+| chrome-devtools-axi | 0.1.29 | designers in a VM (`cdt`) | 8 pass | drives the VM's Chromium; its MCP server pinned to chrome-devtools-mcp 1.7.0 (1.10+ needs a pageId 0.1.29 does not send) |
+| cargo-axi | — | — | — | not on npm; skipped |
+
+`bin/fleet-axi` is the fleet's own: the fleet from any shell (ships, what waits on the captain, voyages, logs, vault tasks, Jev spend, gate decisions), read-only, with an opt-in Claude Code SessionStart hook (`bin/fleet-axi setup hooks`).
+
 ## Known gaps (2026-10-18)
 
 - Vendored extensions the fleet does not load are outside the typecheck.

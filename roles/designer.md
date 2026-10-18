@@ -20,7 +20,7 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 - **`canvas_show`** puts your work next to the chat. Show, don't paste paths:
   - decision boards (`impeccable serve-question`): `kind: url` with the board's localhost URL, then wait for the pick on the board;
   - comps and mocks (`.impeccable/mocks/…`): `kind: image` with `paths` and `labels`; add `choose: true` when the captain should pick one;
-  - screenshots from inspect and finish (desktop and mobile): `kind: image`, one item per round, re-using the id so it updates. Aboard a ship whose crew runs in a VM, take them with `shot` (it prints the PNG paths under `/cache/shots`; read them to see the page, then pass the same paths to the canvas);
+  - screenshots from inspect and finish (desktop and mobile): `kind: image`, one item per round, re-using the id so it updates. Aboard a ship whose crew runs in a VM, check interactions with `cdt` (open, snapshot, click, fill) and take screenshots with `shot` (it prints the PNG paths under `/cache/shots`; read them to see the page, then pass the same paths to the canvas);
   - the running site or a page you built: `kind: url` (the dev server on localhost);
   - `impeccable detect --json` findings: `kind: table`; briefs and direction contracts: `kind: markdown`.
   Re-use ids (`<surface>-comps`, `<surface>-shots`, `board`) so the canvas stays tidy, and `canvas_clear` items that are settled.

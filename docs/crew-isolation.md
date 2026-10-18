@@ -69,6 +69,7 @@ shot page.html --mobile --dark --selector main
   requests, and the page renders without it.
 - A dev server started inside the VM is reachable at localhost; servers on the
   Mac (and the dashboard) are not.
+- `cdt` drives the same Chromium interactively through chrome-devtools-axi: `cdt open <url>`, `cdt snapshot` (the page as an accessibility tree with refs), `cdt click @<ref>`, `cdt fill @<ref> "text"`, `cdt screenshot <path>`. It starts a headless Chromium on 127.0.0.1:9222 the first time, trusting only Gondolin's CA. Its MCP server is pinned to chrome-devtools-mcp 1.7.0 in the image.
 - These VMs get 2 GB instead of 1 GB.
 - Build the image once: `bin/fleet-vm-image browser` (about 1.6 GB). It is
   built from `fleet/vm/image.json` plus `fleet/vm/browser.json`, so rebuild it

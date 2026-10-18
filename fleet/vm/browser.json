@@ -1,5 +1,5 @@
 {
-  "_comment": "The browser image (R4e): fleet/vm/image.json plus what is here. bin/fleet-vm-image browser merges the two (packages and copy entries are added, commands run after the base image's). Agents with vm_image: browser in agent.yaml get it.",
+  "_comment": "The browser image (R4e): fleet/vm/image.json plus what is here. bin/fleet-vm-image browser merges the two (packages and copy entries are added, commands run after the base image's). Agents with vm_image: browser in agent.yaml get it. cdt (fleet/vm/shot/cdt) drives the same Chromium interactively through chrome-devtools-axi, with chrome-devtools-mcp pinned to 1.7.0 (the bridge asks for @latest, and 1.10+ requires a pageId that chrome-devtools-axi 0.1.29 does not send).",
   "rootfsPackages": [
     "chromium",
     "font-noto",
@@ -9,11 +9,18 @@
     "font-liberation"
   ],
   "copy": [
-    { "src": "fleet/vm/shot", "dest": "/opt/fleet-shot" }
+    {
+      "src": "fleet/vm/shot",
+      "dest": "/opt/fleet-shot"
+    }
   ],
   "commands": [
     "cd /opt/fleet-shot && npm install --omit=dev --no-audit --no-fund",
     "ln -sf /opt/fleet-shot/shot.mjs /usr/local/bin/shot",
-    "chmod +x /opt/fleet-shot/shot.mjs"
+    "chmod +x /opt/fleet-shot/shot.mjs",
+    "npm install -g chrome-devtools-axi@0.1.29 --no-audit --no-fund",
+    "sed -i 's/chrome-devtools-mcp@latest/chrome-devtools-mcp@1.7.0/g' \"$(npm root -g)/chrome-devtools-axi/dist/src/bridge.js\"",
+    "ln -sf /opt/fleet-shot/cdt /usr/local/bin/cdt",
+    "chmod +x /opt/fleet-shot/cdt"
   ]
 }

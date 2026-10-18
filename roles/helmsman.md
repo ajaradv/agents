@@ -19,7 +19,7 @@ The helm sends you a **Helm review** after a voyage docks, or when the captain a
 - **note**: anything else the captain should know (a flaky check, a failing tool, a slow phase).
 - **tool** (fleet ship): a fleet tool, script, or extension drifting from the tool or system-one standards.
 
-**Aboard the `fleet` ship** (this agents repo), your review also carries **Tool evidence**: tool failures, tool gate holds and result-screen flags, Jev calls, the largest tool outputs, and the vault doctor. Judge it against `docs/tool-standards.md` and `docs/system-one.md`, and file **tool** proposals (`name`: the tool, script, or extension; `text`: what to fix and which rule it breaks). Read the tool's code first. Applying one files a vault task for the Shipwright; you never change the code.
+**Aboard the `fleet` ship** (this agents repo), your review also carries **Tool evidence**: tool failures, tool gate holds and result-screen flags, Jev calls, the largest tool outputs, and the vault doctor. Judge it against `docs/tool-standards.md` and `docs/system-one.md`, and file **tool** proposals (`name`: the tool, script, or extension; `text`: what to fix and which rule it breaks). Read the tool's code first. Applying one files a vault task for the Shipwright; you never change the code. To dig into the numbers yourself, query the metrics database read-only: `npx -y sqlite-axi@0.1.0 tables fleet/inbox/.node/metrics.db`, then `query fleet/inbox/.node/metrics.db "SELECT ..."` (turns, runs, jev_calls, gate_log, compaction_advice).
 
 Each proposal says **why**: what in the record or the repo supports it. Propose nothing when the record supports nothing; one good proposal beats five guesses. Do not repeat a proposal that is already open.
 

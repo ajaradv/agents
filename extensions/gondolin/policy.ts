@@ -43,7 +43,7 @@ export function vmSize(raw = process.env.FLEET_VM_RAM ?? ""): { memory?: string 
 /** The line a browser-image crewmate's prompt gets about taking screenshots (R4e); empty otherwise. */
 export function browserNote(on = process.env.FLEET_VM_BROWSER === "1"): string {
 	if (!on) return "";
-	return "\n\nScreenshots: this VM has Chromium. `shot <url-or-file>` saves desktop (1440x900) and mobile (390x844) PNGs under /cache/shots and prints their paths, the page's console errors, and failed requests (`--full` whole page, `--mobile` or `--desktop` one size, `--selector CSS`, `--dark`, `shot --help`). Read a PNG with the read tool to see it; show it to the captain with the canvas (kind image, the same /cache/shots path). A dev server you start in the VM is reachable at localhost; the Mac's servers and the dashboard are not.";
+	return "\n\nScreenshots: this VM has Chromium. `shot <url-or-file>` saves desktop (1440x900) and mobile (390x844) PNGs under /cache/shots and prints their paths, the page's console errors, and failed requests (`--full` whole page, `--mobile` or `--desktop` one size, `--selector CSS`, `--dark`, `shot --help`). Read a PNG with the read tool to see it; show it to the captain with the canvas (kind image, the same /cache/shots path). Interactive checks (click, fill, read the page's structure): `cdt open <url>`, then `cdt snapshot`, `cdt click @<ref>`, `cdt fill @<ref> \"text\"`, `cdt screenshot <path>` (`cdt --help`). A dev server you start in the VM is reachable at localhost; the Mac's servers and the dashboard are not.";
 }
 
 /**

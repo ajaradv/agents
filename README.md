@@ -34,6 +34,7 @@ docs/architect.md          plan pipeline, vault plans, Firstmate triage
 docs/dashboard.md          localhost fleet UI, chat bar, usage (htmx + SSE)
 docs/tool-standards.md     how tools are built: AXI output rules, checks (just test, just axi-check)
 docs/system-one.md         Jev (system-one) decisions: when to use, the client, questions, thresholds, data
+bin/fleet-axi              the fleet from any shell (read-only): ships, waiting on the captain, vault tasks, Jev, gate
 dashboard/                 Bun server + static UI
 agents/alice/improvements/ phone chat/voice action plans (later)
 ```
