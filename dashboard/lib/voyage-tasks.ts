@@ -9,6 +9,8 @@ import { shipDb, logShipEvent } from "./ship-log.ts";
  * Dependencies (borrowed from beads, vault research note axi-evaluation): a
  * task may wait on others (`blockedBy`). It is ready when it is open and every
  * task it waits on is done; a crewmate can claim a ready task in one step.
+ * A task may also name the crew role that may take it (`role`, for example
+ * designer for a UI refresh): only crewmates of that role can claim it.
  */
 
 export type TaskStatus = "open" | "working" | "done" | "blocked";
@@ -26,6 +28,8 @@ export type VoyageTask = {
   note: string;
   /** Task ids this one waits on (same voyage). */
   blockedBy: number[];
+  /** The crew role that may take it, or null for anyone aboard. */
+  role: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -33,7 +37,7 @@ export type VoyageTask = {
 
 type Row = {
   id: number; voyage: string; title: string; detail: string; assignee: string | null; kind: string; adw_id: string | null;
-  status: string; note: string; blocked_by: string | null; created_by: string; created_at: string; updated_at: string;
+  status: string; note: string; blocked_by: string | null; role: string | null; created_by: string; created_at: string; updated_at: string;
 };
 
 export function parseIds(raw: unknown): number[] {
@@ -46,7 +50,7 @@ function toTask(r: Row): VoyageTask {
     id: r.id, voyage: r.voyage, title: r.title, detail: r.detail, assignee: r.assignee,
     kind: r.kind === "maneuver" ? "maneuver" : "crew", adwId: r.adw_id,
     status: (TASK_STATUSES as string[]).includes(r.status) ? (r.status as TaskStatus) : "open",
-    note: r.note, blockedBy: parseIds(r.blocked_by), createdBy: r.created_by, createdAt: r.created_at, updatedAt: r.updated_at,
+    note: r.note, blockedBy: parseIds(r.blocked_by), role: r.role ?? null, createdBy: r.created_by, createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
 
@@ -71,7 +75,7 @@ export function getTask(ship: string, id: number, opts: { root?: string } = {}):
 
 export async function addTask(
   ship: string,
-  t: { voyage: string; title: string; detail?: string; assignee?: string | null; kind?: "crew" | "maneuver"; adwId?: string | null; status?: TaskStatus; blockedBy?: number[]; createdBy: string },
+  t: { voyage: string; title: string; detail?: string; assignee?: string | null; kind?: "crew" | "maneuver"; adwId?: string | null; status?: TaskStatus; blockedBy?: number[]; role?: string | null; createdBy: string },
   opts: { root?: string } = {},
 ): Promise<VoyageTask> {
   const db = shipDb(ship, opts.root);
@@ -79,9 +83,9 @@ export async function addTask(
   const now = new Date().toISOString();
   const r = db
     .query(
-      "INSERT INTO tasks (voyage, title, detail, assignee, kind, adw_id, status, blocked_by, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+      "INSERT INTO tasks (voyage, title, detail, assignee, kind, adw_id, status, blocked_by, role, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
     )
-    .get(t.voyage, t.title.slice(0, 200), (t.detail ?? "").slice(0, 4000), t.assignee ?? null, t.kind ?? "crew", t.adwId ?? null, t.status ?? "open", (t.blockedBy ?? []).join(","), t.createdBy, now, now) as Row;
+    .get(t.voyage, t.title.slice(0, 200), (t.detail ?? "").slice(0, 4000), t.assignee ?? null, t.kind ?? "crew", t.adwId ?? null, t.status ?? "open", (t.blockedBy ?? []).join(","), t.role ?? null, t.createdBy, now, now) as Row;
   const task = toTask(r);
   const after = task.blockedBy.length ? ` (after ${task.blockedBy.map((n) => `#${n}`).join(", ")})` : "";
   logShipEvent(ship, t.createdBy, "task", `#${task.id} ${task.title}${task.assignee ? ` → ${task.assignee}` : ""}${after}`, { task: task.id, assignee: task.assignee, kind: task.kind, blockedBy: task.blockedBy }, opts);
@@ -151,16 +155,18 @@ export function blockersRefusal(all: VoyageTask[], blockedBy: number[], self?: n
 
 /**
  * Claim a task in one step: it becomes `who`'s and working, only if it is open,
- * unassigned or already `who`'s, and waits on nothing. The check and the write
+ * unassigned or already `who`'s, for `who`'s role (when it names one), and waits on nothing. The check and the write
  * are one transaction, so two crewmates cannot both claim it.
  */
 export async function claimTask(ship: string, id: number, who: string, opts: { root?: string } = {}): Promise<{ task: VoyageTask } | { refusal: string }> {
+  const whoRole = who.startsWith(`${ship}-`) ? who.slice(ship.length + 1) : "";
   const db = shipDb(ship, opts.root);
   if (!db) return { refusal: "bad ship" };
   const result = db.transaction((): { task: VoyageTask } | { refusal: string } => {
     const t = getTask(ship, id, opts);
     if (!t) return { refusal: `No task #${id}.` };
     if (t.assignee && t.assignee !== who) return { refusal: `Task #${id} is ${t.assignee}'s.` };
+    if (t.role && t.role !== whoRole && t.assignee !== who) return { refusal: `Task #${id} is for the ${t.role}.` };
     if (t.status !== "open") return { refusal: `Task #${id} is ${t.status}, not open.` };
     const waits = waitingOn(t, listTasks(ship, t.voyage, opts));
     if (waits.length) return { refusal: `Task #${id} still waits on ${waits.map((n) => `#${n}`).join(", ")}.` };

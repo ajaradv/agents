@@ -88,7 +88,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "task_claim",
     label: "Claim a ready task",
-    description: "Take a ready voyage task (open, unassigned or already yours, waiting on nothing; voyage_status lists them) in one step: it becomes yours and working, and the lead is told. Refused if someone else has it or it still waits on other tasks.",
+    description: "Take a ready voyage task (open, unassigned or already yours, waiting on nothing; voyage_status lists them) in one step: it becomes yours and working, and the lead is told. Refused if someone else has it, it is for another role, or it still waits on other tasks.",
     parameters: Type.Object({ id: Type.Number({ description: "Task number" }) }),
     async execute(_id, p) {
       return text(await call("POST", `tasks/${p.id}`, { claim: true }));
@@ -164,9 +164,10 @@ export default function (pi: ExtensionAPI) {
       detail: Type.String({ description: "What to do, where, and what done means" }),
       assignee: Type.Optional(Type.String({ description: "Crewmate id; omit to keep it unassigned" })),
       blocked_by: Type.Optional(Type.Array(Type.Number(), { description: "Task numbers that must be done first" })),
+      role: Type.Optional(Type.String({ description: "Crew role that may take it (e.g. designer for UI work); only that role can claim or be assigned it" })),
     }),
     async execute(_id, p) {
-      return text(await call("POST", "tasks", { title: p.title, detail: p.detail, ...(p.assignee ? { assignee: p.assignee } : {}), ...(p.blocked_by?.length ? { blockedBy: p.blocked_by } : {}) }));
+      return text(await call("POST", "tasks", { title: p.title, detail: p.detail, ...(p.assignee ? { assignee: p.assignee } : {}), ...(p.blocked_by?.length ? { blockedBy: p.blocked_by } : {}), ...(p.role ? { role: p.role } : {}) }));
     },
   });
 

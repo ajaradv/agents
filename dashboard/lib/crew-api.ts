@@ -79,10 +79,10 @@ export async function voyageStatus(shipId: string, from: string): Promise<Res> {
     progress: taskProgress(tasks),
     tasks: tasks.map((t) => {
       const waits = waitingOn(t, tasks);
-      return { id: t.id, title: t.title, assignee: t.assignee, kind: t.kind, status: t.status, note: t.note.slice(0, 300), adwId: t.adwId, ...(t.blockedBy.length ? { blockedBy: t.blockedBy } : {}), ...(waits.length ? { waitingOn: waits } : {}) };
+      return { id: t.id, title: t.title, assignee: t.assignee, kind: t.kind, status: t.status, note: t.note.slice(0, 300), adwId: t.adwId, ...(t.role ? { role: t.role } : {}), ...(t.blockedBy.length ? { blockedBy: t.blockedBy } : {}), ...(waits.length ? { waitingOn: waits } : {}) };
     }),
     // Open tasks that wait on nothing: unassigned ones can be claimed (task_claim), assigned ones are being sent.
-    ready: readyTasks(tasks).map((t) => ({ id: t.id, title: t.title, assignee: t.assignee })),
+    ready: readyTasks(tasks).map((t) => ({ id: t.id, title: t.title, assignee: t.assignee, ...(t.role ? { role: t.role } : {}) })),
     crew,
     lead: leadOf(a.ship),
     maneuvers: maneuverAvailability(a.ship, a.role).map((m) => ({ name: m.name, yours: m.yours, about: describeManeuver(m) })),
@@ -95,7 +95,7 @@ export async function voyageStatus(shipId: string, from: string): Promise<Res> {
 
 // ---------------------------------------------------------------- tasks
 
-export async function crewAddTask(shipId: string, b: { from: string; title?: string; detail?: string; assignee?: string | null; blockedBy?: unknown }): Promise<Res> {
+export async function crewAddTask(shipId: string, b: { from: string; title?: string; detail?: string; assignee?: string | null; blockedBy?: unknown; role?: unknown }): Promise<Res> {
   const a = await aboard(shipId, b.from);
   if ("error" in a) return a.error;
   if (a.role !== "lead") return { ok: false, message: "Only the ship's lead adds tasks. Message the lead with crew_message instead." };
@@ -105,6 +105,9 @@ export async function crewAddTask(shipId: string, b: { from: string; title?: str
   if (title.length < 3) return { ok: false, message: "A task needs a title." };
   const assignee = b.assignee ? String(b.assignee) : null;
   if (assignee && !crewIds(a.ship).includes(assignee)) return { ok: false, message: `${assignee} is not aboard. Crew: ${crewIds(a.ship).join(", ")}.` };
+  const role = b.role ? String(b.role) : null;
+  if (role && !a.ship.crew.includes(role)) return { ok: false, message: `No ${role} aboard ${shipId}. Roles: ${a.ship.crew.join(", ")}.` };
+  if (role && assignee && assignee !== `${shipId}-${role}`) return { ok: false, message: `Task is for the ${role}; assign it to ${shipId}-${role} or leave it unassigned.` };
   const blockedBy = parseIds(b.blockedBy);
   const existing = listTasks(shipId, v.file);
   const refusal = blockersRefusal(existing, blockedBy);
@@ -112,7 +115,7 @@ export async function crewAddTask(shipId: string, b: { from: string; title?: str
   // A task that waits on unfinished work is held: its brief goes out when the last of them is done.
   const waits = blockedBy.filter((id) => existing.find((t) => t.id === id)?.status !== "done");
   const sendNow = Boolean(assignee && assignee !== b.from && !waits.length);
-  const t = await addTask(shipId, { voyage: v.file, title, detail: String(b.detail ?? ""), assignee, blockedBy, createdBy: b.from, status: sendNow ? "working" : "open" });
+  const t = await addTask(shipId, { voyage: v.file, title, detail: String(b.detail ?? ""), assignee, blockedBy, role, createdBy: b.from, status: sendNow ? "working" : "open" });
   if (sendNow && assignee) await acceptCrewLine(assignee, b.from, taskBrief(t, a.ship));
   recordHandoff({ ship: shipId, from: b.from, to: assignee ?? "", kind: "task-assigned", size: title.length + String(b.detail ?? "").length });
   const after = waits.length ? ` It waits on ${waits.map((n) => `#${n}`).join(", ")}${assignee ? `; ${assignee} gets it when they are done` : "; it becomes claimable when they are done"}.` : "";
@@ -141,6 +144,7 @@ export async function crewUpdateTask(shipId: string, id: number, b: { from: stri
     if (!isLead) return { ok: false, message: "Only the lead reassigns tasks." };
     assignee = b.assignee ? String(b.assignee) : null;
     if (assignee && !crewIds(a.ship).includes(assignee)) return { ok: false, message: `${assignee} is not aboard.` };
+    if (assignee && t.role && assignee !== `${shipId}-${t.role}`) return { ok: false, message: `Task #${id} is for the ${t.role}.` };
   }
   const reassigned = assignee !== undefined && assignee !== t.assignee;
   // A reassigned task that still waits on others stays open; its brief goes out when they are done.
@@ -223,7 +227,7 @@ async function releaseDependents(ship: ShipRow, done: VoyageTask): Promise<void>
     } else free.push(t);
   }
   if (free.length && lead) {
-    await acceptCrewLine(lead, "helm", `Task #${done.id} is done, so ${free.map((t) => `#${t.id} (${t.title})`).join(", ")} ${free.length > 1 ? "are" : "is"} ready and unassigned. Assign with task_update, or a crewmate can take it with task_claim.`);
+    await acceptCrewLine(lead, "helm", `Task #${done.id} is done, so ${free.map((t) => `#${t.id} (${t.title}${t.role ? `, for the ${t.role}` : ""})`).join(", ")} ${free.length > 1 ? "are" : "is"} ready and unassigned. Assign with task_update, or a crewmate can take it with task_claim.`);
   }
 }
 

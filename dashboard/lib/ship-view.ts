@@ -610,7 +610,7 @@ const TASK_MARK: Record<string, string> = { open: "○", working: "◐", done: "
 function waitLabel(t: VoyageTask, tasks: VoyageTask[]): string {
   if (t.status !== "open") return t.status;
   const waits = waitingOn(t, tasks);
-  return waits.length ? `waiting on ${waits.map((n) => `#${n}`).join(", ")}` : t.assignee ? "open" : "ready to claim";
+  return waits.length ? `waiting on ${waits.map((n) => `#${n}`).join(", ")}` : t.assignee ? "open" : t.role ? `ready for the ${t.role}` : "ready to claim";
 }
 
 function tasksHtml(tasks: VoyageTask[], cards: CrewCard[]): string {

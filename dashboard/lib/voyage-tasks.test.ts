@@ -61,6 +61,13 @@ describe("voyage tasks", () => {
     expect(await claimTask("demo", first.id, "demo-designer", { root })).toEqual({ refusal: `Task #${first.id} is demo-scout's.` });
     expect(await claimTask("demo", first.id, "demo-scout", { root })).toEqual({ refusal: `Task #${first.id} is working, not open.` });
   });
+  test("a task for a role: only that role can claim it", async () => {
+    const t = await addTask("demo", { voyage: "/roles.md", title: "UI refresh", role: "designer", createdBy: "demo-lead" }, { root });
+    expect(getTask("demo", t.id, { root })!.role).toBe("designer");
+    expect(await claimTask("demo", t.id, "demo-scout", { root })).toEqual({ refusal: `Task #${t.id} is for the designer.` });
+    const won = await claimTask("demo", t.id, "demo-designer", { root });
+    expect("task" in won && won.task.assignee === "demo-designer").toBe(true);
+  });
   test("an old ship database gains the blocked_by column", () => {
     const old = mkdtempSync(join(tmpdir(), "ship-old-"));
     mkdirSync(join(old, "ships", "legacy"), { recursive: true });
@@ -71,5 +78,6 @@ describe("voyage tasks", () => {
     shipDb("legacy", old);
     const t = listTasks("legacy", "/v.md", { root: old });
     expect(t[0]!.blockedBy).toEqual([]);
+    expect(t[0]!.role).toBeNull();
   });
 });
