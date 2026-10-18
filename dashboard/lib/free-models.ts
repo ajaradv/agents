@@ -1,4 +1,4 @@
-import { agentKeyEnv } from "./fleet-env.ts";
+import { agentKeyEnv, nodeKey } from "./fleet-env.ts";
 import { metricsDb } from "./metrics.ts";
 
 /**
@@ -38,9 +38,19 @@ CREATE TABLE IF NOT EXISTS free_calls (
 );
 CREATE INDEX IF NOT EXISTS free_calls_day ON free_calls(provider, model, ts);
 `;
+// Per handle: the metrics database can be reopened at another path (tests do).
+const migrated = new WeakSet<object>();
 function db() {
   const d = metricsDb();
   d.exec(SCHEMA);
+  if (!migrated.has(d)) {
+    // Added later: which account paid (gemini-free, gemini-paid) and the tokens, for cost tracking.
+    const cols = (d.query("PRAGMA table_info(free_calls)").all() as { name: string }[]).map((c) => c.name);
+    if (!cols.includes("account")) d.exec("ALTER TABLE free_calls ADD COLUMN account TEXT NOT NULL DEFAULT ''");
+    if (!cols.includes("tokens_in")) d.exec("ALTER TABLE free_calls ADD COLUMN tokens_in INTEGER NOT NULL DEFAULT 0");
+    if (!cols.includes("tokens_out")) d.exec("ALTER TABLE free_calls ADD COLUMN tokens_out INTEGER NOT NULL DEFAULT 0");
+    migrated.add(d);
+  }
   return d;
 }
 
@@ -63,11 +73,29 @@ async function getJson(url: string, headers: Record<string, string> = {}, init: 
 
 // ---------------------------------------------------------------- quota
 
-export function recordFreeCall(c: { provider: string; model: string; purpose: string; ok: boolean; ms: number; error?: string }): void {
+export function recordFreeCall(c: { provider: string; model: string; purpose: string; ok: boolean; ms: number; error?: string; account?: string; tokensIn?: number; tokensOut?: number }): void {
   try {
-    db().query("INSERT INTO free_calls (ts, provider, model, purpose, ok, ms, error) VALUES (?, ?, ?, ?, ?, ?, ?)").run(new Date().toISOString(), c.provider, c.model, c.purpose, c.ok ? 1 : 0, Math.round(c.ms), (c.error ?? "").slice(0, 300));
+    db()
+      .query("INSERT INTO free_calls (ts, provider, model, purpose, ok, ms, error, account, tokens_in, tokens_out) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(new Date().toISOString(), c.provider, c.model, c.purpose, c.ok ? 1 : 0, Math.round(c.ms), (c.error ?? "").slice(0, 300), c.account ?? "", Math.round(c.tokensIn ?? 0), Math.round(c.tokensOut ?? 0));
   } catch {
     /* metrics never break the work */
+  }
+}
+
+/** A Gemini response's token counts, tagged as the free account (the only one the free lanes use). */
+function geminiTokens(body: any): { account: string; tokensIn: number; tokensOut: number } {
+  const u = body?.usageMetadata ?? {};
+  return { account: "gemini-free", tokensIn: Number(u.promptTokenCount) || 0, tokensOut: (Number(u.candidatesTokenCount) || 0) + (Number(u.thoughtsTokenCount) || 0) };
+}
+
+/** Calls and tokens on a Gemini account since a time (the fleet's own count; Google has no usage API for a key). */
+export function geminiUsage(account: "gemini-free" | "gemini-paid", since: string): { calls: number; failed: number; tokensIn: number; tokensOut: number } {
+  try {
+    const r = db().query("SELECT COUNT(*) AS calls, COALESCE(SUM(1 - ok), 0) AS failed, COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM free_calls WHERE account = ? AND ts >= ?").get(account, since) as { calls: number; failed: number; tin: number; tout: number };
+    return { calls: r.calls, failed: r.failed, tokensIn: r.tin, tokensOut: r.tout };
+  } catch {
+    return { calls: 0, failed: 0, tokensIn: 0, tokensOut: 0 };
   }
 }
 
@@ -171,7 +199,7 @@ async function checkGemini(key: string, model: string): Promise<{ ok: boolean; m
   const ms = Date.now() - t;
   const text = String((r.body?.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? "").join(""));
   const ok = r.status === 200 && checkPassed(text);
-  recordFreeCall({ provider: "google", model, purpose: "registry check", ok, ms, error: ok ? "" : String(r.body?.error?.status ?? `HTTP ${r.status}`) });
+  recordFreeCall({ provider: "google", model, purpose: "registry check", ok, ms, error: ok ? "" : String(r.body?.error?.status ?? `HTTP ${r.status}`), ...geminiTokens(r.body) });
   return { ok, ms, note: ok ? "" : r.status === 429 ? "not on the free tier (429)" : r.status === 200 ? "wrong answer" : String(r.body?.error?.status ?? `HTTP ${r.status}`) };
 }
 
@@ -185,7 +213,8 @@ export async function refreshFreeModels(): Promise<{ openrouter: number; google:
     // agentKeyEnv retries once: the .env is a 1Password pipe that can read empty for a moment.
     const keys = await agentKeyEnv();
     const orKey = keys.OPENROUTER_API_KEY ?? "";
-    const gKey = keys.GEMINI_API_KEY ?? "";
+    // The free account only: GEMINI_API_KEY is a paid plan (2026-10-18); free lanes never touch it.
+    const gKey = await nodeKey("GEMINI_FREE_API_KEY");
     const now = new Date().toISOString();
     const rows: FreeModel[] = [];
     const catalog = await getJson(`${OR}/models`);
@@ -281,8 +310,9 @@ export async function freeComplete(
   const started = Date.now();
   const keys = await agentKeyEnv();
   const orKey = keys.OPENROUTER_API_KEY ?? "";
-  const gKey = keys.GEMINI_API_KEY ?? "";
-  if (!orKey && !gKey) return { ok: false, text: "", model: "", free: true, tried: [], cost: 0, ms: Date.now() - started, error: "no OpenRouter or Gemini key could be read (fleet/home/.env)" };
+  // The free account only: GEMINI_API_KEY is a paid plan (2026-10-18); free lanes never touch it.
+  const gKey = await nodeKey("GEMINI_FREE_API_KEY");
+  if (!orKey && !gKey) return { ok: false, text: "", model: "", free: true, tried: [], cost: 0, ms: Date.now() - started, error: "no OpenRouter or free Gemini key could be read (the service account)" };
   const quota = await openRouterFreeQuota().catch(() => null);
   const candidates = pickFreeModels(listFreeModels(), opts.needs ?? {}, { openrouterRemaining: quota?.remaining ?? null, googleUsed: (m) => callsToday("google", m) }).slice(0, opts.attempts ?? 3);
   const wait = opts.attemptMs ?? TIMEOUT_MS;
@@ -293,6 +323,7 @@ export async function freeComplete(
     const t = Date.now();
     let text = "";
     let error = "";
+    let tokens = {};
     if (m.provider === "openrouter" && orKey) {
       const r = await getJson(`${OR}/chat/completions`, { Authorization: `Bearer ${orKey}`, "Content-Type": "application/json" }, {
         method: "POST",
@@ -307,8 +338,9 @@ export async function freeComplete(
       }, wait);
       text = String((r.body?.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? "").join(""));
       if (r.status !== 200 || !text.trim()) error = String(r.body?.error?.status ?? `HTTP ${r.status}`);
+      tokens = geminiTokens(r.body);
     } else continue;
-    recordFreeCall({ provider: m.provider, model: m.model, purpose: opts.purpose, ok: !error, ms: Date.now() - t, error });
+    recordFreeCall({ provider: m.provider, model: m.model, purpose: opts.purpose, ok: !error, ms: Date.now() - t, error, ...tokens });
     if (!error) return { ok: true, text, model: `${m.provider}/${m.model}`, free: true, tried, cost: 0, ms: Date.now() - started };
   }
   const paid = opts.paidFallback === undefined ? PAID_FALLBACK : opts.paidFallback;

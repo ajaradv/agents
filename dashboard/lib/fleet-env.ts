@@ -104,9 +104,17 @@ export function keysForModels(all: Record<string, string>, models: string[]): Re
   return Object.fromEntries(Object.entries(all).filter(([k]) => need.has(k)));
 }
 
-/** Every secret the fleet hands out; stripped from a child's inherited environment before adding what it needs. */
+/** Keys only the node uses (never handed to an agent): the free Gemini account for the free lanes. */
+const NODE_KEYS = ["GEMINI_FREE_API_KEY"];
+
+/** Every secret the fleet holds; stripped from a child's inherited environment before adding what it needs. */
 export function withoutSecrets(env: Record<string, string | undefined>): Record<string, string | undefined> {
-  return Object.fromEntries(Object.entries(env).filter(([k]) => !AGENT_KEYS.includes(k)));
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !AGENT_KEYS.includes(k) && !NODE_KEYS.includes(k)));
+}
+
+/** A key only the node uses (NODE_KEYS), from the service account; "" when not set. */
+export async function nodeKey(name: (typeof NODE_KEYS)[number]): Promise<string> {
+  return (process.env[name] ?? (await serviceAccountEnv())[name] ?? "").trim();
 }
 
 let saCache: { at: number; keys: Record<string, string> } | null = null;

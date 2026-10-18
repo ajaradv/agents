@@ -514,7 +514,8 @@ def load_agent(agent_id: str) -> tuple[dict, dict | None] | None:
 # A model's provider and the key it needs from fleet/home/.env.
 PROVIDER_KEYS = {"cursor": "CURSOR_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "google": "GEMINI_API_KEY"}
 # Every secret the fleet hands out (R4c): an assistant keeps only the ones it needs.
-SECRET_KEYS = ("TYPESAFE_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "HF_API_KEY", "HF_TOKEN", "CURSOR_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY")
+# GEMINI_FREE_API_KEY is the node's own (free lanes); no agent keeps it.
+SECRET_KEYS = ("TYPESAFE_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "HF_API_KEY", "HF_TOKEN", "CURSOR_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GEMINI_FREE_API_KEY")
 
 
 def keys_needed(agent: dict) -> set[str]:

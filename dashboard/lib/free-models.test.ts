@@ -64,3 +64,23 @@ describe("free model lanes", () => {
     expect(f.quotaDayStart("google", new Date("2026-10-17T05:00:00Z"))).toBe("2026-10-16T07:00:00.000Z");
   });
 });
+
+describe("two Gemini accounts", () => {
+  test("the free lanes never use the paid key (GEMINI_API_KEY is a paid plan)", async () => {
+    // Code only: comments may name the paid key to say it is not used.
+    const src = (await Bun.file(join(import.meta.dir, "free-models.ts")).text()).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(src).not.toContain("GEMINI_API_KEY");
+    expect(src).toContain('nodeKey("GEMINI_FREE_API_KEY")');
+  });
+  test("calls are counted per account with their tokens", () => {
+    const since = new Date(Date.now() - 60_000).toISOString();
+    f.recordFreeCall({ provider: "google", model: "gemini-x", purpose: "test", ok: true, ms: 5, account: "gemini-free", tokensIn: 120, tokensOut: 30 });
+    f.recordFreeCall({ provider: "google", model: "gemini-x", purpose: "test", ok: false, ms: 5, account: "gemini-free" });
+    expect(f.geminiUsage("gemini-free", since)).toEqual({ calls: 2, failed: 1, tokensIn: 120, tokensOut: 30 });
+    expect(f.geminiUsage("gemini-paid", since).calls).toBe(0);
+  });
+  test("the free key is the node's own: stripped from any child's environment", async () => {
+    const { withoutSecrets } = await import("./fleet-env.ts");
+    expect(withoutSecrets({ GEMINI_FREE_API_KEY: "x", GEMINI_API_KEY: "y", PATH: "/bin" })).toEqual({ PATH: "/bin" });
+  });
+});

@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { agentKeyEnv, envKeyValue } from "./fleet-env.ts";
+import { agentKeyEnv, envKeyValue, nodeKey } from "./fleet-env.ts";
+import { geminiUsage, quotaDayStart } from "./free-models.ts";
+import { metricsDb } from "./metrics.ts";
 
 export type ApiLaneUsage = {
   provider: string;
@@ -153,25 +155,55 @@ async function fetchOpenRouter(apiKey: string): Promise<ApiLaneUsage> {
 }
 
 /**
- * Google AI Studio (GEMINI_API_KEY): there is no balance or credits API, so the
- * lane checks the key works and counts the models it can call. The free tier is
- * per-model rate limits (requests per minute and per day) that reset daily.
+ * Gemini, two accounts (2026-10-18): GEMINI_FREE_API_KEY is the free tier the
+ * free lanes and evaluations use; GEMINI_API_KEY is a paid plan. Google has no
+ * balance or usage API for a key, so each card checks its key works and shows
+ * the fleet's own count: calls and tokens on the free account, and on the paid
+ * one, what agent turns on google/ models and any direct calls spent.
  */
-export async function fetchGemini(apiKey: string): Promise<ApiLaneUsage> {
+export async function fetchGemini(apiKey: string, account: "gemini-free" | "gemini-paid"): Promise<ApiLaneUsage> {
+  const provider = account === "gemini-free" ? "gemini-free" : "google";
   const at = new Date().toISOString();
   const { status, body, timedOut } = await fetchJson("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", apiKey, "x-goog-api-key");
-  if (timedOut) return usageCache.google?.ok ? { ...usageCache.google, stale: true, at } : { provider: "google", ok: false, error: "timed out", at };
-  if (status === 400 || status === 401 || status === 403) return { provider: "google", ok: false, error: "key rejected", at };
-  if (status < 200 || status >= 300 || !body || typeof body !== "object") return { provider: "google", ok: false, error: `HTTP ${status || "error"}`, at };
+  if (timedOut) return usageCache[provider]?.ok ? { ...usageCache[provider]!, stale: true, at } : { provider, ok: false, error: "timed out", at };
+  if (status === 400 || status === 401 || status === 403) return { provider, ok: false, error: "key rejected", at };
+  if (status < 200 || status >= 300 || !body || typeof body !== "object") return { provider, ok: false, error: `HTTP ${status || "error"}`, at };
   const models = ((body as { models?: { name?: string; supportedGenerationMethods?: string[] }[] }).models ?? []).filter((m) => m.supportedGenerationMethods?.includes("generateContent"));
-  const gemini = models.filter((m) => /gemini/i.test(m.name ?? ""));
+  const gemini = models.filter((m) => /gemini/i.test(m.name ?? "")).length;
+  const month = new Date();
+  month.setDate(1);
+  month.setHours(0, 0, 0, 0);
+  const since = month.toISOString();
+  const used = geminiUsage(account, since);
+  const tokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+  if (account === "gemini-free") {
+    const today = geminiUsage(account, quotaDayStart("google"));
+    return {
+      provider,
+      ok: true,
+      at,
+      headline: `Free · ${today.calls} call${today.calls === 1 ? "" : "s"} today`,
+      detail: `${used.calls} calls and ${tokens(used.tokensIn + used.tokensOut)} tokens this month${used.failed ? ` (${used.failed} failed)` : ""}. Per-model limits per minute and per day, reset midnight Pacific. ${gemini} Gemini models. The free lanes and evaluations use this key.`,
+    };
+  }
+  const turns = paidGeminiTurns(since);
   return {
-    provider: "google",
+    provider,
     ok: true,
     at,
-    headline: `Key works · ${gemini.length} Gemini models`,
-    detail: `Free tier: per-model limits per minute and per day, reset daily (no balance API). ${models.length} models can generate.`,
+    headline: `Paid · ${formatUsd(turns.cost)} this month by the fleet`,
+    detail: `${turns.turns} agent turn${turns.turns === 1 ? "" : "s"} on google/ models${used.calls ? `, ${used.calls} direct calls (${tokens(used.tokensIn + used.tokensOut)} tokens)` : ""}. Only agents set to a google/ model use this key. Google bills in the Cloud console (no billing API for a key); this is the fleet's own count.`,
   };
+}
+
+/** Agent turns on google/ models since a time, and what pi says they cost (the paid Gemini key). */
+function paidGeminiTurns(since: string): { turns: number; cost: number } {
+  try {
+    const r = metricsDb().query("SELECT COUNT(*) AS n, COALESCE(SUM(cost), 0) AS cost FROM turns WHERE ts >= ? AND (model LIKE 'google/%' OR model LIKE 'gemini%')").get(since) as { n: number; cost: number };
+    return { turns: r.n, cost: r.cost };
+  } catch {
+    return { turns: 0, cost: 0 };
+  }
 }
 
 export async function refreshApiLaneUsage(): Promise<Record<string, ApiLaneUsage>> {
@@ -183,6 +215,7 @@ export async function refreshApiLaneUsage(): Promise<Record<string, ApiLaneUsage
     const dsKey = envKeyValue("DEEPSEEK_API_KEY", dotenv);
     const orKey = envKeyValue("OPENROUTER_API_KEY", dotenv);
     const geminiKey = envKeyValue("GEMINI_API_KEY", dotenv);
+    const freeGeminiKey = await nodeKey("GEMINI_FREE_API_KEY");
     const next = { ...usageCache };
     const jobs: Promise<void>[] = [];
     if (dsKey) {
@@ -213,8 +246,10 @@ export async function refreshApiLaneUsage(): Promise<Record<string, ApiLaneUsage
         at: new Date().toISOString(),
       };
     }
-    if (geminiKey) jobs.push(fetchGemini(geminiKey).then((u) => void (next.google = u)));
+    if (geminiKey) jobs.push(fetchGemini(geminiKey, "gemini-paid").then((u) => void (next.google = u)));
     else delete next.google;
+    if (freeGeminiKey) jobs.push(fetchGemini(freeGeminiKey, "gemini-free").then((u) => void (next["gemini-free"] = u)));
+    else delete next["gemini-free"];
     await Promise.all(jobs);
     usageCache = next;
   } finally {

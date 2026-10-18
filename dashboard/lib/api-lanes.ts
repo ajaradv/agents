@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ROOT } from "./paths.ts";
 import type { ApiLaneUsage } from "./api-lane-usage.ts";
-import { agentKeyEnv, huggingFaceKeyPresent, envKeyPresent } from "./fleet-env.ts";
+import { agentKeyEnv, huggingFaceKeyPresent, envKeyPresent, nodeKey } from "./fleet-env.ts";
 
 function escapeHtml(s: string): string {
   return s
@@ -39,8 +39,12 @@ const LANE_META: Record<
     label: "OpenRouter",
     keyEnv: "OPENROUTER_API_KEY",
   },
+  "gemini-free": {
+    label: "Gemini (free)",
+    keyEnv: "GEMINI_FREE_API_KEY",
+  },
   google: {
-    label: "Google AI Studio",
+    label: "Gemini (paid)",
     keyEnv: "GEMINI_API_KEY",
   },
 };
@@ -95,16 +99,17 @@ export async function readConfiguredApiLanes(
   }
 
   const lanes: ApiLane[] = [];
-  for (const provider of ["deepseek", "huggingface", "openrouter", "google"] as const) {
+  const freeGemini = Boolean(await nodeKey("GEMINI_FREE_API_KEY"));
+  for (const provider of ["deepseek", "huggingface", "openrouter", "gemini-free", "google"] as const) {
     if (quotaProviderIds.has(provider)) continue;
     const meta = LANE_META[provider]!;
     const inDispatch = dispatchProviders.has(provider);
     // Google AI Studio shows as soon as its key is set: tracked for its free tier before any agent uses it.
     const inCatalog =
-      provider === "openrouter" ? inDispatch : provider === "google" ? envKeyPresent(meta.keyEnv, dotenv) : await providerInPiCatalog(provider);
+      provider === "openrouter" ? inDispatch : provider === "google" ? envKeyPresent(meta.keyEnv, dotenv) : provider === "gemini-free" ? freeGemini : await providerInPiCatalog(provider);
     if (!inDispatch && !inCatalog) continue;
     const keySet =
-      provider === "huggingface" ? huggingFaceKeyPresent(dotenv) : envKeyPresent(meta.keyEnv, dotenv);
+      provider === "huggingface" ? huggingFaceKeyPresent(dotenv) : provider === "gemini-free" ? freeGemini : envKeyPresent(meta.keyEnv, dotenv);
     const usage = usageByProvider[provider];
     const note =
       provider === "huggingface"
