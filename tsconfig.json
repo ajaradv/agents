@@ -1,0 +1,39 @@
+{
+  // Typecheck for the dashboard, the node, and the extensions the fleet loads
+  // (bin/launch's built-ins plus those named in agents/*/agent.yaml). `just
+  // typecheck` runs it; a test fails when it does not pass. Vendored extensions
+  // the fleet does not load are left out.
+  // pi's packages are dev dependencies for their types only (pi provides them
+  // to extensions at runtime); the older names map to them, and TypeBox to the
+  // version pi's types use.
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "types": ["bun"],
+    "paths": {
+      "@mariozechner/pi-coding-agent": ["./node_modules/@earendil-works/pi-coding-agent"],
+      "@mariozechner/pi-ai": ["./node_modules/@earendil-works/pi-ai"],
+      "@sinclair/typebox": ["./node_modules/typebox"]
+    }
+  },
+  "include": [
+    "dashboard/**/*.ts",
+    "extensions/ask-captain.ts",
+    "extensions/cache-watch.ts",
+    "extensions/canvas.ts",
+    "extensions/context-guard.ts",
+    "extensions/crew.ts",
+    "extensions/fleet.ts",
+    "extensions/fleet-dashboard-heartbeat.ts",
+    "extensions/gondolin.ts",
+    "extensions/gondolin/**/*.ts",
+    "extensions/image-window.ts",
+    "extensions/subagent.ts",
+    "extensions/subagent/**/*.ts"
+  ]
+}

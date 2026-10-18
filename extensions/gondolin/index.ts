@@ -413,10 +413,10 @@ export default function (pi: ExtensionAPI) {
 		const allow = allowedHosts();
 		const { httpHooks, env } = createHttpHooks({
 			allowedHosts: allow.length ? allow : ["no-network.invalid"],
-			isRequestAllowed: (req: { url?: string; headers?: Record<string, string> }) => {
-				let host = req.headers?.host ?? "";
+			isRequestAllowed: (req: Request) => {
+				let host = req.headers.get("host") ?? "";
 				try {
-					host ||= new URL(req.url ?? "").host;
+					host ||= new URL(req.url).host;
 				} catch {
 					/* no url */
 				}
@@ -425,7 +425,7 @@ export default function (pi: ExtensionAPI) {
 				return ok;
 			},
 		});
-		const mounts: Record<string, RealFSProvider> = { [GUEST_WORKSPACE]: new RealFSProvider(localCwd) };
+		const mounts: Record<string, RealFSProvider | ReadonlyProvider> = { [GUEST_WORKSPACE]: new RealFSProvider(localCwd) };
 		if (HOST_MEMORY) mounts[GUEST_MEMORY] = new RealFSProvider(HOST_MEMORY);
 		if (HOST_SHIP_MEMORY) mounts[GUEST_SHIP_MEMORY] = new RealFSProvider(HOST_SHIP_MEMORY);
 		if (HOST_CACHE) mounts[GUEST_CACHE] = new RealFSProvider(HOST_CACHE);

@@ -512,7 +512,7 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
       hooks.event(agentId, { kind: "running", running: false });
       hooks.event(agentId, { kind: "stream", text: "" });
       if (p.lastCaptainTs) hooks.line(agentId, await appendChatError(agentId, reason, p.lastCaptainTs));
-      hooks.settled(agentId, { ok: false, ms: p.running ? Date.now() - p.startedAt : 0, error: reason });
+      hooks.settled(agentId, { ok: false, ms: p.running ? Date.now() - p.startedAt : 0, error: reason, cost: 0, tokens: 0 });
     }
   });
   return p;

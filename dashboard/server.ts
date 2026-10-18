@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { ServerWebSocket } from "bun";
 import { readFile } from "node:fs/promises";
 import {
   startAgentTui,
@@ -61,7 +62,7 @@ import { requestRefusal } from "./lib/request-guard.ts";
 import { dashLog } from "./lib/log.ts";
 
 type WsData = { agentId: string };
-const chatSockets = new Map<string, Set<WebSocket>>();
+const chatSockets = new Map<string, Set<ServerWebSocket<WsData>>>();
 const sseEncoder = new TextEncoder();
 type SseController = ReadableStreamDefaultController<Uint8Array>;
 const sseClients = new Set<SseController>();
@@ -232,7 +233,7 @@ process.on("uncaughtException", (err) => {
 
 const publicDir = join(import.meta.dir, "public");
 
-const server = Bun.serve({
+const server = Bun.serve<WsData>({
   hostname: HOST,
   port: PORT,
   async fetch(req, server) {
@@ -250,7 +251,7 @@ const server = Bun.serve({
   },
   websocket: {
     open(ws) {
-      const data = ws.data as WsData;
+      const data = ws.data;
       if (data.agentId === "voice") {
         ws.send(JSON.stringify({ error: "not configured", hint: "Gemini Live voice later" }));
         ws.close();
@@ -267,7 +268,7 @@ const server = Bun.serve({
       }).catch((e) => console.error("[dashboard] ws history:", e));
     },
     message(ws, message) {
-      const data = ws.data as WsData;
+      const data = ws.data;
       const { text, requestId } = parseWsSend(message.toString());
       captainSend(data.agentId, text, requestId)
         .catch(() => {
@@ -275,7 +276,7 @@ const server = Bun.serve({
         });
     },
     close(ws) {
-      const data = ws.data as WsData;
+      const data = ws.data;
       chatSockets.get(data.agentId)?.delete(ws);
     },
   },
@@ -719,7 +720,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       const voice = voiceFor(agentId, meta?.role, meta?.voice);
       try {
         const wav = await synthesize(parts[part]!, voice);
-        return new Response(wav, { headers: { "Content-Type": "audio/wav", "X-Parts": String(parts.length), "X-Voice": voice, "Cache-Control": "no-store" } });
+        return new Response(new Uint8Array(wav), { headers: { "Content-Type": "audio/wav", "X-Parts": String(parts.length), "X-Voice": voice, "Cache-Control": "no-store" } });
       } catch (e) {
         // The page falls back to the browser's own (robotic) voice on a 503: log why.
         void dashLog("voice", `tts failed for ${agentId} (${voice}): ${e instanceof Error ? e.message : String(e)}`);

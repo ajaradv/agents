@@ -10,6 +10,8 @@ extensions:
   - cursor-sdk
 skill_paths:
   - .claude/skills/sssf
+  # How tools are built here (docs/tool-standards.md).
+  - skills/tool-standards
 extra_prompts:
   - prompts/system/sr_opus_5_system_prompt.md
 authority:

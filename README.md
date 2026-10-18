@@ -32,6 +32,7 @@ docs/onepassword.md        vault Fleet, Environment agents-fleet
 docs/remote-ops.md         Herdr secondmates, Alice relocate, SDLC, phone SSH
 docs/architect.md          plan pipeline, vault plans, Firstmate triage
 docs/dashboard.md          localhost fleet UI, chat bar, usage (htmx + SSE)
+docs/tool-standards.md     how tools are built: AXI output rules, checks (just test, just axi-check)
 dashboard/                 Bun server + static UI
 agents/alice/improvements/ phone chat/voice action plans (later)
 ```

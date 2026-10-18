@@ -48,10 +48,14 @@ bin/stamp-ship <id> <path> [--mode no-mistakes|direct-PR|local-only] \
 
 To refresh a ship after editing templates here: `bin/stamp-ship <id> <path> --force` replaces the ship yaml and passes `--force` to `install.py`. That overwrites local edits in the ship, so it needs a captain yes.
 
+## Tools
+
+Adding or changing a tool (a pi tool in an extension, a read tool's output, or a script or CLI agents run) follows `docs/tool-standards.md` (skill `tool-standards`). Before committing, run `just test` (typecheck and tool standard checks) and, for a CLI, `just axi-check "<command>"`; say which you ran in the commit message.
+
 ## Other repo upkeep
 
 - Dispatch rules: `fleet/config/crew-dispatch.json`. Every rule has a stable `id`; keep ids unchanged when editing `when` text. Cursor profiles carry effort in the model name, never an `effort` field. The live copy is `fleet/home/config/crew-dispatch.json`; copy changes there only with a captain yes.
-- Ships: `fleet/ships/*.yaml`. Initiatives live in the vault, never in this repo.
+- Ships: `fleet/ships/*.yaml` (committed base) and `fleet/home/ships/*.yaml` (live overlay; see `docs/ship-config.md`). Initiatives live in the vault, never in this repo.
 - Keep `README.md` and `docs/` in step with any change you make.
 
 ## Hand-off

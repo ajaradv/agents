@@ -64,6 +64,18 @@ dashboard:
 css:
     cd "{{root}}" && bun run build:css
 
+# Strict TypeScript over the dashboard, node, and the extensions the fleet loads (tsconfig.json).
+typecheck:
+    cd "{{root}}" && node_modules/.bin/tsc -p .
+
+# Check a CLI agents run against the AXI principles (docs/tool-standards.md), e.g. just axi-check "bin/stamp-ship".
+axi-check cmd:
+    cd "{{root}}" && npx -y axi-axi@0.1.0 validate "{{cmd}}" --strict
+
+# The dashboard's tests (they include the typecheck and the tool standard checks).
+test:
+    cd "{{root}}/dashboard" && bun test
+
 # Background services (launchd): node and dashboard start at login and restart
 # if they die. Stop a dashboard running in a terminal before installing.
 services-install:

@@ -6,7 +6,8 @@ import { encode } from "@toon-format/toon";
  * applied in one place for every harness:
  *
  * - TOON, with lists as tables of a few chosen fields per row;
- * - long text cut with its full size shown, and `full` to get all of it;
+ * - long text cut with its full size shown, at most MAX_ROWS rows a list, and
+ *   `full` to get all of it;
  * - counts with every list, and an explicit "0" instead of an empty list;
  * - errors as `error:` plus what to do;
  * - a few next steps when the next move is not obvious.
@@ -31,6 +32,10 @@ export type View = {
 };
 
 const DEFAULT_CUT = 300;
+/** Table cells get less room by default: a row is one line among many. */
+const DEFAULT_CELL_CUT = 160;
+/** Rows shown per list; the rest are counted and the agent is told to narrow. */
+export const MAX_ROWS = 60;
 
 const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 
@@ -39,13 +44,13 @@ function shortTs(v: string): string {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) ? `${v.slice(5, 10)} ${v.slice(11, 16)}` : v;
 }
 
-type Cutter = { cut: (field: string, v: string) => string; cutAny: boolean };
+type Cutter = { cut: (field: string, v: string, inCell?: boolean) => string; cutAny: boolean };
 
 function cutter(view: View, full: boolean): Cutter {
   const c: Cutter = {
     cutAny: false,
-    cut(field, v) {
-      const n = view.cut?.[field] ?? DEFAULT_CUT;
+    cut(field, v, inCell = false) {
+      const n = view.cut?.[field] ?? (inCell ? DEFAULT_CELL_CUT : DEFAULT_CUT);
       if (full || v.length <= n) return v;
       c.cutAny = true;
       return `${v.slice(0, n - 1)}… (${v.length} chars)`;
@@ -58,9 +63,9 @@ function cutter(view: View, full: boolean): Cutter {
 function cell(field: string, v: unknown, c: Cutter): string | number | boolean | null {
   if (v === undefined || v === null || v === "") return null;
   if (typeof v === "number" || typeof v === "boolean") return v;
-  if (typeof v === "string") return c.cut(field, field === "ts" || field === "started" || field === "updated" ? shortTs(v) : v.replace(/\s+/g, " "));
-  if (Array.isArray(v)) return v.length ? c.cut(field, v.map((x) => (typeof x === "number" ? `#${x}` : isObj(x) ? JSON.stringify(x) : String(x))).join(" ")) : null;
-  return c.cut(field, JSON.stringify(v));
+  if (typeof v === "string") return c.cut(field, field === "ts" || field === "started" || field === "updated" ? shortTs(v) : v.replace(/\s+/g, " "), true);
+  if (Array.isArray(v)) return v.length ? c.cut(field, v.map((x) => (typeof x === "number" ? `#${x}` : isObj(x) ? JSON.stringify(x) : String(x))).join(" "), true) : null;
+  return c.cut(field, JSON.stringify(v), true);
 }
 
 function shape(v: unknown, field: string, c: Cutter): unknown {
@@ -78,6 +83,7 @@ export function toolText(res: Res, view: View = {}, opts: { full?: boolean } = {
   }
   const c = cutter(view, Boolean(opts.full));
   const out: Record<string, unknown> = { result: res.message };
+  const hidden: string[] = [];
   for (const [k, v] of Object.entries(res)) {
     if (k === "ok" || k === "message" || k === "text" || view.hide?.includes(k) || v === undefined) continue;
     const fields = view.rows?.[k];
@@ -87,14 +93,15 @@ export function toolText(res: Res, view: View = {}, opts: { full?: boolean } = {
         continue;
       }
       if (fields && v.every(isObj)) {
-        out[k] = v.map((row) => Object.fromEntries(fields.map((f) => [f, cell(f, row[f], c)])));
+        out[k] = v.slice(0, opts.full ? undefined : MAX_ROWS).map((row) => Object.fromEntries(fields.map((f) => [f, cell(f, row[f], c)])));
         if (v.length > 3) out[`${k}_count`] = v.length;
+        if (!opts.full && v.length > MAX_ROWS) hidden.push(`${v.length - MAX_ROWS} more ${k} not shown; narrow the request (a smaller limit, a filter) or pass full=true`);
         continue;
       }
     }
     out[k] = shape(v, k, c);
   }
-  const help = [...(view.help?.(res) ?? [])];
+  const help = [...hidden, ...(view.help?.(res) ?? [])];
   if (c.cutAny) help.push("Long text was cut; call again with full=true for all of it.");
   if (help.length) out.help = help;
   return encode(out);

@@ -37,7 +37,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolResultEventResult } from "@mariozechner/pi-coding-agent";
 
 const TTL_MS = Math.max(30, Number(process.env.FLEET_CACHE_TTL_SECS) || 300) * 1000;
 /** Below this many prompt tokens providers do not cache at all. */
@@ -140,7 +140,7 @@ export default function (pi: ExtensionAPI) {
     const missing = /\bENOENT\b|no such file/i.test(content.find((c) => c.type === "text")?.text ?? "") && isReadTool(e.toolName);
     const notes = `${missing ? MISSING_FILE_NOTE : ""}${n === 2 ? STRIKE_NOTE : ""}`;
     if (!notes) return;
-    return { content: [...content, { type: "text" as const, text: notes }] };
+    return { content: [...content, { type: "text", text: notes }] } as ToolResultEventResult;
   });
 
   pi.on("message_end", async (event, ctx) => {
