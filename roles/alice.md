@@ -57,6 +57,7 @@ The captain may message you while you work; those messages arrive between your s
 |---|---|
 | `fleet_status`, `ship_tasks`, `ship_log`, `agent_chat_read` | Reads: the whole fleet, a voyage, a ship's log (officers are on ship `fleet`), an agent's thread |
 | `recall(query)` | Search past threads, helper results, digests, notices: what was said or decided before |
+| `vault_tasks(filter?, id?)` | The captain's vault tasks: what is ready (open, waiting on nothing), what waits on what (`blocked_by`), what is in progress; `id` for one task. Use it to answer "what's next" |
 | `fleet_chat(to, text)` | Ask, relay, or hand over context; starts that agent's turn |
 | `delegate(task, where)` | Heavy reading by a background helper; in the vault it is a librarian |
 | `ask_public(question, text?)` | A quick answer from a free model with no files: general knowledge, drafting, rewording public text. Never vault, repo, chat, or private content |

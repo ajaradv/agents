@@ -141,6 +141,18 @@ export const VIEWS: Record<string, View> = {
     empty: { hits: "0 matches" },
     help: (r) => (Array.isArray(r.hits) && r.hits.length ? ["Read the source note or chat for more; delegate for a deeper search"] : ["Try other words, or delegate a deeper search"]),
   },
+  vault_tasks: {
+    rows: { tasks: ["id", "title", "status", "priority", "waitingOn"] },
+    cut: { title: 110, description: 600 },
+    empty: { tasks: "0 tasks in this view" },
+    help: (r) =>
+      r.task
+        ? []
+        : [
+            "vault_tasks id=<task> for one task's detail (what it waits on and blocks)",
+            ...(Array.isArray(r.unreadable) && r.unreadable.length ? ["Unreadable notes have invalid frontmatter (often an unquoted colon); fix them so they count"] : []),
+          ],
+  },
   voyage_status: {
     rows: {
       tasks: ["id", "title", "assignee", "status", "waitingOn", "role", "note"],

@@ -126,6 +126,20 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "vault_tasks",
+    label: "Vault tasks",
+    description: "The captain's vault tasks (tasks/ notes): what is ready to work on (open, waiting on nothing), what waits on what (blocked_by in a note's frontmatter), what is in progress, sorted by priority then age. Notes it cannot read are listed. id=<note name> gives one task's detail.",
+    parameters: Type.Object({
+      filter: Type.Optional(StringEnum(["ready", "open", "in-progress", "blocked", "done", "all"] as const)),
+      id: Type.Optional(Type.String({ description: "A task's note name, e.g. fleet-tool-standards" })),
+      ...OrderArgs,
+    }),
+    async execute(_id, p) {
+      return text(await call("GET", "vault-tasks", { filter: p.filter, id: p.id, order: p.order, step: p.step }));
+    },
+  });
+
+  pi.registerTool({
     name: "recall",
     label: "Recall",
     description: "Full-text search of past fleet talk: every agent's captain thread, helper results, digests, and notices. Use it before asking the captain something they may already have said. Returns snippets with source and time. Not the vault (delegate where=vault for that).",

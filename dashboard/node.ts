@@ -23,6 +23,7 @@ import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
 import { askPublic } from "./lib/public-helper.ts";
 import { toolText, VIEWS } from "./lib/tool-out.ts";
+import { VAULT_FILTERS, vaultTasksReport, type VaultFilter } from "./lib/vault-tasks.ts";
 import { dashLog } from "./lib/log.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
 import { backfillMetrics } from "./lib/metrics-backfill.ts";
@@ -263,6 +264,7 @@ function fleetCall(what: string, method: string, q: URLSearchParams, b: Record<s
   if (method === "GET" && what === "maneuvers") return { tool: "ship_maneuvers", read: true, args: fromQ(["ship"]) };
   if (method === "GET" && what === "chat") return { tool: "agent_chat_read", read: true, args: fromQ(["agent", "n"]) };
   if (method === "GET" && what === "recall") return { tool: "recall", read: true, args: fromQ(["query", "limit"]) };
+  if (method === "GET" && what === "vault-tasks") return { tool: "vault_tasks", read: true, args: fromQ(["filter", "id"]) };
   if (method === "POST" && what === "chat") return { tool: "fleet_chat", read: false, args: pick((k) => b[k], ["to", "text"]) };
   return null;
 }
@@ -324,6 +326,7 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
   else if (call.tool === "ship_tasks") res = await shipTasks(a.ship ?? "");
   else if (call.tool === "ship_maneuvers") res = await shipManeuvers(a.ship ?? "");
   else if (call.tool === "agent_chat_read") res = await agentChatRead(a.agent ?? "", Number(a.n) || 12);
+  else if (call.tool === "vault_tasks") res = vaultTasksReport((VAULT_FILTERS as string[]).includes(a.filter ?? "") ? (a.filter as VaultFilter) : "ready", a.id ?? "");
   else if (call.tool === "recall") {
     const hits = recall(a.query ?? "", Number(a.limit) || 8);
     res = { ok: true, message: hits.length ? `${hits.length} match(es), best first.` : "No matches. Try other words, or delegate a deeper search.", hits };
@@ -342,7 +345,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const url = new URL(req.url);
   const path = url.pathname;
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|public|recall)$/);
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|public|recall|vault-tasks)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm)(?:\/(\d+))?$/);
