@@ -133,12 +133,12 @@ export async function harborHtml(): Promise<string> {
     const st = shipState(readyToSail(await shipChecklist(ship)), voyage, cards, fm);
     const waiting = cards.filter((c) => c.status === "waiting").length;
     const deck = [...cards.map((c) => c.target), ...fm].slice(0, 6);
-    return `<a class="ship-tile is-${st.state}" href="/ships/${encodeURIComponent(ship.id)}" data-ship="${escapeHtml(ship.id)}">
+    return `<a class="d-card d-card-border bg-base-100 ship-tile is-${st.state}" href="/ships/${encodeURIComponent(ship.id)}" data-ship="${escapeHtml(ship.id)}">
       <div class="ship-sprite" aria-hidden="true"><span class="ship-hull"></span><span class="ship-sail"></span><span class="ship-wake"></span></div>
       <div class="stack-tight">
         <div class="between">
           <h3 class="ship-name">${escapeHtml(ship.id)}</h3>
-          ${waiting ? `<span class="detent detent-hot">${waiting} need${waiting === 1 ? "s" : ""} you</span>` : `<span class="detent">${st.label}</span>`}
+          ${waiting ? `<span class="d-badge d-badge-sm d-badge-error">${waiting} need${waiting === 1 ? "s" : ""} you</span>` : `<span class="d-badge d-badge-outline d-badge-sm">${st.label}</span>`}
         </div>
         <p class="muted ship-meta">${escapeHtml(ship.orchestrator === "firstmate" ? "Orchestrator: Firstmate" : `Orchestrator: ${ship.orchestrator}`)} · ${escapeHtml(ship.mode || "mode unset")}${ship.adws.length ? ` · ${ship.adws.length} ADWs` : ""}</p>
         ${voyage ? `<p class="ship-voyage">⚑ ${escapeHtml(voyage.goal.slice(0, 120))}</p>` : ""}
@@ -147,20 +147,20 @@ export async function harborHtml(): Promise<string> {
     </a>`;
   });
   return `<div class="harbor">${(await Promise.all(tiles)).join("")}</div>
-  <details class="fold new-ship">
-    <summary>Build a new ship</summary>
+  <details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100 new-ship">
+    <summary class="d-collapse-title">Build a new ship</summary><div class="d-collapse-content">
     <form class="stack shipyard-form" data-api="/api/ships" data-then="ship">
       <div class="form-grid">
-        <label class="stack-tight">Ship id <input class="field" name="id" required pattern="[a-z][a-z0-9_-]{0,40}" placeholder="pochteca" /></label>
-        <label class="stack-tight">Repo path <input class="field" name="path" required placeholder="/Users/you/Workspace/project" /></label>
-        <label class="stack-tight">Delivery mode <select class="field" name="mode">${MODES.map((m) => `<option${m === "no-mistakes" ? " selected" : ""}>${m}</option>`).join("")}</select></label>
-        <label class="stack-tight">Start from <select class="field" name="template"><option value="">a blank ship</option>${shipTemplates().map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)} template</option>`).join("")}</select></label>
-        <label class="stack-tight">Register with Firstmate (one-line description, optional) <input class="field" name="firstmate" placeholder="Leave empty to run it with its own crew" /></label>
+        <label class="stack-tight">Ship id <input class="d-input d-input-sm" name="id" required pattern="[a-z][a-z0-9_-]{0,40}" placeholder="pochteca" /></label>
+        <label class="stack-tight">Repo path <input class="d-input d-input-sm" name="path" required placeholder="/Users/you/Workspace/project" /></label>
+        <label class="stack-tight">Delivery mode <select class="d-select d-select-sm" name="mode">${MODES.map((m) => `<option${m === "no-mistakes" ? " selected" : ""}>${m}</option>`).join("")}</select></label>
+        <label class="stack-tight">Start from <select class="d-select d-select-sm" name="template"><option value="">a blank ship</option>${shipTemplates().map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)} template</option>`).join("")}</select></label>
+        <label class="stack-tight">Register with Firstmate (one-line description, optional) <input class="d-input d-input-sm" name="firstmate" placeholder="Leave empty to run it with its own crew" /></label>
       </div>
-      <label class="row"><input type="checkbox" name="factory" /> Install the SSSF factory (writes adws/ and .claude/skills/sssf into the repo)</label>
-      <div class="row"><button class="btn btn-ink" type="submit">Lay the keel</button><span class="muted" data-note></span></div>
+      <label class="row"><input class="d-checkbox d-checkbox-sm" type="checkbox" name="factory" /> Install the SSSF factory (writes adws/ and .claude/skills/sssf into the repo)</label>
+      <div class="row"><button class="d-btn d-btn-neutral d-btn-sm" type="submit">Lay the keel</button><span class="muted" data-note></span></div>
     </form>
-  </details>`;
+  </div></details>`;
 }
 
 // ---------------------------------------------------------------- ship deck

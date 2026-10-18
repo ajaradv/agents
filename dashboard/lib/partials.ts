@@ -14,27 +14,27 @@ import type { FirstmateWaitStatus } from "./firstmate-status.ts";
 function chatBadgeClass(state: string): string {
   switch (state) {
     case "ready":
-      return "detent-ok";
+      return "d-badge-success d-badge-soft";
     case "thinking":
-      return "detent-warn";
+      return "d-badge-warning d-badge-soft";
     case "error":
-      return "detent-hot";
+      return "d-badge-error";
     default:
-      return "";
+      return "d-badge-outline";
   }
 }
 
 function tuiBadgeClass(state: string): string {
   switch (state) {
     case "open":
-      return "detent-ok";
+      return "d-badge-success d-badge-soft";
     case "starting":
     case "stopping":
-      return "detent-warn";
+      return "d-badge-warning d-badge-soft";
     case "error":
-      return "detent-hot";
+      return "d-badge-error";
     default:
-      return "";
+      return "d-badge-outline";
   }
 }
 
@@ -79,10 +79,10 @@ function lastTurnHtml(agentId: string, turn: { at: string; status: string; ms: n
   const err = turn.error
     ? `<pre>${escapeHtml(turn.error.slice(0, 800))}</pre>`
     : "";
-  return `<details class="fold">
-    <summary>Last chat turn: ${escapeHtml(summary)}</summary>
+  return `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100">
+    <summary class="d-collapse-title">Last chat turn: ${escapeHtml(summary)}</summary><div class="d-collapse-content">
     ${err}
-  </details>`;
+  </div></details>`;
 }
 
 /** The model, or "on backup <model>" when the last launch fell back (hover for why). */
@@ -110,13 +110,13 @@ function crewTablesHtml(crew: AgentMeta[]): string {
           <td class="muted">${modelCell(a.id, a.model)}</td>
           <td><span class="crew-status">${escapeHtml(crewStatusLabel(s.status))}</span></td>
           <td class="crew-last">${s.lastAt ? `<span class="muted">${escapeHtml(timeAgo(s.lastAt))}</span> ` : ""}${escapeHtml(s.activity.replace(/[*_`#>]+/g, "").slice(0, 90))}</td>
-          <td><button type="button" class="btn" @click="openChat('${escapeHtml(a.id)}')">Chat</button></td>
+          <td><button type="button" class="d-btn d-btn-sm" @click="openChat('${escapeHtml(a.id)}')">Chat</button></td>
         </tr>`;
       })
       .join("");
     return `<div class="stack-tight">
       <h4><a class="crew-ship" href="/ships/${encodeURIComponent(ship)}" @click.prevent="openShip('${escapeHtml(ship)}')">${escapeHtml(ship)}</a></h4>
-      <div class="table-wrap"><table class="spend-table crew-table">
+      <div class="table-wrap"><table class="d-table d-table-zebra d-table-sm spend-table crew-table">
         <thead><tr><th>Crewmate</th><th>Model</th><th>Status</th><th>Last</th><th><span class="sr-only">Chat</span></th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
@@ -135,11 +135,11 @@ export async function agentsSidebarHtml(): Promise<string> {
   for (const [i, a] of agents.entries()) {
     const [status, last] = resolved[i]!;
     const chatBadge = status
-      ? `<span class="detent ${chatBadgeClass(status.chatState)}">${escapeHtml(status.chatLabel)}</span>`
+      ? `<span class="d-badge d-badge-sm ${chatBadgeClass(status.chatState)}">${escapeHtml(status.chatLabel)}</span>`
       : "";
     const tuiBadge =
       status && isTuiAgent(a.id)
-        ? `<span class="detent ${tuiBadgeClass(status.tuiState)}">${escapeHtml(status.tuiLabel)}</span>`
+        ? `<span class="d-badge d-badge-sm ${tuiBadgeClass(status.tuiState)}">${escapeHtml(status.tuiLabel)}</span>`
         : "";
     let lastShort = "—";
     if (last) {
@@ -156,8 +156,8 @@ export async function agentsSidebarHtml(): Promise<string> {
       ? `<div class="row">
             ${
               status?.tuiState === "open"
-                ? `<button type="button" class="btn" hx-post="/agents/${escapeHtml(a.id)}/stop" hx-swap="none">Close TUI</button>`
-                : `<button type="button" class="btn" ${pending ? "disabled" : ""} hx-post="/agents/${escapeHtml(a.id)}/start" hx-swap="none">${pending ? escapeHtml(status?.tuiLabel ?? "Working…") : "Open TUI"}</button>`
+                ? `<button type="button" class="d-btn d-btn-sm" hx-post="/agents/${escapeHtml(a.id)}/stop" hx-swap="none">Close TUI</button>`
+                : `<button type="button" class="d-btn d-btn-sm" ${pending ? "disabled" : ""} hx-post="/agents/${escapeHtml(a.id)}/start" hx-swap="none">${pending ? escapeHtml(status?.tuiLabel ?? "Working…") : "Open TUI"}</button>`
             }
           </div>
           ${status?.tuiMessage && status.tuiState === "error" ? `<p class="warn">${escapeHtml(status.tuiMessage.slice(0, 100))}</p>` : ""}
@@ -165,10 +165,10 @@ export async function agentsSidebarHtml(): Promise<string> {
           ${lastTurnHtml(a.id, status?.lastChatTurn)}`
       : "";
     const chatBtn = isOrchestratorOrAssistant(a)
-      ? `<button type="button" class="btn" @click="openChat('${escapeHtml(a.id)}')">Chat</button>`
+      ? `<button type="button" class="d-btn d-btn-sm" @click="openChat('${escapeHtml(a.id)}')">Chat</button>`
       : "";
     const face = agentArtPath(a.id);
-    rows.push(`<li class="agent">
+    rows.push(`<li class="d-card d-card-border bg-base-100 agent">
         <div class="between">
           <span class="row agent-head"><img class="avatar" src="${face}" alt="" width="48" height="48" /><span class="sheet-title">${escapeHtml(a.id)}</span></span>
           <span class="row">${chatBadge}${tuiBadge}</span>

@@ -230,7 +230,7 @@ function providerCardHtml(card: ProviderCard): string {
       ? ` <span class="muted">${escapeHtml(card.headlineScope)}</span>`
       : "";
 
-  return `<article class="sheet">
+  return `<article class="d-card d-card-border bg-base-100 sheet">
       <div class="between">
         <h3 class="sheet-title">${escapeHtml(card.provider)} ${planBadge}${headlineScope}</h3>
         ${heartsMeterHtml(pct)}
@@ -271,10 +271,10 @@ export async function usagePartialHtml(): Promise<string> {
 
   if (!q.ok && !parsed.providers.length) {
     return `<div class="stack">
-      <details class="fold">
-        <summary>${escapeHtml(q.error ?? "usage unavailable")}</summary>
+      <details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100">
+        <summary class="d-collapse-title">${escapeHtml(q.error ?? "usage unavailable")}</summary><div class="d-collapse-content">
         <pre>${escapeHtml(q.raw.slice(0, 4000))}</pre>
-      </details>
+      </div></details>
       ${lanes}
     </div>`;
   }
@@ -298,15 +298,15 @@ export async function usagePartialHtml(): Promise<string> {
   );
   const unsignedCollapse =
     unsignedEntries.length > 0
-      ? `<details class="fold">
-      <summary>${unsignedEntries.length} provider${unsignedEntries.length === 1 ? "" : "s"} without an account</summary>
+      ? `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100">
+      <summary class="d-collapse-title">${unsignedEntries.length} provider${unsignedEntries.length === 1 ? "" : "s"} without an account</summary><div class="d-collapse-content">
       <ul class="meter-list">${unsignedEntries
         .map(
           ([name, reason]) =>
             `<li><span class="sheet-title">${escapeHtml(name)}</span><span class="muted">${escapeHtml(reason)}</span></li>`,
         )
         .join("")}</ul>
-    </details>`
+    </div></details>`
       : "";
 
   const help = parsed.help.map((h) => `<p class="muted">${escapeHtml(h)}</p>`).join("");
@@ -335,6 +335,6 @@ export async function usagePartialHtml(): Promise<string> {
     ${unsignedCollapse}
     ${help}
     ${parsed.parseError && cards ? `<p class="warn">${escapeHtml(parsed.parseError)}</p>` : ""}
-    <details class="fold"><summary>Raw output</summary><pre>${escapeHtml(q.raw.slice(0, 6000))}</pre></details>
+    <details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100"><summary class="d-collapse-title">Raw output</summary><div class="d-collapse-content"><pre>${escapeHtml(q.raw.slice(0, 6000))}</pre></div></details>
   </div>`;
 }

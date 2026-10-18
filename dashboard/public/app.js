@@ -703,7 +703,7 @@ function dashboardApp() {
 
     needCard(item) {
       const card = document.createElement("article");
-      card.className = `need is-${item.kind}`;
+      card.className = `d-card d-card-border bg-base-100 need is-${item.kind}`;
       card.dataset.id = item.id;
       const helmsman = item.kind === "helm" ? `${item.ship}-helmsman` : "";
       const t = item.agentId
@@ -713,12 +713,12 @@ function dashboardApp() {
           : { id: "firstmate", label: "Firstmate", art: (this.findTarget("firstmate") || {}).art };
       const face = this.faceHtml(t);
       const when = item.ts ? `<time class="muted need-when" datetime="${escapeHtml(item.ts)}">${escapeHtml(agoText(item.ts))}</time>` : "";
-      const openChat = item.agentId ? `<button type="button" class="btn" data-open>Open chat</button>` : "";
+      const openChat = item.agentId ? `<button type="button" class="d-btn d-btn-sm" data-open>Open chat</button>` : "";
       if (item.kind === "question") {
         card.innerHTML = `${face}<div class="need-body question-block">
           <div class="need-head"><h3>${escapeHtml(item.label)} asks${item.live ? "" : " (its turn has ended; your answer goes as a message)"}</h3>${when}</div>
           ${this.questionsHtml(item)}
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-send>Send answer</button>${item.live ? '<button type="button" class="btn" data-skip>Skip</button>' : '<button type="button" class="btn" data-dismiss>Dismiss</button>'}${openChat}<span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-send>Send answer</button>${item.live ? '<button type="button" class="d-btn d-btn-sm" data-skip>Skip</button>' : '<button type="button" class="d-btn d-btn-sm" data-dismiss>Dismiss</button>'}${openChat}<span class="muted" data-note></span></div>
         </div>`;
         this.wireQuestion(card, item.agentId, item.live ? item.dialog : null, (text) => this.postCaptain(item.agentId, text, card));
       } else if (item.kind === "notice") {
@@ -728,9 +728,9 @@ function dashboardApp() {
         card.innerHTML = `${this.faceHtml(who)}<div class="need-body">
           <div class="need-head"><h3>${escapeHtml(title)}</h3>${when}</div>
           ${item.noticeKind === "digest" ? "" : `<p class="need-reason">${escapeHtml(item.summary)}</p>`}
-          ${item.detail ? `<details class="fold" ${item.noticeKind === "digest" ? "open" : ""}><summary>${item.noticeKind === "digest" ? "The digest" : "More"}</summary><div class="md">${renderMarkdown(item.detail)}</div></details>` : ""}
+          ${item.detail ? `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100" ${item.noticeKind === "digest" ? "open" : ""}><summary class="d-collapse-title">${item.noticeKind === "digest" ? "The digest" : "More"}</summary><div class="d-collapse-content"><div class="md">${renderMarkdown(item.detail)}</div></div></details>` : ""}
           ${item.ref ? `<p class="muted">${escapeHtml(item.ref)}</p>` : ""}
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-ack>Got it</button>${item.from !== "fleet" ? '<button type="button" class="btn" data-open-notice>Open chat</button>' : ""}<span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-ack>Got it</button>${item.from !== "fleet" ? '<button type="button" class="d-btn d-btn-sm" data-open-notice>Open chat</button>' : ""}<span class="muted" data-note></span></div>
         </div>`;
         card.querySelector("[data-ack]").addEventListener("click", async () => {
           card.querySelectorAll("button").forEach((b) => (b.disabled = true));
@@ -745,7 +745,7 @@ function dashboardApp() {
         card.innerHTML = `${face}<div class="need-body">
           <div class="need-head"><h3>${escapeHtml(item.label)} wants to act on the fleet</h3>${when}</div>
           <p class="need-reason">${escapeHtml(item.summary)}</p>
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-go="go">Go</button><button type="button" class="btn" data-go="no">No</button>${openChat}<span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-go="go">Go</button><button type="button" class="d-btn d-btn-sm" data-go="no">No</button>${openChat}<span class="muted" data-note></span></div>
         </div>`;
         card.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => this.answerGo(item.goId, b.dataset.go, card)));
       } else if (item.kind === "helm") {
@@ -755,7 +755,7 @@ function dashboardApp() {
           <div class="need-head"><h3>${escapeHtml(item.ship)}'s helmsman proposes a change</h3>${when}</div>
           <p class="need-reason"><code>${escapeHtml(item.what)}</code></p>
           <p class="muted">${escapeHtml(item.why)}</p>
-          <div class="row question-actions">${item.note ? "" : `<button type="button" class="btn btn-ink" data-helm="apply">Apply</button>`}<button type="button" class="btn" data-helm="dismiss">${item.note ? "Read" : "Dismiss"}</button><a class="btn" href="/ships/${encodeURIComponent(item.ship)}">Open the deck</a><span class="muted" data-note></span></div>
+          <div class="row question-actions">${item.note ? "" : `<button type="button" class="d-btn d-btn-neutral d-btn-sm" data-helm="apply">Apply</button>`}<button type="button" class="d-btn d-btn-sm" data-helm="dismiss">${item.note ? "Read" : "Dismiss"}</button><a class="d-btn d-btn-sm" href="/ships/${encodeURIComponent(item.ship)}">Open the deck</a><span class="muted" data-note></span></div>
         </div>`;
         card.querySelectorAll("[data-helm]").forEach((b) =>
           b.addEventListener("click", async () => {
@@ -780,7 +780,7 @@ function dashboardApp() {
           <div class="need-head"><h3>${escapeHtml(item.label)}: a tool call held for review</h3>${when}</div>
           <p class="need-reason"><code>${escapeHtml(item.summary)}</code></p>
           <p class="muted">${escapeHtml(item.why)} · ${escapeHtml(item.jev)}</p>
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-gate="allow">Allow once</button><button type="button" class="btn" data-gate="deny">Deny</button>${openChat}<span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-gate="allow">Allow once</button><button type="button" class="d-btn d-btn-sm" data-gate="deny">Deny</button>${openChat}<span class="muted" data-note></span></div>
         </div>`;
         card.querySelectorAll("[data-gate]").forEach((b) =>
           b.addEventListener("click", async () => {
@@ -807,15 +807,15 @@ function dashboardApp() {
           <div class="need-head"><h3>${paused ? "Order paused" : "Order waiting for your Go"}: “${escapeHtml(item.title)}”</h3><span class="muted need-when">by ${escapeHtml(item.by)}</span></div>
           ${paused && item.reason ? `<p class="need-reason warn">${escapeHtml(item.reason)}</p>` : ""}
           <ol class="order-steps">${item.steps.map((s, i) => `<li${paused && item.resume && i + 1 < item.resume ? ' class="is-done"' : ""}>${escapeHtml(s)}</li>`).join("")}</ol>
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-order="${paused ? "retry" : "go"}">${paused ? `Retry from step ${item.resume || 1}` : "Go"}</button><button type="button" class="btn" data-order="cancel">Cancel</button><span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-order="${paused ? "retry" : "go"}">${paused ? `Retry from step ${item.resume || 1}` : "Go"}</button><button type="button" class="d-btn d-btn-sm" data-order="cancel">Cancel</button><span class="muted" data-note></span></div>
         </div>`;
         card.querySelectorAll("[data-order]").forEach((b) => b.addEventListener("click", () => this.orderAction(item.slug, b.dataset.order, card)));
       } else if (item.kind === "hold") {
         card.innerHTML = `${face}<div class="need-body">
-          <div class="need-head"><h3>Firstmate holds “${escapeHtml(item.title)}”</h3><span class="detent detent-hot">before it ships</span></div>
+          <div class="need-head"><h3>Firstmate holds “${escapeHtml(item.title)}”</h3><span class="d-badge d-badge-sm d-badge-error">before it ships</span></div>
           ${item.reason ? `<p class="need-reason">${escapeHtml(item.reason)}</p>` : ""}
-          <textarea class="field" maxlength="8000" aria-label="Your decision on ${escapeHtml(item.title)}" placeholder="Your decision"></textarea>
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-hold>Record answer</button><span class="muted" data-note></span></div>
+          <textarea class="d-textarea" maxlength="8000" aria-label="Your decision on ${escapeHtml(item.title)}" placeholder="Your decision"></textarea>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-hold>Record answer</button><span class="muted" data-note></span></div>
         </div>`;
         card.querySelector("[data-hold]").addEventListener("click", () => this.answerHold(item.taskId, card));
       } else {
@@ -823,7 +823,7 @@ function dashboardApp() {
           <div class="need-head"><h3>Your message to ${escapeHtml(item.label)} did not go through</h3>${when}</div>
           <blockquote class="need-sent">${escapeHtml(item.sentText)}</blockquote>
           <div class="need-error">${errorHtml(item.error)}</div>
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-resend>Send again</button>${openChat}<button type="button" class="btn" data-dismiss>Dismiss</button><span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-resend>Send again</button>${openChat}<button type="button" class="d-btn d-btn-sm" data-dismiss>Dismiss</button><span class="muted" data-note></span></div>
         </div>`;
         card.querySelector("[data-resend]").addEventListener("click", () => this.postCaptain(item.agentId, item.sentText, card));
       }
@@ -1229,49 +1229,49 @@ function dashboardApp() {
         }
       } else if (m.kind === "question" && m.go) {
         // A fleet action held by the server until the captain says Go (lib/go-gate.ts).
-        row.className = "bubble-row is-agent is-question is-go";
+        row.className = "d-chat d-chat-start bubble-row is-agent is-question is-go";
         const face = this.bubbleFace(t);
         const summary = (m.questions && m.questions[0] && m.questions[0].question) || m.text;
-        row.innerHTML = `${face}<div class="bubble question-block">
+        row.innerHTML = `${face}<div class="d-chat-bubble bubble question-block">
           <span class="bubble-name">${escapeHtml(t.label || m.role)} wants to act on the fleet</span>
           <p class="go-summary">${escapeHtml(summary)}</p>
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-go="go">Go</button><button type="button" class="btn" data-go="no">No</button><span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-go="go">Go</button><button type="button" class="d-btn d-btn-sm" data-go="no">No</button><span class="muted" data-note></span></div>
         </div>`;
         row.dataset.go = m.go.id;
         row.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => this.answerGo(m.go.id, b.dataset.go, row)));
       } else if (m.kind === "question" && Array.isArray(m.questions) && m.questions.length) {
-        row.className = "bubble-row is-agent is-question";
+        row.className = "d-chat d-chat-start bubble-row is-agent is-question";
         const face = this.bubbleFace(t);
-        row.innerHTML = `${face}<div class="bubble question-block">
+        row.innerHTML = `${face}<div class="d-chat-bubble bubble question-block">
           <span class="bubble-name">${escapeHtml(t.label || m.role)} asks</span>
           ${this.questionsHtml(m)}
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-send>${m.dialog ? "Send answer" : "Send answers"}</button>${m.dialog ? '<button type="button" class="btn" data-skip>Skip</button>' : ""}<span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-send>${m.dialog ? "Send answer" : "Send answers"}</button>${m.dialog ? '<button type="button" class="d-btn d-btn-sm" data-skip>Skip</button>' : ""}<span class="muted" data-note></span></div>
         </div>`;
         if (m.dialog) row.dataset.dialog = m.dialog.id;
         this.wireQuestion(row, tid, m.dialog);
       } else if (m.kind === "answer") {
-        row.className = "bubble-row is-captain is-answer";
-        row.innerHTML = `<div class="bubble"><span class="bubble-name">You answered</span><p>${escapeHtml(m.text)}</p></div>`;
+        row.className = "d-chat d-chat-end bubble-row is-captain is-answer";
+        row.innerHTML = `<div class="d-chat-bubble bubble"><span class="bubble-name">You answered</span><p>${escapeHtml(m.text)}</p></div>`;
         if (m.ref) this.markDialogAnswered(log, tid, m.ref, m.text);
       } else if (m.kind === "crew") {
         // A crewmate wrote to this agent (lead ↔ crew); show who, not the thread's agent.
         const from = this.findTarget(m.role) || { id: m.role, label: m.role, art: null };
-        row.className = "bubble-row is-agent is-crew";
+        row.className = "d-chat d-chat-start bubble-row is-agent is-crew";
         const face = this.bubbleFace(from);
-        row.innerHTML = `${face}<div class="bubble"><span class="bubble-name">${escapeHtml(from.label)} → ${escapeHtml(t.label || tid)}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
+        row.innerHTML = `${face}<div class="d-chat-bubble bubble"><span class="bubble-name">${escapeHtml(from.label)} → ${escapeHtml(t.label || tid)}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
       } else if (m.role === "system" || m.role === "dashboard") {
         row.className = "bubble-row is-system";
         row.innerHTML = `<div class="bubble"><p>${escapeHtml(m.text)}</p></div>`;
       } else {
         const mine = m.role === "captain";
-        row.className = `bubble-row is-${mine ? "captain" : "agent"}`;
+        row.className = `d-chat ${mine ? "d-chat-end" : "d-chat-start"} bubble-row is-${mine ? "captain" : "agent"}`;
         if (m.ts) row.dataset.ts = m.ts;
         row.dataset.thread = tid;
         const face = mine ? "/art/captain.png" : t.art;
         const to = this.chatGroup ? ` → ${t.label}` : "";
         const name = mine ? "You" + to : t.label || m.role;
         const avatar = mine ? `<img class="avatar" src="${face}" alt="" width="48" height="48" />` : this.bubbleFace(t);
-        row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}${!mine && m.step ? " · thinking" : ""}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
+        row.innerHTML = `${avatar}<div class="d-chat-bubble bubble"><span class="bubble-name">${escapeHtml(name)}${!mine && m.step ? " · thinking" : ""}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
         if (!mine) {
           row.dataset.role = m.role;
           if (m.step) row.classList.add("is-step");
@@ -1300,13 +1300,13 @@ function dashboardApp() {
             .filter((o) => !/^Other \(type an answer\)$/.test(o))
             .map(
               (o) =>
-                `<button type="button" class="chip" data-q="${qi}" data-opt="${escapeHtml(o)}" aria-pressed="false">${escapeHtml(o)}${o === q.recommended && !/recommended\)?$/i.test(o) ? ' <span class="detent">recommended</span>' : ""}</button>`,
+                `<button type="button" class="chip" data-q="${qi}" data-opt="${escapeHtml(o)}" aria-pressed="false">${escapeHtml(o)}${o === q.recommended && !/recommended\)?$/i.test(o) ? ' <span class="d-badge d-badge-outline d-badge-sm">recommended</span>' : ""}</button>`,
             )
             .join("");
           return `<fieldset class="question" data-qi="${qi}">
             <legend>${escapeHtml(q.question)}</legend>
             <div class="row-wrap">${opts}</div>
-            <input class="field" data-other="${qi}" placeholder="${opts ? "Or type another answer" : "Your answer"}" aria-label="${escapeHtml(q.question)}" />
+            <input class="d-input d-input-sm" data-other="${qi}" placeholder="${opts ? "Or type another answer" : "Your answer"}" aria-label="${escapeHtml(q.question)}" />
           </fieldset>`;
         })
         .join("");
@@ -1409,12 +1409,12 @@ function dashboardApp() {
         if (!row) {
           const t = this.findTarget(tid) || { id: tid, label: tid, art: null };
           row = document.createElement("div");
-          row.className = "bubble-row is-agent is-streaming";
+          row.className = "d-chat d-chat-start bubble-row is-agent is-streaming";
           row.dataset.thread = tid;
           const face = t.art
             ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
             : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
-          row.innerHTML = `${face}<div class="bubble"><span class="bubble-name">${escapeHtml(t.label || tid)} · writing</span><div class="md"></div></div>`;
+          row.innerHTML = `${face}<div class="d-chat-bubble bubble"><span class="bubble-name">${escapeHtml(t.label || tid)} · writing</span><div class="md"></div></div>`;
           log.appendChild(row);
           this.chatEmpty = false;
         }
@@ -1680,7 +1680,7 @@ function dashboardApp() {
       let pick =
         chips.find((c) => norm(c.dataset.opt) === said) ||
         (ord in ORD ? chips[ORD[ord]] : undefined) ||
-        (/^(the )?recommended( one)?$/.test(said) ? chips.find((c) => c.querySelector(".detent") || /recommended/i.test(c.dataset.opt)) : undefined) ||
+        (/^(the )?recommended( one)?$/.test(said) ? chips.find((c) => c.querySelector(".detent, .d-badge") || /recommended/i.test(c.dataset.opt)) : undefined) ||
         (YES.test(said) ? chips.find((c) => norm(c.dataset.opt) === "yes") : undefined) ||
         (NO.test(said) ? chips.find((c) => norm(c.dataset.opt) === "no") : undefined);
       // A unique option that starts with what was said ("tailwind" for "Tailwind and daisyUI").
@@ -1972,10 +1972,10 @@ function dashboardApp() {
       if (!log || (this.chatGroup ? !this.chatGroup.members.includes(to) : to !== this.chatId)) return;
       this.chatEmpty = false;
       const row = document.createElement("div");
-      row.className = "bubble-row is-captain is-sending";
+      row.className = "d-chat d-chat-end bubble-row is-captain is-sending";
       row.dataset.request = requestId;
       row.dataset.thread = to;
-      row.innerHTML = `<img class="avatar" src="/art/captain.png" alt="" width="48" height="48" /><div class="bubble"><span class="bubble-name">You</span><div class="md">${renderMarkdown(text)}</div></div>`;
+      row.innerHTML = `<img class="avatar" src="/art/captain.png" alt="" width="48" height="48" /><div class="d-chat-bubble bubble"><span class="bubble-name">You</span><div class="md">${renderMarkdown(text)}</div></div>`;
       log.appendChild(row);
       log.scrollTop = log.scrollHeight;
       // No echo in 12s: say so, with Retry (the same id, so it can never send twice).
