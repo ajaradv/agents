@@ -132,9 +132,9 @@ export default function (pi: ExtensionAPI) {
       name: "helm_propose",
       label: "Propose a process change",
       description:
-        "Helmsman only. File one proposal for the captain, who applies or dismisses it on the ship's deck. kind and its fields: check {name, command}; gate {stage: task|dock, check}; maneuver {name, checks[] or adw, roles[] (who may launch it), needs[] (roles aboard), gates[]}; retire_maneuver {name}; allow_host {host}; note {text}. Always give why: what in the record or the repo supports it.",
+        "Helmsman only. File one proposal for the captain (Apply or Dismiss in Needs you or on the deck). kind and its fields: check {name, command}; gate {stage, check}; maneuver {name, checks[] or adw, roles[], needs[], gates[]}; retire_maneuver {name}; allow_host {host}; note {text}; tool {name, text} (fleet ship: a tool to fix; becomes a vault task). Always give why.",
       parameters: Type.Object({
-        kind: StringEnum(["check", "gate", "maneuver", "retire_maneuver", "allow_host", "note"] as const),
+        kind: StringEnum(["check", "gate", "maneuver", "retire_maneuver", "allow_host", "note", "tool"] as const),
         why: Type.String(),
         name: Type.Optional(Type.String()),
         command: Type.Optional(Type.String()),

@@ -7,8 +7,9 @@ import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { journalDb } from "./journal.ts";
 import { describeManeuver, maneuverAvailability } from "./maneuvers.ts";
 import { metricsDb } from "./metrics.ts";
-import { fleetInboxRoot } from "./paths.ts";
+import { aliceVault, fleetInboxRoot } from "./paths.ts";
 import { logShipEvent } from "./ship-log.ts";
+import { toolEvidence } from "./tool-evidence.ts";
 import { editShip } from "./shipyard.ts";
 
 /**
@@ -22,7 +23,7 @@ import { editShip } from "./shipyard.ts";
  * deck (agent proposes, code disposes, the captain decides).
  */
 
-export type ProposalKind = "check" | "gate" | "maneuver" | "retire_maneuver" | "allow_host" | "note";
+export type ProposalKind = "check" | "gate" | "maneuver" | "retire_maneuver" | "allow_host" | "note" | "tool";
 export type Proposal = {
   id: string;
   ts: string;
@@ -44,7 +45,7 @@ export type Proposal = {
   gates?: ("task" | "dock")[];
   // allow_host
   host?: string;
-  // note
+  // note, tool (name: the tool, script, or extension; text: what to fix)
   text?: string;
 };
 
@@ -138,7 +139,7 @@ export function helmRecord(ship: ShipRow): HelmRecord {
     try {
       const j = journalDb();
       blocked = j.query(`SELECT args AS host, COUNT(*) AS n FROM tool_failures WHERE tool = 'network' AND agent IN (${marks}) AND ts >= ? GROUP BY args ORDER BY n DESC LIMIT 20`).all(...crew, from) as HelmRecord["blocked"];
-      failures = j.query(`SELECT agent, tool, COUNT(*) AS n FROM tool_failures WHERE tool NOT IN ('network') AND agent IN (${marks}) AND ts >= ? GROUP BY agent, tool ORDER BY n DESC LIMIT 15`).all(...crew, from) as HelmRecord["failures"];
+      failures = j.query(`SELECT agent, tool, COUNT(*) AS n FROM tool_failures WHERE tool NOT IN ('network') AND noise = 0 AND agent IN (${marks}) AND ts >= ? GROUP BY agent, tool ORDER BY n DESC LIMIT 15`).all(...crew, from) as HelmRecord["failures"];
     } catch {
       /* no failure log yet */
     }
@@ -178,6 +179,8 @@ export function helmDigest(ship: ShipRow, reason: string, ledger = ""): string {
     `- Tool failures by crewmate: ${rec.failures.length ? rec.failures.map((f) => `${f.agent} ${f.tool} (${f.n})`).join(", ") : "none"}`,
   ];
   if (ledger) lines.push("", "## The voyage that just docked", "", ledger.replace(/^## Ledger\n+/, ""));
+  // The fleet ship's repo is this one: its helmsman also reviews the fleet's own tools.
+  if (ship.id === "fleet") lines.push("", ...toolEvidence(7));
   return lines.join("\n");
 }
 
@@ -240,13 +243,20 @@ export function validateProposal(ship: ShipRow, b: Record<string, unknown>, open
       if (text.length < 10) return "A note needs text.";
       return { kind, why, text };
     }
+    case "tool": {
+      const name = String(b.name ?? "").trim().slice(0, 80);
+      const text = String(b.text ?? "").trim().slice(0, 1000);
+      if (name.length < 2) return "Name the tool, script, or extension (e.g. ship_log, bin/order, extensions/canvas.ts).";
+      if (text.length < 20) return "Say what to fix, against docs/tool-standards.md or docs/system-one.md.";
+      return { kind, why, name, text };
+    }
     default:
-      return "kind is one of check, gate, maneuver, retire_maneuver, allow_host, note.";
+      return "kind is one of check, gate, maneuver, retire_maneuver, allow_host, note, tool.";
   }
 }
 
 const same = (a: Partial<Proposal>, b: Partial<Proposal>) =>
-  a.kind === b.kind && a.name === b.name && a.stage === b.stage && a.check === b.check && a.host === b.host && (a.kind !== "note" || a.text === b.text);
+  a.kind === b.kind && a.name === b.name && a.stage === b.stage && a.check === b.check && a.host === b.host && (a.kind !== "note" && a.kind !== "tool" ? true : a.text === b.text);
 
 /** A helmsman's proposal (crew API, helm_propose). */
 export function helmPropose(shipId: string, from: string, b: Record<string, unknown>): Promise<{ ok: boolean; message: string }> {
@@ -283,6 +293,8 @@ export function proposalLine(p: Proposal): string {
       return `allow ${p.host} from the crew's VMs`;
     case "note":
       return `note: ${p.text}`;
+    case "tool":
+      return `fix ${p.name}: ${p.text}`;
   }
 }
 
@@ -323,6 +335,14 @@ async function applyNow(shipId: string, id: string): Promise<{ ok: boolean; mess
   const p = all.find((x) => x.id === id && x.status === "open");
   if (!p) return { ok: false, message: "That proposal is no longer open." };
   if (p.kind === "note") return { ok: false, message: "A note has nothing to apply; dismiss it when read." };
+  if (p.kind === "tool") {
+    // A tool fix is work for the Shipwright, not a ship file change: it becomes a vault task.
+    const task = await fileToolTask(p);
+    p.status = "applied";
+    await saveProposals(shipId, all);
+    logShipEvent(shipId, "captain", "helm", `Applied: ${proposalLine(p)} (vault task ${task})`, { proposal: p.id });
+    return { ok: true, message: `Filed vault task ${task} for the Shipwright.` };
+  }
   // Re-check against the ship as it is now (it may have changed since the proposal).
   const again = validateProposal(ship, p as unknown as Record<string, unknown>, all.filter((x) => x.status === "open" && x.id !== id));
   if (typeof again === "string") return { ok: false, message: `Cannot apply: ${again}` };
@@ -351,3 +371,53 @@ export function hasHelmsman(ship: Pick<ShipRow, "crew">): boolean {
   return ship.crew.includes("helmsman");
 }
 
+
+/** A tool proposal the captain applied, as a vault task (tasks/tool-fix-<slug>.md, listed in tasks/index.md). */
+async function fileToolTask(p: Proposal): Promise<string> {
+  const vault = aliceVault();
+  const slug = `tool-fix-${String(p.name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}-${p.id}`;
+  const title = `Fix ${p.name}: ${String(p.text).slice(0, 90)}`.replace(/"/g, "'");
+  const body = `---
+type: Task
+title: ${JSON.stringify(title)}
+description: ${JSON.stringify(String(p.text).slice(0, 300))}
+status: open
+priority: medium
+due:
+plan: "[[fleet-tool-standards]]"
+project: agents
+blocked_by: []
+tags: [fleet, tools, helm]
+timestamp: ${new Date().toISOString().slice(0, 19)}Z
+---
+
+# Task
+
+The fleet helmsman proposed this and the captain applied it (proposal ${p.id}).
+
+- **Tool:** ${p.name}
+- **Fix:** ${p.text}
+- **Why:** ${p.why}
+
+The Shipwright fixes it against \`docs/tool-standards.md\` (and \`docs/system-one.md\` for a Jev decision) and runs \`just test\` (and \`just axi-check\` for a CLI).
+
+# Done when
+
+- [ ] Fixed and committed, checks named in the commit message
+`;
+  const dir = join(vault, "tasks");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${slug}.md`), body, "utf8");
+  // List it in the index so the vault doctor's task-index check stays clean.
+  try {
+    const indexPath = join(dir, "index.md");
+    const index = await readFile(indexPath, "utf8");
+    const nums = [...index.matchAll(/^(\d+)\. \[\[/gm)].map((m) => Number(m[1]));
+    const line = `${(nums.length ? Math.max(...nums) : 0) + 1}. [[${slug}]] (medium): ${title}\n`;
+    const at = index.search(/\n# Recently completed/);
+    await writeFile(indexPath, at >= 0 ? `${index.slice(0, at).replace(/\n*$/, "\n")}${line}${index.slice(at)}` : `${index}\n${line}`, "utf8");
+  } catch {
+    /* no index: the task note is still there */
+  }
+  return `tasks/${slug}.md`;
+}

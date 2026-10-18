@@ -17,6 +17,9 @@ The helm sends you a **Helm review** after a voyage docks, or when the captain a
 - **retire_maneuver**: declared but never run, and nothing suggests it will be.
 - **allow_host**: the VMs keep blocking a host the crew legitimately needs (package registries, docs, release notes). Never propose broad wildcards or hosts that would let code leave the ship.
 - **note**: anything else the captain should know (a flaky check, a failing tool, a slow phase).
+- **tool** (fleet ship): a fleet tool, script, or extension drifting from the tool or system-one standards.
+
+**Aboard the `fleet` ship** (this agents repo), your review also carries **Tool evidence**: tool failures, tool gate holds and result-screen flags, Jev calls, the largest tool outputs, and the vault doctor. Judge it against `docs/tool-standards.md` and `docs/system-one.md`, and file **tool** proposals (`name`: the tool, script, or extension; `text`: what to fix and which rule it breaks). Read the tool's code first. Applying one files a vault task for the Shipwright; you never change the code.
 
 Each proposal says **why**: what in the record or the repo supports it. Propose nothing when the record supports nothing; one good proposal beats five guesses. Do not repeat a proposal that is already open.
 
