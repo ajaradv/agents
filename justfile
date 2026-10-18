@@ -29,29 +29,11 @@ alice:
 firstmate:
     cd "{{root}}" && bin/launch firstmate
 
-# 1Password CLI: op run --env-file with op:// references (see fleet/config/env.op.example)
-# Requires: op signin, fleet/home/.env.op copied from env.op.example
-alice-op:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    root="{{root}}"
-    op_env="${OP_ENV_FILE:-$root/fleet/home/.env.op}"
-    if [[ ! -f "$op_env" ]]; then
-      echo "missing $op_env — copy fleet/config/env.op.example to fleet/home/.env.op and set op:// paths" >&2
-      exit 1
-    fi
-    cd "$root" && op run --env-file="$op_env" -- bin/launch alice
+# Kept for old habits: bin/launch reads keys from the 1Password service account now.
+alice-op: alice
 
-firstmate-op:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    root="{{root}}"
-    op_env="${OP_ENV_FILE:-$root/fleet/home/.env.op}"
-    if [[ ! -f "$op_env" ]]; then
-      echo "missing $op_env — copy fleet/config/env.op.example to fleet/home/.env.op and set op:// paths" >&2
-      exit 1
-    fi
-    cd "$root" && op run --env-file="$op_env" -- bin/launch firstmate
+# Kept for old habits: bin/launch reads keys from the 1Password service account now.
+firstmate-op: firstmate
 
 architect:
     cd "{{root}}" && bin/launch architect
@@ -116,16 +98,8 @@ node-restart:
     #!/usr/bin/env bash
     pid=$(lsof -tiTCP:"${FLEET_NODE_PORT:-8786}" -sTCP:LISTEN) && kill "$pid" && echo "stopped fleet node $pid; the dashboard starts a new one" || echo "no fleet node running"
 
-architect-op:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    root="{{root}}"
-    op_env="${OP_ENV_FILE:-$root/fleet/home/.env.op}"
-    if [[ ! -f "$op_env" ]]; then
-      echo "missing $op_env — copy fleet/config/env.op.example to fleet/home/.env.op and set op:// paths" >&2
-      exit 1
-    fi
-    cd "$root" && op run --env-file="$op_env" -- bin/launch architect
+# Kept for old habits: bin/launch reads keys from the 1Password service account now.
+architect-op: architect
 
 shipwright:
     cd "{{root}}" && bin/launch shipwright

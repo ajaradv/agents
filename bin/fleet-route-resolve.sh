@@ -84,7 +84,9 @@ env_get() { # last KEY=value line in a dotenv file, quotes stripped, never echoe
     END { gsub(/^[ \t"'"'"']+|[ \t"'"'"']+$/, "", v); printf "%s", v }' "$2"
 }
 if ! $DRY; then
-  [ -n "$KEY" ] || KEY=$(env_get TYPESAFE_API_KEY "$FM_HOME/.env")
+  # The service account; a plain .env file only (a 1Password mount pipe would prompt the captain).
+  [ -n "$KEY" ] || KEY=$("$ROOT/bin/fleet-secrets" 2>/dev/null | awk -F= '$1 == "TYPESAFE_API_KEY" { print substr($0, index($0, "=") + 1) }')
+  [ -n "$KEY" ] || { [ -f "$FM_HOME/.env" ] && KEY=$(env_get TYPESAFE_API_KEY "$FM_HOME/.env"); }
   if [ -z "$KEY" ]; then
     echo "route-resolve: off (TYPESAFE_API_KEY absent from the environment and $FM_HOME/.env)" >&2
     exit 0

@@ -1,9 +1,21 @@
+import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { readServiceAccountKeys } from "./op-sdk.ts";
 import { ROOT } from "./paths.ts";
 
 const FLEET_ENV_PATH = join(ROOT, "fleet", "home", ".env");
 const READ_TIMEOUT_MS = 2000;
+
+/**
+ * The service account is the fleet's key path once fleet/home/.env.op exists:
+ * reading the fleet/home/.env mount asks the 1Password app, which prompts the
+ * captain. The mount is read only without a service account, or with
+ * FLEET_ENV_MOUNT=1.
+ */
+export function mountAllowed(): boolean {
+  return process.env.FLEET_ENV_MOUNT === "1" || !existsSync(process.env.FLEET_OP_ENV_FILE || join(ROOT, "fleet", "home", ".env.op"));
+}
 
 /** Parse KEY=value lines; never log values. */
 export function parseEnvLines(text: string): Record<string, string> {
@@ -41,8 +53,9 @@ async function readFifoEnv(timeoutMs: number): Promise<string> {
   }
 }
 
-/** Load fleet/home/.env with FIFO timeout; merge into a copy of process.env keys only. */
+/** The fleet's keys: the service account when set up, else fleet/home/.env (FIFO, with a timeout). */
 export async function loadFleetDotenv(): Promise<Record<string, string>> {
+  if (!mountAllowed()) return serviceAccountEnv();
   try {
     const st = await stat(FLEET_ENV_PATH);
     let text = "";
@@ -98,28 +111,47 @@ export function withoutSecrets(env: Record<string, string | undefined>): Record<
 
 let saCache: { at: number; keys: Record<string, string> } | null = null;
 
-/** Keys read with the 1Password service account (bin/fleet-secrets); cached 10 minutes. Empty when not set up. */
+/** Keys read with the 1Password service account (the SDK, lib/op-sdk.ts); cached 10 minutes. Empty when not set up. */
 export async function serviceAccountEnv(): Promise<Record<string, string>> {
   if (saCache && Date.now() - saCache.at < 10 * 60_000) return { ...saCache.keys };
+  // One read at a time: callers arriving together share it.
+  saPending ??= readServiceAccount().finally(() => (saPending = null));
+  return { ...(await saPending) };
+}
+
+let saPending: Promise<Record<string, string>> | null = null;
+
+async function readServiceAccount(): Promise<Record<string, string>> {
+  // Tests never read real keys: only a test's own secrets command (FLEET_SECRETS_CMD).
+  if (process.env.NODE_ENV === "test") return process.env.FLEET_SECRETS_CMD ? readSecretsCommand(process.env.FLEET_SECRETS_CMD) : {};
+  let keys: Record<string, string> = {};
   try {
-    const proc = Bun.spawn([join(ROOT, "bin", "fleet-secrets")], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
-    const timer = setTimeout(() => proc.kill(), 20_000);
-    const text = await new Response(proc.stdout).text();
-    clearTimeout(timer);
-    await proc.exited;
-    const keys = Object.fromEntries(Object.entries(parseEnvLines(text)).filter(([, v]) => v && !v.startsWith("op://")));
-    if (Object.keys(keys).length) saCache = { at: Date.now(), keys };
-    return keys;
+    keys = await readServiceAccountKeys();
   } catch {
-    return {};
+    /* kept below */
   }
+  if (Object.keys(keys).length) saCache = { at: Date.now(), keys };
+  // A failed read keeps the last good keys rather than falling back to the mount.
+  return Object.keys(keys).length ? keys : { ...(saCache?.keys ?? {}) };
+}
+
+async function readSecretsCommand(cmd: string): Promise<Record<string, string>> {
+  const proc = Bun.spawn([cmd], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+  const keys = parseEnvLines(await new Response(proc.stdout).text());
+  if (Object.keys(keys).length) saCache = { at: Date.now(), keys };
+  return keys;
+}
+
+export function _resetServiceAccountForTests(): void {
+  saCache = null;
+  saPending = null;
 }
 
 export async function agentKeyEnv(): Promise<Record<string, string>> {
-  // The service account first (works while 1Password is locked), the fleet/home/.env mount for the rest.
+  // The service account (no 1Password prompt); the fleet/home/.env mount only where mountAllowed().
   const sa = await serviceAccountEnv();
   let dotenv: Record<string, string> = {};
-  if (!AGENT_KEYS.filter((k) => k !== "HF_TOKEN" && k !== "ANTHROPIC_API_KEY").every((k) => sa[k] || process.env[k])) {
+  if (mountAllowed() && !AGENT_KEYS.filter((k) => k !== "HF_TOKEN" && k !== "ANTHROPIC_API_KEY").every((k) => sa[k] || process.env[k])) {
     dotenv = await loadFleetDotenv();
     if (!Object.keys(dotenv).length && !Object.keys(sa).length) {
       await Bun.sleep(500);

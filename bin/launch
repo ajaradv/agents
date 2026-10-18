@@ -245,7 +245,7 @@ def parse_env_file(path: Path) -> dict[str, str]:
 def service_account_env() -> dict[str, str]:
     """Keys read with the 1Password service account (bin/fleet-secrets): works while the app is locked."""
     try:
-        r = subprocess.run([str(ROOT / "bin" / "fleet-secrets")], capture_output=True, text=True, timeout=20)
+        r = subprocess.run([str(ROOT / "bin" / "fleet-secrets")], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=25)
     except (OSError, subprocess.TimeoutExpired):
         return {}
     out: dict[str, str] = {}
@@ -261,9 +261,13 @@ def service_account_env() -> dict[str, str]:
 
 
 def apply_fleet_home_env() -> None:
-    # The service account first (no 1Password unlock needed), then the fleet/home/.env mount for anything missing.
-    sources = [service_account_env()]
-    if not all(k in os.environ or k in sources[0] for k in ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY")):
+    # The service account (no 1Password prompt). The fleet/home/.env mount asks the 1Password app,
+    # so it is read only without a service account (no fleet/home/.env.op) or with FLEET_ENV_MOUNT=1.
+    # Keys the node already handed over (it reads the service account itself) need no second read.
+    have = all(os.environ.get(k) for k in ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"))
+    sources = [{} if have else service_account_env()]
+    mount_ok = os.environ.get("FLEET_ENV_MOUNT") == "1" or not (FLEET_HOME / ".env.op").exists()
+    if mount_ok and not have and not all(k in os.environ or k in sources[0] for k in ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY")):
         sources.append(parse_env_file(FLEET_HOME / ".env"))
     for src in sources:
         for key, val in src.items():

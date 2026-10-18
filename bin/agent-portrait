@@ -105,9 +105,10 @@ command -v jq >/dev/null || die "jq is not installed" "brew install jq" 1
 command -v sips >/dev/null || die "sips is not available" "run on macOS" 1
 KEY=${OPENROUTER_API_KEY:-}
 unset OPENROUTER_API_KEY
-[ -n "$KEY" ] || KEY=$(awk -F= '{ sub(/^[ \t]*export[ \t]+/, "") } $1 == "OPENROUTER_API_KEY" { v = substr($0, index($0, "=") + 1) }
-  END { gsub(/^[ \t"'"'"']+|[ \t"'"'"']+$/, "", v); printf "%s", v }' "$ROOT/fleet/home/.env" 2>/dev/null)
+# The service account first; fleet/home/.env only as a plain file (the 1Password mount pipe would prompt).
 [ -n "$KEY" ] || KEY=$("$ROOT/bin/fleet-secrets" 2>/dev/null | awk -F= '$1 == "OPENROUTER_API_KEY" { print substr($0, index($0, "=") + 1) }')
+[ -n "$KEY" ] || { [ -f "$ROOT/fleet/home/.env" ] && KEY=$(awk -F= '{ sub(/^[ \t]*export[ \t]+/, "") } $1 == "OPENROUTER_API_KEY" { v = substr($0, index($0, "=") + 1) }
+  END { gsub(/^[ \t"'"'"']+|[ \t"'"'"']+$/, "", v); printf "%s", v }' "$ROOT/fleet/home/.env" 2>/dev/null); }
 [ -n "$KEY" ] || die "no OPENROUTER_API_KEY in the environment, the service account, or fleet/home/.env" "check the 1Password setup with bin/fleet-op-token" 1
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
