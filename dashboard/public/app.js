@@ -704,7 +704,12 @@ function dashboardApp() {
       const card = document.createElement("article");
       card.className = `need is-${item.kind}`;
       card.dataset.id = item.id;
-      const t = item.agentId ? this.findTarget(item.agentId) || { id: item.agentId, label: item.label, art: item.art, ship: item.ship } : { id: "firstmate", label: "Firstmate", art: (this.findTarget("firstmate") || {}).art };
+      const helmsman = item.kind === "helm" ? `${item.ship}-helmsman` : "";
+      const t = item.agentId
+        ? this.findTarget(item.agentId) || { id: item.agentId, label: item.label, art: item.art, ship: item.ship }
+        : helmsman
+          ? this.findTarget(helmsman) || { id: helmsman, label: "Helmsman", art: null, ship: item.ship }
+          : { id: "firstmate", label: "Firstmate", art: (this.findTarget("firstmate") || {}).art };
       const face = this.faceHtml(t);
       const when = item.ts ? `<time class="muted need-when" datetime="${escapeHtml(item.ts)}">${escapeHtml(agoText(item.ts))}</time>` : "";
       const openChat = item.agentId ? `<button type="button" class="btn" data-open>Open chat</button>` : "";
@@ -742,6 +747,32 @@ function dashboardApp() {
           <div class="row question-actions"><button type="button" class="btn btn-ink" data-go="go">Go</button><button type="button" class="btn" data-go="no">No</button>${openChat}<span class="muted" data-note></span></div>
         </div>`;
         card.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => this.answerGo(item.goId, b.dataset.go, card)));
+      } else if (item.kind === "helm") {
+        card.classList.add("is-question");
+        const api = `/api/ships/${encodeURIComponent(item.ship)}/helm/${encodeURIComponent(item.proposalId)}`;
+        card.innerHTML = `${face}<div class="need-body">
+          <div class="need-head"><h3>${escapeHtml(item.ship)}'s helmsman proposes a change</h3>${when}</div>
+          <p class="need-reason"><code>${escapeHtml(item.what)}</code></p>
+          <p class="muted">${escapeHtml(item.why)}</p>
+          <div class="row question-actions">${item.note ? "" : `<button type="button" class="btn btn-ink" data-helm="apply">Apply</button>`}<button type="button" class="btn" data-helm="dismiss">${item.note ? "Read" : "Dismiss"}</button><a class="btn" href="/ships/${encodeURIComponent(item.ship)}">Open the deck</a><span class="muted" data-note></span></div>
+        </div>`;
+        card.querySelectorAll("[data-helm]").forEach((b) =>
+          b.addEventListener("click", async () => {
+            const note = card.querySelector("[data-note]");
+            card.querySelectorAll("[data-helm]").forEach((x) => (x.disabled = true));
+            try {
+              const r = await fetch(`${api}/${b.dataset.helm}`, { method: "POST" });
+              const j = await r.json();
+              if (note) note.textContent = j.message || "";
+              if (r.ok) card.classList.add("is-done");
+              else card.querySelectorAll("[data-helm]").forEach((x) => (x.disabled = false));
+            } catch {
+              if (note) note.textContent = "The dashboard did not answer.";
+              card.querySelectorAll("[data-helm]").forEach((x) => (x.disabled = false));
+            }
+            this.refreshNeeds();
+          }),
+        );
       } else if (item.kind === "gate") {
         card.classList.add("is-question");
         card.innerHTML = `${face}<div class="need-body">

@@ -81,6 +81,8 @@ export function messageFor(item: NeedItem): PushMessage {
       return { title: `${who(item)} asks`, body: (item.questions[0]?.question ?? item.text).slice(0, 180), tag: item.id, url };
     case "go":
       return { title: `Go? (${who(item)})`, body: item.summary.slice(0, 180), tag: item.id, url };
+    case "helm":
+      return { title: `Helm proposal (${item.ship})`, body: item.what.slice(0, 180), tag: item.id, url };
     case "gate":
       return { title: `Tool call held (${who(item)})`, body: item.summary.slice(0, 180), tag: item.id, url };
     case "notice": {

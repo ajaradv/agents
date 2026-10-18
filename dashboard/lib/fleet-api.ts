@@ -87,6 +87,8 @@ export async function fleetStatus(detail = false): Promise<Res> {
         ? { kind: n.kind, from: n.agentId, action: n.summary }
         : n.kind === "gate"
           ? { kind: n.kind, from: n.agentId, held: n.summary, why: n.why }
+          : n.kind === "helm"
+            ? { kind: n.kind, ship: n.ship, proposal: n.what }
         : n.kind === "question"
           ? { kind: n.kind, agent: n.agentId, asked: n.ts, question: n.questions.map((q) => q.question).join(" / ") }
           : n.kind === "notice"
