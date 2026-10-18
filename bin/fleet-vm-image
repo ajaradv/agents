@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
-# fleet-vm-image - build the guest image crewmates' VMs run (R4, extensions/gondolin).
+# fleet-vm-image - build the guest images crewmates' VMs run (R4, extensions/gondolin).
 #
 # Usage:
 #   bin/fleet-vm-image          build fleet/vm/image.json into fleet/home/gondolin/fleet-assets
+#   bin/fleet-vm-image browser  build the browser image (R4e): image.json plus fleet/vm/browser.json
+#                               (Chromium, fonts, the shot command) into fleet/home/gondolin/browser-assets
 #
 # The image is Alpine with what crews need: bash, git, ripgrep, fd, node/npm,
 # python3/uv, a compiler, jq, pre-commit, and Python 3.14 (so ship git hooks run inside the
-# VM). Add packages in fleet/vm/image.json, then rebuild. Running VMs keep the
-# old image until their crewmate restarts.
+# VM). Add packages in fleet/vm/image.json, then rebuild (both images, when
+# the browser one is in use). Running VMs keep the old image until their
+# crewmate restarts. Agents with `vm_image: browser` in agent.yaml (the
+# designer) get the browser image when it is built, else the plain one.
 #
 # Needs: Node 23.6+, QEMU (brew install qemu), and mke2fs (brew install
 # e2fsprogs; keg-only, found here without changing your PATH).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="$ROOT/fleet/home/gondolin/fleet-assets"
+KIND="${1:-fleet}"
+case "$KIND" in
+  fleet) OUT="$ROOT/fleet/home/gondolin/fleet-assets" ;;
+  browser) OUT="$ROOT/fleet/home/gondolin/browser-assets" ;;
+  *) echo "usage: bin/fleet-vm-image [browser]" >&2; exit 2 ;;
+esac
 command -v qemu-system-aarch64 >/dev/null || { echo "QEMU is missing: brew install qemu" >&2; exit 1; }
 if ! command -v mke2fs >/dev/null; then
   E2="$(brew --prefix e2fsprogs 2>/dev/null)/sbin"
@@ -24,7 +33,22 @@ fi
 mkdir -p "$(dirname "$OUT")"
 rm -rf "$OUT.new"
 cd "$ROOT"
-node_modules/.bin/gondolin build --config fleet/vm/image.json --output "$OUT.new"
+CONFIG=fleet/vm/image.json
+if [ "$KIND" = browser ]; then
+  CONFIG="$(mktemp -t fleet-browser-image).json"
+  trap 'rm -f "$CONFIG"' EXIT
+  node -e '
+    const fs = require("fs");
+    const base = JSON.parse(fs.readFileSync("fleet/vm/image.json", "utf8"));
+    const add = JSON.parse(fs.readFileSync("fleet/vm/browser.json", "utf8"));
+    base.alpine.rootfsPackages = [...new Set([...base.alpine.rootfsPackages, ...(add.rootfsPackages ?? [])])];
+    // Copy sources are relative to the repo: make them absolute, the build may resolve from elsewhere.
+    const copy = (add.copy ?? []).map((c) => ({ ...c, src: require("path").resolve(c.src) }));
+    base.postBuild = { ...base.postBuild, copy: [...(base.postBuild?.copy ?? []), ...copy], commands: [...(base.postBuild?.commands ?? []), ...(add.commands ?? [])] };
+    fs.writeFileSync(process.argv[1], JSON.stringify(base, null, 2));
+  ' "$CONFIG"
+fi
+node_modules/.bin/gondolin build --config "$CONFIG" --output "$OUT.new"
 rm -rf "$OUT"
 mv "$OUT.new" "$OUT"
 echo "built $OUT"

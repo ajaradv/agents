@@ -325,8 +325,15 @@ def voyage_worktree(ship_id: str) -> dict | None:
     return w if isinstance(w, dict) and Path(str(w.get("path", ""))).is_dir() else None
 
 
-def vm_env(ship: dict, agent_id: str, inbox: Path) -> dict[str, str]:
-    """Environment for the fleet Gondolin extension (extensions/gondolin), for a ship with `isolation: vm`."""
+def vm_env(ship: dict, agent_id: str, inbox: Path, agent: dict | None = None) -> dict[str, str]:
+    """Environment for the fleet Gondolin extension (extensions/gondolin), for a ship with `isolation: vm`.
+
+    The agent's `vm_image` (agent.yaml) picks the image: "browser" (R4e: Chromium and the shot command,
+    more memory) when that image is built, else the plain fleet image. Its skill folders are mounted
+    read-only at their host paths, so the model can read the skills pi lists for it.
+    """
+    agent = agent or {}
+    image_kind = str(agent.get("vm_image") or "")
     allow = ship.get("vm_allow")
     hosts = DEFAULT_VM_ALLOW if allow is None else [str(h).lower() for h in (allow or [])]
     ship_mem = inbox / "ships" / str(ship.get("id") or "") / "memory"
@@ -341,10 +348,29 @@ def vm_env(ship: dict, agent_id: str, inbox: Path) -> dict[str, str]:
         "FLEET_VM_SHIP_MEMORY": str(ship_mem),
         "FLEET_VM_CACHE": str(cache),
     }
-    image = ROOT / "fleet" / "home" / "gondolin" / "fleet-assets"
-    if (image / "manifest.json").is_file():
-        env["FLEET_VM_IMAGE"] = str(image)
+    ro = vm_skill_dirs(agent)
+    if ro:
+        env["FLEET_VM_RO_MOUNTS"] = os.pathsep.join(ro)
+    images = ROOT / "fleet" / "home" / "gondolin"
+    browser = images / "browser-assets"
+    if image_kind == "browser" and (browser / "manifest.json").is_file():
+        env["FLEET_VM_IMAGE"] = str(browser)
+        env["FLEET_VM_BROWSER"] = "1"
+        # Chromium alongside node and git: 1 GB is tight.
+        env["FLEET_VM_RAM"] = "2G"
+    elif (images / "fleet-assets" / "manifest.json").is_file():
+        env["FLEET_VM_IMAGE"] = str(images / "fleet-assets")
+        if image_kind == "browser":
+            print(f"{agent_id}: the browser VM image is not built (bin/fleet-vm-image browser); using the plain image", file=sys.stderr)
     return env
+
+
+def vm_skill_dirs(agent: dict) -> list[str]:
+    """Skill folders a VM crewmate's pi lists (its skill_paths, and the global skill folders pi discovers)."""
+    dirs = [ROOT / str(rel) for rel in agent.get("skill_paths") or []]
+    if str(agent.get("discover_skills")).lower() != "false":
+        dirs += [Path.home() / ".agents" / "skills", Path.home() / ".pi" / "agent" / "skills"]
+    return [str(d.resolve()) for d in dirs if d.is_dir()]
 
 
 def launchable_maneuvers(ship: dict, role: str, ship_path: Path) -> list[str]:
@@ -654,7 +680,7 @@ def prepare_pi_launch(
         if str(aboard.get("isolation") or "") == "vm":
             # R4: this crewmate's built-in tools run in a micro-VM with only the repo and its memory mounted.
             (fleet_inbox_root() / agent_id / "memory").mkdir(parents=True, exist_ok=True)
-            os.environ.update(vm_env(aboard, agent_id, fleet_inbox_root()))
+            os.environ.update(vm_env(aboard, agent_id, fleet_inbox_root(), agent))
         crew = ", ".join(f"`{aboard['id']}-{r}`" for r in aboard.get("crew") or [])
         path_block = (
             "## Resolved paths (this session)\n\n"

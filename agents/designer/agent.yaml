@@ -10,6 +10,10 @@ harness: pi
 model: openrouter/anthropic/claude-sonnet-5.5
 fallback_model: deepseek/deepseek-flash
 workspace: ships
+# Aboard a ship with `isolation: vm`: the browser image (R4e: Chromium, fonts,
+# and the `shot` command for desktop and mobile screenshots inside the VM).
+# Build it once with bin/fleet-vm-image browser; until then, the plain image.
+vm_image: browser
 # Live session in the dashboard's agent host (pi --mode rpc), shared with the
 # TUI (Start TUI on the dashboard, or just designer). turn_timeout only applies
 # if runtime is switched back to headless.

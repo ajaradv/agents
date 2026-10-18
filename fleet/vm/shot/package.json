@@ -1,0 +1,9 @@
+{
+  "name": "fleet-shot",
+  "private": true,
+  "type": "module",
+  "description": "Screenshots inside a crew VM (R4e): the system Chromium driven by playwright-core.",
+  "dependencies": {
+    "playwright-core": "1.63.0"
+  }
+}

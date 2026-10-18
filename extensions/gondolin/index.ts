@@ -18,6 +18,10 @@
  *   blocked hosts are reported to the node (tool failure log, ship log).
  * - The VM boots on the first tool call, not at session start, and uses the
  *   fleet image (FLEET_VM_IMAGE, built by bin/fleet-vm-image).
+ * - The agent's skill folders (FLEET_VM_RO_MOUNTS) are mounted read-only at
+ *   their host paths: pi lists skills by host path, and the model reads them.
+ * - Agents with `vm_image: browser` get the browser image (R4e: Chromium,
+ *   fonts, and the `shot` command) and 2 GB (FLEET_VM_BROWSER, FLEET_VM_RAM).
  * - No fallback: when the VM cannot start, tools fail and say so; they never
  *   run on the host instead.
  *
@@ -26,8 +30,8 @@
  */
 
 import path from "node:path";
-import { createHttpHooks, RealFSProvider, VM } from "@earendil-works/gondolin";
-import { allowedHosts, GUEST_CACHE, guestEnv, hostAllowed } from "./policy.ts";
+import { createHttpHooks, ReadonlyProvider, RealFSProvider, VM } from "@earendil-works/gondolin";
+import { allowedHosts, browserNote, GUEST_CACHE, guestEnv, hostAllowed, readonlyMounts, vmSize } from "./policy.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	type BashOperations,
@@ -428,9 +432,11 @@ export default function (pi: ExtensionAPI) {
 		// In a voyage worktree, .git is a file pointing into the repo's .git: mount it at its own path so git works.
 		const gitDir = process.env.FLEET_VM_GITDIR ?? "";
 		if (gitDir && path.isAbsolute(gitDir)) mounts[gitDir] = new RealFSProvider(gitDir);
+		// The skills pi lists for this agent, read-only at their host paths, so the model can follow them.
+		for (const dir of readonlyMounts()) if (!mounts[dir]) mounts[dir] = new ReadonlyProvider(new RealFSProvider(dir));
 		let created: VM;
 		try {
-			created = await VM.create({ sessionLabel: `fleet ${process.env.FLEET_AGENT_ID ?? path.basename(localCwd)}`, httpHooks, env, vfs: { mounts } });
+			created = await VM.create({ sessionLabel: `fleet ${process.env.FLEET_AGENT_ID ?? path.basename(localCwd)}`, httpHooks, env, vfs: { mounts }, ...vmSize() });
 			const bashProbe = await created.exec(["/bin/sh", "-lc", "command -v bash || true; git config --global --add safe.directory '*' 2>/dev/null || true"]);
 			shellPath = bashProbe.stdout.trim().split("\n")[0] || "/bin/sh";
 		} catch (e) {
@@ -570,7 +576,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event) => {
 		// The VM boots on the first tool call; this only tells the model where its tools run.
 		const localLine = `Current working directory: ${localCwd}`;
-		const guestLine = `Current working directory: ${GUEST_WORKSPACE} (an isolated VM: your tools run there; the ship's repo ${localCwd} is mounted at ${GUEST_WORKSPACE}${HOST_MEMORY ? `, your memory folder at ${GUEST_MEMORY}` : ""}${HOST_SHIP_MEMORY ? `, the ship's shared memory at ${GUEST_SHIP_MEMORY}` : ""}; nothing else on the host is visible; network only to the ship's allowlist; tests that need Docker run on the host through run_check)`;
+		const guestLine = `Current working directory: ${GUEST_WORKSPACE} (an isolated VM: your tools run there; the ship's repo ${localCwd} is mounted at ${GUEST_WORKSPACE}${HOST_MEMORY ? `, your memory folder at ${GUEST_MEMORY}` : ""}${HOST_SHIP_MEMORY ? `, the ship's shared memory at ${GUEST_SHIP_MEMORY}` : ""}; ${readonlyMounts().length ? "your skills, read-only at the paths listed for them; " : ""}nothing else on the host is visible; network only to the ship's allowlist; tests that need Docker run on the host through run_check)${browserNote()}`;
 		const systemPrompt = event.systemPrompt.includes(localLine)
 			? event.systemPrompt.replace(localLine, guestLine)
 			: `${event.systemPrompt}\n\n${guestLine}`;

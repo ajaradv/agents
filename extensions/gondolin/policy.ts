@@ -34,3 +34,43 @@ export function hostAllowed(host: string, allow: string[]): boolean {
 	const h = host.toLowerCase().split(":")[0] ?? "";
 	return allow.some((a) => a === h || (a.startsWith("*.") && h.endsWith(a.slice(1))));
 }
+
+/** VM size for VM.create: FLEET_VM_RAM (qemu syntax, for example 2G) when set; Gondolin's default (1G) otherwise. */
+export function vmSize(raw = process.env.FLEET_VM_RAM ?? ""): { memory?: string } {
+	return /^\d{1,3}[MG]$/.test(raw) ? { memory: raw } : {};
+}
+
+/** The line a browser-image crewmate's prompt gets about taking screenshots (R4e); empty otherwise. */
+export function browserNote(on = process.env.FLEET_VM_BROWSER === "1"): string {
+	if (!on) return "";
+	return "\n\nScreenshots: this VM has Chromium. `shot <url-or-file>` saves desktop (1440x900) and mobile (390x844) PNGs under /cache/shots and prints their paths, the page's console errors, and failed requests (`--full` whole page, `--mobile` or `--desktop` one size, `--selector CSS`, `--dark`, `shot --help`). Read a PNG with the read tool to see it; show it to the captain with the canvas (kind image, the same /cache/shots path). A dev server you start in the VM is reachable at localhost; the Mac's servers and the dashboard are not.";
+}
+
+/**
+ * A guest path as the host sees it, for host-side tools (the canvas) given a
+ * path from a VM crewmate: /workspace -> the repo or worktree, /memory,
+ * /ship-memory, /cache -> their host folders. Other paths come back unchanged.
+ */
+export function guestToHost(p: string, mounts: { workspace: string; memory?: string; shipMemory?: string; cache?: string }): string {
+	const pairs: [string, string | undefined][] = [
+		["/workspace", mounts.workspace],
+		["/ship-memory", mounts.shipMemory],
+		["/memory", mounts.memory],
+		[GUEST_CACHE, mounts.cache],
+	];
+	for (const [guest, host] of pairs) {
+		if (!host) continue;
+		if (p === guest) return host;
+		if (p.startsWith(`${guest}/`)) {
+			const rest = p.slice(guest.length + 1).split("/");
+			if (rest.includes("..")) return p;
+			return [host.replace(/\/$/, ""), ...rest].join("/");
+		}
+	}
+	return p;
+}
+
+/** Host folders mounted read-only at the same path in the guest (FLEET_VM_RO_MOUNTS, ":"-separated absolute paths). */
+export function readonlyMounts(raw = process.env.FLEET_VM_RO_MOUNTS ?? ""): string[] {
+	return [...new Set(raw.split(":").map((d) => d.trim().replace(/\/+$/, "")).filter((d) => d.startsWith("/") && d.length > 1 && !d.split("/").includes("..")))];
+}

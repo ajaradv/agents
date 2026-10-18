@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { allowedHosts, guestEnv, hostAllowed } from "../../extensions/gondolin/policy.ts";
+import { allowedHosts, browserNote, guestEnv, guestToHost, hostAllowed, readonlyMounts, vmSize } from "../../extensions/gondolin/policy.ts";
 import { DEFAULT_VM_ALLOW, parseShipYaml } from "./fleet-layers.ts";
 import { tail } from "./ship-checks.ts";
 
@@ -11,6 +11,28 @@ describe("crew VM policy", () => {
   });
   test("with a cache folder, pre-commit keeps its hook environments there", () => {
     expect(guestEnv("pochteca-scout", true).PRE_COMMIT_HOME).toBe("/cache/pre-commit");
+  });
+  test("browser image (R4e): more memory and a prompt line about shot, only when switched on", () => {
+    expect(vmSize("2G")).toEqual({ memory: "2G" });
+    expect(vmSize("")).toEqual({});
+    expect(vmSize("2G; rm -rf /")).toEqual({});
+    expect(browserNote(true)).toContain("shot <url-or-file>");
+    expect(browserNote(false)).toBe("");
+  });
+  test("guest paths map to host folders for the canvas; others and .. escapes stay as given", () => {
+    const m = { workspace: "/h/repo", memory: "/h/inbox/p-designer/memory", shipMemory: "/h/inbox/ships/p/memory", cache: "/h/inbox/p-designer/cache" };
+    expect(guestToHost("/cache/shots/home-desktop.png", m)).toBe("/h/inbox/p-designer/cache/shots/home-desktop.png");
+    expect(guestToHost("/workspace/docs/a.png", m)).toBe("/h/repo/docs/a.png");
+    expect(guestToHost("/workspace", m)).toBe("/h/repo");
+    expect(guestToHost("/ship-memory/x.md", m)).toBe("/h/inbox/ships/p/memory/x.md");
+    expect(guestToHost("/memory/x.md", m)).toBe("/h/inbox/p-designer/memory/x.md");
+    expect(guestToHost("/cache/../../etc/passwd", m)).toBe("/cache/../../etc/passwd");
+    expect(guestToHost("/workspacefoo/a", m)).toBe("/workspacefoo/a");
+    expect(guestToHost("/tmp/a.png", { workspace: "/h/repo" })).toBe("/tmp/a.png");
+  });
+  test("read-only skill mounts: absolute paths only, no .., no root, deduplicated", () => {
+    expect(readonlyMounts("/a/skills:/b/x/:relative:/:/c/../etc:/a/skills")).toEqual(["/a/skills", "/b/x"]);
+    expect(readonlyMounts("")).toEqual([]);
   });
   test("the allowlist parses hostnames and wildcards, and matches only those", () => {
     const allow = allowedHosts("pypi.org, *.github.com,bad host,http://x.com");

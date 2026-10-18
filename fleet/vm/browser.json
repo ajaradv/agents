@@ -1,0 +1,19 @@
+{
+  "_comment": "The browser image (R4e): fleet/vm/image.json plus what is here. bin/fleet-vm-image browser merges the two (packages and copy entries are added, commands run after the base image's). Agents with vm_image: browser in agent.yaml get it.",
+  "rootfsPackages": [
+    "chromium",
+    "font-noto",
+    "font-noto-emoji",
+    "font-noto-cjk",
+    "font-dejavu",
+    "font-liberation"
+  ],
+  "copy": [
+    { "src": "fleet/vm/shot", "dest": "/opt/fleet-shot" }
+  ],
+  "commands": [
+    "cd /opt/fleet-shot && npm install --omit=dev --no-audit --no-fund",
+    "ln -sf /opt/fleet-shot/shot.mjs /usr/local/bin/shot",
+    "chmod +x /opt/fleet-shot/shot.mjs"
+  ]
+}

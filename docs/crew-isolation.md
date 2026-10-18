@@ -44,12 +44,53 @@ restart).
 If the VM cannot start, its tools fail with "Isolation is unavailable"; they
 never fall back to running on the Mac.
 
+## Screenshots in the VM (designers)
+
+Agents with `vm_image: browser` in `agent.yaml` (the designer) get the browser
+image: the fleet image plus Chromium, Noto fonts (with emoji and CJK), and
+`shot`, which drives Chromium with playwright-core:
+
+```
+shot index.html                      # desktop 1440x900 and mobile 390x844
+shot http://localhost:5173 --full    # a dev server started in the VM, whole page
+shot page.html --mobile --dark --selector main
+```
+
+- PNGs go to `/cache/shots` (the crewmate's cache folder on the Mac, outside
+  the repo, so screenshots never dirty a voyage's worktree). `shot` prints
+  their paths, then the page's console errors and failed requests.
+- The crewmate reads a PNG with its read tool to see it, and shows it with
+  `canvas_show` (`kind: image`) using the same `/cache/shots/...` path: the
+  canvas maps guest paths (`/workspace`, `/cache`, `/memory`,
+  `/ship-memory`) to the Mac's folders.
+- The VM keeps its network allowlist. Gondolin answers HTTPS for allowed hosts
+  with its own certificate authority; `shot` tells Chromium to trust exactly
+  that authority's key. A CDN the ship does not allow shows up under failed
+  requests, and the page renders without it.
+- A dev server started inside the VM is reachable at localhost; servers on the
+  Mac (and the dashboard) are not.
+- These VMs get 2 GB instead of 1 GB.
+- Build the image once: `bin/fleet-vm-image browser` (about 1.6 GB). It is
+  built from `fleet/vm/image.json` plus `fleet/vm/browser.json`, so rebuild it
+  too after changing the base packages. Until it is built, designers get the
+  plain image and the launcher says so.
+
+## Skills inside the VM
+
+Pi lists an agent's skills by their paths on the Mac (`skill_paths` in
+`agent.yaml`, plus `~/.agents/skills` and `~/.pi/agent/skills` unless
+`discover_skills: false`). Those folders are mounted **read-only** at the same
+paths in the VM, so a crewmate can read a skill and run its scripts but never
+change one. Nothing else under the home folder is mounted: the folders along
+those paths exist in the guest only as empty parents of the mounts.
+
 ## Setup (once)
 
 - `brew install qemu e2fsprogs` (e2fsprogs is keg-only and only used to build images).
 - `bin/fleet-vm-image` builds the guest image from `fleet/vm/image.json` into
   `fleet/home/gondolin/fleet-assets` (about 20 s, 630 MB). Add Alpine packages
   there and rebuild when a ship needs more tools.
+- `bin/fleet-vm-image browser` builds the designers' browser image (above).
 
 ## Voyages work in their own worktree
 
