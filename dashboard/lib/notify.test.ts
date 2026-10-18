@@ -64,7 +64,8 @@ describe("notice urgency", () => {
     expect(await n.urgencyCheck(calm.id, calm.summary, "")).toBe(false);
     n._setUrgencyAskForTest(said(0.95));
     const hot = n.notifyCaptain({ from: "lead", kind: "info", summary: "Production deploy failing; customers cannot check out" });
-    expect(await n.urgencyCheck(hot.id, hot.summary, "")).toBe(true);
+    // notifyCaptain starts the same check in the background; whichever finishes first raises it.
+    await n.urgencyCheck(hot.id, hot.summary, "");
     expect(n.openNotices().some((x) => x.id === hot.id)).toBe(true);
     expect(n.openNotices().some((x) => x.id === calm.id)).toBe(false);
     n._setUrgencyAskForTest((async () => ({ ok: false, error: "no" })) as never);

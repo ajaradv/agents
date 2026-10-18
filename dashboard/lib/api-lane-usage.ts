@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { envKeyValue, loadFleetDotenv } from "./fleet-env.ts";
+import { agentKeyEnv, envKeyValue } from "./fleet-env.ts";
 
 export type ApiLaneUsage = {
   provider: string;
@@ -178,7 +178,8 @@ export async function refreshApiLaneUsage(): Promise<Record<string, ApiLaneUsage
   if (usageRunning) return usageCache;
   usageRunning = true;
   try {
-    const dotenv = await loadFleetDotenv();
+    // The service account first, then the .env mount: the same keys the agents get.
+    const dotenv = await agentKeyEnv();
     const dsKey = envKeyValue("DEEPSEEK_API_KEY", dotenv);
     const orKey = envKeyValue("OPENROUTER_API_KEY", dotenv);
     const geminiKey = envKeyValue("GEMINI_API_KEY", dotenv);

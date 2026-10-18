@@ -16,21 +16,23 @@ import { notifyCaptain } from "./notify.ts";
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tool_failures (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, agent TEXT NOT NULL,
-  tool TEXT NOT NULL, args TEXT NOT NULL DEFAULT '', error TEXT NOT NULL, model TEXT NOT NULL DEFAULT ''
+  tool TEXT NOT NULL, args TEXT NOT NULL DEFAULT '', error TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',
+  noise INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS tool_failures_ts ON tool_failures(ts);
 CREATE TABLE IF NOT EXISTS tool_failure_notices (key TEXT PRIMARY KEY, day TEXT NOT NULL);
 `;
 
-let migrated = false;
+// Per handle: the journal can be reopened at another path (tests do).
+const migrated = new WeakSet<object>();
 function db() {
   const d = journalDb();
   d.exec(SCHEMA);
-  if (!migrated) {
+  if (!migrated.has(d)) {
     // Added later: failures that are really a "no" answer (grep with no match), kept but not counted.
     const cols = d.query("PRAGMA table_info(tool_failures)").all() as { name: string }[];
     if (!cols.some((c) => c.name === "noise")) d.exec("ALTER TABLE tool_failures ADD COLUMN noise INTEGER NOT NULL DEFAULT 0");
-    migrated = true;
+    migrated.add(d);
   }
   return d;
 }
