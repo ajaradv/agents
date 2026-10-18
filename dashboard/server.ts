@@ -21,6 +21,7 @@ import { metricsStripHtml } from "./lib/bus.ts";
 import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fleet-snapshot.ts";
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
 import { toolFailuresHtml } from "./lib/tool-failures.ts";
+import { vaultDoctorHtml } from "./lib/vault-doctor.ts";
 import { describeGates, runGates } from "./lib/gates.ts";
 import { addSubscription, pushNewNeeds, removeSubscription, sendToAll, subscriptions, validSub, vapidKeys } from "./lib/push.ts";
 import { ackNotice, notifyCaptain, quietState, snooze, wake } from "./lib/notify.ts";
@@ -518,6 +519,9 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       });
     }
 
+    if (path === "/partials/vault-doctor" && req.method === "GET") {
+      return new Response(vaultDoctorHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
     if (path === "/partials/tool-failures" && req.method === "GET") {
       return new Response(toolFailuresHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }

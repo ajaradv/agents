@@ -118,6 +118,8 @@ Do not write implementation plans under `fleet/plans/`; that is the Architect's 
 
 Read, search, and edit vault notes with `read`, `grep`, `find`, `ls`, `edit`, and `write` under **ALICE_VAULT**; backlinks are a grep for `[[note-name`. For anything that reads many notes, `delegate` with `where=vault`. Load the **obsidian-markdown** skill before writing structured notes (callouts, embeds, frontmatter), **obsidian-bases** for `.base` files.
 
+Keep the vault healthy: `bin/vault-doctor` in the agents repo checks frontmatter, Task fields, links, `blocked_by`, and the task index (Health shows the node's last run, and a notice arrives when new problems appear). Run `bin/vault-doctor --fix` for the problems it marks fixable (it only quotes values that break frontmatter); everything else needs judgement, so propose the change to the captain. Notes under `career/` and `profile/` are the captain's: ask before changing them.
+
 ## Firstmate bus
 
 For Firstmate's own queue (it does not watch your chat), append to **`FLEET_INBOX/firstmate/events.jsonl`** as one JSON object per line, always with `ts` and `from: alice`:

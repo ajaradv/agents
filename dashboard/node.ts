@@ -24,6 +24,7 @@ import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
 import { askPublic } from "./lib/public-helper.ts";
 import { toolText, VIEWS } from "./lib/tool-out.ts";
 import { VAULT_FILTERS, vaultTasksReport, type VaultFilter } from "./lib/vault-tasks.ts";
+import { scheduledVaultCheck } from "./lib/vault-doctor.ts";
 import { dashLog } from "./lib/log.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
 import { backfillMetrics } from "./lib/metrics-backfill.ts";
@@ -157,6 +158,19 @@ function startRuntime(): void {
   };
   setTimeout(freeRefresh, 60_000);
   setInterval(freeRefresh, 6 * 3_600_000);
+  // Vault doctor (lib/vault-doctor.ts): check the vault soon after start and every 6 hours; a notice only for new problems.
+  const vaultCheck = () => {
+    try {
+      const { result, fresh } = scheduledVaultCheck();
+      if (fresh.length) {
+        notifyCaptain({ from: "vault-doctor", kind: "info", summary: `Vault doctor: ${fresh.length} new problem${fresh.length > 1 ? "s" : ""} (${result.problems.length} in all)`, detail: fresh.slice(0, 8).map((p) => `${p.note}: ${p.detail}`).join("\n"), ref: "health/diagnostics" });
+      }
+    } catch (e) {
+      console.error("[node] vault doctor:", e);
+    }
+  };
+  setTimeout(vaultCheck, 3 * 60_000);
+  setInterval(vaultCheck, 6 * 3_600_000);
   // Fleet metrics (lib/metrics.ts): import history from ship logs and voyage notes once.
   setTimeout(() => {
     try {
