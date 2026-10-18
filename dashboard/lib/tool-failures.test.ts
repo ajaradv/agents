@@ -34,3 +34,25 @@ describe("tool failure log", () => {
     expect(notices().filter((s) => s.includes("designer: bash failed")).length).toBe(1);
   });
 });
+
+describe("failure noise", () => {
+  test("a search or test that answered no is noise; real errors are not", () => {
+    expect(f.expectedFailure("bash", 'bash: cd /workspace && grep -n "just pytest " README.md', "(no output) Command exited with code 1")).toBe(true);
+    expect(f.expectedFailure("bash", "bash: rg TODO src | grep -v test", "Command exited with code 1")).toBe(true);
+    expect(f.expectedFailure("bash", "bash: test -f .env.local", "Command exited with code 1")).toBe(true);
+    expect(f.expectedFailure("bash", "bash: git diff --quiet", "Command exited with code 1")).toBe(true);
+    expect(f.expectedFailure("bash", "bash: cd /x && git status", "/bin/bash: line 1: cd: /x: No such file or directory Command exited with code 1")).toBe(false);
+    expect(f.expectedFailure("bash", "bash: grep -r foo missing-dir", "grep: missing-dir: No such file or directory Command exited with code 2")).toBe(false);
+    expect(f.expectedFailure("bash", "bash: just pytest", "1 failed, 41 passed Command exited with code 1")).toBe(false);
+    expect(f.expectedFailure("read", "read: x", "Command exited with code 1")).toBe(false);
+  });
+  test("noise is kept but not counted; other bash failures go to the background judge", () => {
+    const judged: string[] = [];
+    const judge = (_id: number, x: { args: string }) => judged.push(x.args);
+    f.recordToolFailure({ agent: "scout", tool: "bash", args: 'bash: grep -n "x" README.md', error: "(no output) Command exited with code 1" }, judge);
+    f.recordToolFailure({ agent: "scout", tool: "bash", args: "bash: python3 build.py", error: "Traceback: KeyError 'x' Command exited with code 1" }, judge);
+    expect(judged).toEqual(["bash: python3 build.py"]);
+    expect(f.toolFailureCounts(24).find((c) => c.agent === "scout")?.n).toBe(1);
+    expect((journalDb().query("SELECT COUNT(*) AS n FROM tool_failures WHERE agent = 'scout'").get() as { n: number }).n).toBe(2);
+  });
+});

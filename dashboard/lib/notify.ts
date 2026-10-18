@@ -1,3 +1,5 @@
+import { jevAsk } from "./jev.ts";
+import { redact } from "./redact.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { journalDb, journalEvent } from "./journal.ts";
@@ -96,7 +98,36 @@ export function notifyCaptain(n: { from: string; kind: NoticeKind; summary: stri
     .run(ts, n.from, kind, n.summary.slice(0, 500), (n.detail ?? "").slice(0, 4000), (n.ref ?? "").slice(0, 300), delivery);
   journalEvent(`notice-${r.lastInsertRowid}`, "notice", { from: n.from, kind, delivery });
   changed();
+  // A notice filed for the digest that is really urgent: Jev decides in the background (Level 1B).
+  if (delivery === "digest" && (kind === "info" || kind === "milestone")) urgencyCheck(Number(r.lastInsertRowid), n.summary, n.detail ?? "");
   return { id: Number(r.lastInsertRowid), ts, from: n.from, kind, summary: n.summary, detail: n.detail ?? "", ref: n.ref ?? "", delivery, acked: false, digest: null };
+}
+
+let urgencyAsk: typeof jevAsk = jevAsk;
+/** Test seam: replace the urgency check (tests never call Jev). */
+export function _setUrgencyAskForTest(ask: typeof jevAsk): void {
+  urgencyAsk = ask;
+}
+
+/** Raise a digest notice to an interrupting one when Jev is sure it needs the captain soon. */
+export async function urgencyCheck(id: number, summary: string, detail: string): Promise<boolean> {
+  const r = await urgencyAsk("notice-urgency", { notice: redact(`${summary}\n${detail}`).slice(0, 2000) }, {
+    urgent: {
+      type: "noul",
+      instructions: "An AI agent filed this `notice` for the captain's daily digest. Does it actually need the captain's attention soon?",
+      criteria: { true: "A decision only the captain can make, work blocked on the captain, something broken or failing repeatedly, money or data at risk", false: "Progress, a finished task, a measurement, or background information that can wait for the digest" },
+    },
+  }).catch(() => null);
+  const a = r && r.ok ? r.answers.urgent : undefined;
+  // 0.75: measured, urgent notices 0.78-0.93, routine ones 0.07-0.43.
+  if (!a || a.type !== "noul" || a.noul < 0.75) return false;
+  const to = quietState().snoozed ? "held" : "interrupt";
+  const up = db().query("UPDATE notices SET delivery = ? WHERE id = ? AND delivery = 'digest'").run(to, id);
+  if (up.changes) {
+    journalEvent(`notice-${id}`, "notice-raised", { delivery: to, p: a.noul });
+    changed();
+  }
+  return up.changes > 0;
 }
 
 /** What Needs you shows: interrupting notices and digests not yet acknowledged. */

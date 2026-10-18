@@ -54,3 +54,19 @@ describe("snooze, wake, and digests", () => {
     expect(readFileSync(join(vault, d!.ref), "utf8")).toContain("## For your information");
   });
 });
+
+describe("notice urgency", () => {
+  const said = (p: number) => (async () => ({ ok: true, answers: { urgent: { type: "noul", noul: p } }, route: "typesafe", inputTokens: 1, cost: 0, ms: 1 })) as never;
+  test("a digest notice Jev is sure about is raised to Needs you; others stay in the digest", async () => {
+    n._setUrgencyAskForTest(said(0.1));
+    const calm = n.notifyCaptain({ from: "scout", kind: "info", summary: "Recon of the auth module finished" });
+    expect(calm.delivery).toBe("digest");
+    expect(await n.urgencyCheck(calm.id, calm.summary, "")).toBe(false);
+    n._setUrgencyAskForTest(said(0.95));
+    const hot = n.notifyCaptain({ from: "lead", kind: "info", summary: "Production deploy failing; customers cannot check out" });
+    expect(await n.urgencyCheck(hot.id, hot.summary, "")).toBe(true);
+    expect(n.openNotices().some((x) => x.id === hot.id)).toBe(true);
+    expect(n.openNotices().some((x) => x.id === calm.id)).toBe(false);
+    n._setUrgencyAskForTest((async () => ({ ok: false, error: "no" })) as never);
+  });
+});

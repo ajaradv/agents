@@ -1,3 +1,4 @@
+import { reviewBranch, reviewLine } from "./dock-review.ts";
 import { existsSync } from "node:fs";
 import { describeManeuver, maneuverAvailability } from "./maneuvers.ts";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -285,15 +286,18 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   const commits = Number(released.message.match(/has (\d+) commit/)?.[1] ?? 0);
   recordVoyageDock(id, { commits, outcome: summary.trim(), branch: released.message.match(/^Branch (\S+)/)?.[1] });
   const ledger = voyageLedger(id);
+  // Dock review (lib/dock-review.ts): how closely the captain should review the branch before merging. Advisory.
+  const branchInfo = released.message.match(/^Branch (\S+) has \d+ commit\(s\) on (\S+?),/);
+  const review = ship && branchInfo && commits > 0 ? await reviewBranch(ship.path, branchInfo[2]!, branchInfo[1]!).catch(() => null) : null;
   // The voyage's memory is archived into its note, then discarded.
   const scratch = ship && ship.orchestrator === "lead" ? await endVoyageMemory(shipId, ship.crew.map((r) => `${shipId}-${r}`)) : "";
   let text = await readFile(v.file, "utf8");
   text = text.replace(/^status: sailing$/m, "status: docked").replace(/^started: (.*)$/m, `started: $1\nended: ${now}`);
   const note = summary.trim();
-  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "") + (scratch ? `\n## Voyage memory (archived at dock)\n\n${scratch}\n` : "");
+  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "") + (review ? `\n## Dock review\n\n${reviewLine(review)}\n` : "") + (scratch ? `\n## Voyage memory (archived at dock)\n\n${scratch}\n` : "");
   await writeFile(v.file, text, "utf8");
   logShipEvent(shipId, "captain", "voyage-end", note || "Docked", { file: v.file });
-  return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}${ledger ? ` ${ledgerLine(ledger)}` : ""}` };
+  return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}${ledger ? ` ${ledgerLine(ledger)}` : ""}${review ? ` ${reviewLine(review)}` : ""}` };
 }
 
 /** The lead's view of the ship's maneuvers, for the voyage brief. */

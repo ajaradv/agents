@@ -1,3 +1,5 @@
+import { jevAsk } from "./jev.ts";
+import { redact } from "./redact.ts";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { postBus } from "./bus-post.ts";
@@ -26,6 +28,30 @@ import { logShipEvent } from "./ship-log.ts";
  */
 
 const MODEL = process.env.FLEET_HELPER_MODEL ?? "deepseek/deepseek-flash";
+/** For tasks Jev judges hard (vault research note jev-system-one, Level 5C): reasoning across many sources, plans, debugging. */
+const STRONG_MODEL = process.env.FLEET_HELPER_STRONG_MODEL ?? "deepseek/deepseek-v4-pro";
+
+/**
+ * The cheapest model that can do the task: Jev picks easy (a lookup, a summary,
+ * finding where something is) or hard; only a confident "hard" gets the strong
+ * model. Free lanes are not options: helpers read the vault and repos.
+ */
+export async function helperModel(task: string, ask: typeof jevAsk = jevAsk): Promise<{ model: string; why: string }> {
+  const r = await ask("helper-routing", { task: redact(task).slice(0, 2000) }, {
+    difficulty: {
+      type: "choice",
+      instructions: "A read-only helper agent will do `task` by reading notes or code. How hard is it?",
+      criteria: {
+        easy: "A lookup or summary: find where something is, list or quote what a few notes or files say, answer a factual question about them",
+        hard: "Reasoning across many notes or files: compare options, trace a bug, reconstruct a decision, draft a plan or design, judge trade-offs",
+        other: "Unclear",
+      },
+    },
+  }).catch(() => null);
+  const a = r && r.ok ? r.answers.difficulty : undefined;
+  if (a && a.type === "choice" && a.choice === "hard" && (a.probabilities.hard ?? a.confidence) >= 0.7) return { model: STRONG_MODEL, why: `hard task (Jev ${Math.round((a.probabilities.hard ?? a.confidence) * 100)}%)` };
+  return { model: MODEL, why: a && a.type === "choice" ? `${a.choice} task` : "default" };
+}
 const MAX_RUNNING = Math.max(1, Number(process.env.FLEET_HELPERS_MAX) || 2);
 const TIMEOUT_MS = Math.max(1, Number(process.env.FLEET_HELPER_MINUTES) || 15) * 60_000;
 const BUDGET = Math.max(0, Number(process.env.FLEET_HELPER_BUDGET_USD ?? 2));
@@ -101,22 +127,23 @@ export async function startDelegation(from: string, task: string, where = "vault
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "task.md"), `${t}\n`, "utf8");
   const out = openSync(join(dir, "out.jsonl"), "a");
+  const { model, why } = await helperModel(t);
   let pid = 0;
   try {
     const proc = Bun.spawn(
-      ["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--model", MODEL, "--tools", "read,grep,find,ls", "--append-system-prompt", HELPER_PROMPT, ...(where === "vault" || !where ? ["--append-system-prompt", LIBRARIAN_PROMPT] : []), "-e", join(ROOT, "extensions", "cache-watch.ts"), t],
-      { cwd, stdin: "ignore", stdout: out, stderr: out, detached: true, env: { ...withoutSecrets(process.env), ...keysForModels(await agentKeyEnv(), [MODEL]), FLEET_AGENT_ID: `${from}-helper` } },
+      ["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--model", model, "--tools", "read,grep,find,ls", "--append-system-prompt", HELPER_PROMPT, ...(where === "vault" || !where ? ["--append-system-prompt", LIBRARIAN_PROMPT] : []), "-e", join(ROOT, "extensions", "cache-watch.ts"), t],
+      { cwd, stdin: "ignore", stdout: out, stderr: out, detached: true, env: { ...withoutSecrets(process.env), ...keysForModels(await agentKeyEnv(), [model]), FLEET_AGENT_ID: `${from}-helper` } },
     );
     pid = proc.pid;
     void proc.exited.then(() => finishDelegation(id));
   } finally {
     closeSync(out);
   }
-  upsertWorkflow("delegation", id, { from, task: t.slice(0, 2000), where, cwd, model: MODEL, dir, pid, started: new Date().toISOString() } satisfies Data, { trace: `delegation-${id}` });
+  upsertWorkflow("delegation", id, { from, task: t.slice(0, 2000), where, cwd, model, dir, pid, started: new Date().toISOString() } satisfies Data, { trace: `delegation-${id}` });
   watch(id, pid);
-  logShipEvent("fleet", from, "delegation", `Helper ${id} started: ${t.slice(0, 160)}`, { id, where, model: MODEL, trace: `delegation-${id}` });
+  logShipEvent("fleet", from, "delegation", `Helper ${id} started: ${t.slice(0, 160)}`, { id, where, model, why, trace: `delegation-${id}` });
   await dashLog("delegate", `${from} → ${id} (${where})`);
-  return { ok: true, message: `Helper ${id} is working on it (${MODEL}, read-only, in ${where}). You will be woken with its summary; the full result will be at ${join(dir, "result.md")}. Carry on with other work or end your turn.`, id };
+  return { ok: true, message: `Helper ${id} is working on it (${model}, ${why}, read-only, in ${where}). You will be woken with its summary; the full result will be at ${join(dir, "result.md")}. Carry on with other work or end your turn.`, id };
 }
 
 /** Kill a helper that runs past its time; the exit handler (or the watcher) finishes it. */

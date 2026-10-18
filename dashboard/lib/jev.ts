@@ -76,6 +76,8 @@ export async function jevAsk(use: string, state: State, questions: Record<string
   const id = createHash("sha256").update(JSON.stringify([state, questions])).digest("hex");
   const hit = cache.get(id);
   if (hit && Date.now() - hit.at < CACHE_MS) return { ok: true, answers: hit.answers, route: "cache", inputTokens: 0, cost: 0, ms: 0 };
+  // Safety net: under bun test, never reach the real service unless a test set fake keys and a fetch.
+  if (process.env.NODE_ENV === "test" && !(keysFixed && opts.fetchImpl)) return { ok: false, error: "Jev is not called in tests" };
   await loadKeys();
   const doFetch = opts.fetchImpl ?? fetch;
   const errors: string[] = [];
