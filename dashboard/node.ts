@@ -25,7 +25,7 @@ import { askPublic } from "./lib/public-helper.ts";
 import { toolText, VIEWS } from "./lib/tool-out.ts";
 import { VAULT_FILTERS, vaultTasksReport, type VaultFilter } from "./lib/vault-tasks.ts";
 import { scheduledVaultCheck } from "./lib/vault-doctor.ts";
-import { decideGate, judgeCall, recordLocalStop } from "./lib/tool-gate.ts";
+import { decideGate, judgeCall, recordLocalStop, screenResult } from "./lib/tool-gate.ts";
 import { dashLog } from "./lib/log.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
 import { backfillMetrics } from "./lib/metrics-backfill.ts";
@@ -368,6 +368,13 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     const input = b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
     recordLocalStop({ agent: from, tool: String(b.tool ?? ""), input, cwd: String(b.cwd ?? ""), why: String(b.why ?? "").slice(0, 200) });
     return Response.json({ ok: true });
+  }
+  if (path === "/api/gate/screen" && req.method === "POST") {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ flagged: false }, { status: 403 });
+    const b = await body(req);
+    const input = b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
+    return Response.json(await screenResult({ agent: from, tool: String(b.tool ?? ""), input, text: String(b.text ?? ""), why: String(b.why ?? "").slice(0, 200) }));
   }
   if (path === "/api/gate" && req.method === "POST") {
     const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");

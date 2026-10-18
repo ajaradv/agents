@@ -227,3 +227,24 @@ export function localVerdict(tool: string, input: Record<string, unknown>, ctx: 
   if (SAFE_TOOLS.has(tool)) return { decision: "allow", reason: "fleet tool" };
   return { decision: "ask", reason: `unfamiliar tool ${tool}` };
 }
+
+// ---------------------------------------------------------------- result screen
+
+/** Commands whose output comes from outside the Mac: what a planted instruction would ride in on. */
+const FETCHES = /\b(curl|wget|gh\s+(issue|pr|api|repo\s+view|release\s+view)|npm\s+(view|pack|info|show)|pip3?\s+(download|show)|git\s+(clone|pull|fetch\s+.*&&.*(show|log))|lynx|w3m|httpie|http\s+(get|GET))\b/;
+/** Places that hold other people's text. */
+const OUTSIDE_PATHS = /(^|\/)(node_modules|vendor|third_party|site-packages|\.cache|Downloads)\/|^\/(tmp|private\/tmp)\//;
+/** Phrases aimed at a model rather than a reader. */
+const INJECTION_MARKERS = /ignore (all |any )?(previous|prior|above) (instructions|directions)|disregard (the|your|all) (previous|prior|system)|you are now (a|an|in)\b|system prompt|<\|im_start\|>|\[INST\]|BEGIN (SYSTEM|ADMIN) (PROMPT|INSTRUCTIONS)|do not (tell|inform|mention (this|it) to) the user|new instructions:/i;
+
+/**
+ * Why a tool result should be screened for instructions aimed at the agent
+ * (null: it need not be). Cheap and local; the node asks Jev only for these.
+ */
+export function screenReason(tool: string, input: Record<string, unknown>, text: string): string | null {
+  if (!text || text.length < 40) return null;
+  if (INJECTION_MARKERS.test(text)) return "the text contains phrases aimed at a model";
+  if (tool === "bash" && FETCHES.test(String(input.command ?? ""))) return "the output came from the network";
+  if ((tool === "read" || tool === "grep") && OUTSIDE_PATHS.test(String(input.path ?? input.file_path ?? ""))) return "the file holds third-party text";
+  return null;
+}
