@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   acceptCaptainLine,
@@ -23,7 +23,7 @@ import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
 import { askPublic } from "./lib/public-helper.ts";
 import { toolText, VIEWS } from "./lib/tool-out.ts";
-import { VAULT_FILTERS, vaultTasksReport, type VaultFilter } from "./lib/vault-tasks.ts";
+import { dueTasks, VAULT_FILTERS, vaultTasksReport, type VaultFilter } from "./lib/vault-tasks.ts";
 import { scheduledVaultCheck } from "./lib/vault-doctor.ts";
 import { decideGate, judgeCall, recordLocalStop, screenResult } from "./lib/tool-gate.ts";
 import { adviseCompaction, cutPoint } from "./lib/compaction-advisor.ts";
@@ -174,6 +174,29 @@ function startRuntime(): void {
   };
   setTimeout(vaultCheck, 3 * 60_000);
   setInterval(vaultCheck, 6 * 3_600_000);
+  // Due vault tasks (lib/vault-tasks.ts): a notice the day a task with a due: date comes due, once per task and date.
+  const dueCheck = () => {
+    try {
+      const file = join(nodeStateDir(), "due-reminded.json");
+      let sent: string[] = [];
+      try {
+        sent = JSON.parse(readFileSync(file, "utf8")) as string[];
+      } catch {
+        /* first run */
+      }
+      const today = new Date().toLocaleDateString("en-CA");
+      const fresh = dueTasks(today).filter((t) => !sent.includes(`${t.id}@${t.due}`));
+      for (const t of fresh) {
+        notifyCaptain({ from: "vault", kind: "decision", summary: `Due ${t.due === today ? "today" : `since ${t.due}`}: ${t.title}`, detail: `${t.description}\n\nVault task tasks/${t.id}.md`, ref: `tasks/${t.id}.md` });
+        sent.push(`${t.id}@${t.due}`);
+      }
+      if (fresh.length) writeFileSync(file, JSON.stringify(sent.slice(-500)), "utf8");
+    } catch (e) {
+      console.error("[node] due tasks:", e);
+    }
+  };
+  setTimeout(dueCheck, 4 * 60_000);
+  setInterval(dueCheck, 3 * 3_600_000);
   // Fleet metrics (lib/metrics.ts): import history from ship logs and voyage notes once.
   setTimeout(() => {
     try {

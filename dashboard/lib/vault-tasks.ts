@@ -25,6 +25,8 @@ export type VaultTask = {
   blockedBy: string[];
   timestamp: string;
   description: string;
+  /** YYYY-MM-DD, or "" when none. */
+  due: string;
 };
 
 export type VaultTaskView = {
@@ -87,6 +89,7 @@ export function readVaultTasks(vault = aliceVault()): VaultTaskView {
       blockedBy: list(fm.blocked_by),
       timestamp: String(fm.timestamp ?? ""),
       description: String(fm.description ?? ""),
+      due: /^\d{4}-\d{2}-\d{2}/.test(String(fm.due ?? "")) ? String(fm.due).slice(0, 10) : fm.due instanceof Date ? fm.due.toISOString().slice(0, 10) : "",
     });
   }
   return { tasks, unreadable };
@@ -155,4 +158,9 @@ export function vaultTasksReport(filter: VaultFilter = "ready", id = "", vault =
     tasks: rows,
     ...unreadableNote,
   };
+}
+
+/** Tasks due on or before `today` (YYYY-MM-DD) that are not done: what the node reminds the captain about. */
+export function dueTasks(today: string, vault = aliceVault()): VaultTask[] {
+  return readVaultTasks(vault).tasks.filter((t) => t.due && t.due <= today && t.status !== "done");
 }

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { linkName, readVaultTasks, vaultTasksReport } from "./vault-tasks.ts";
+import { dueTasks, linkName, readVaultTasks, vaultTasksReport } from "./vault-tasks.ts";
 
 function vault(notes: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "vault-"));
@@ -46,5 +46,15 @@ describe("vault tasks", () => {
   test("link names", () => {
     expect(linkName("[[a-b|label]]")).toBe("a-b");
     expect(linkName("tasks/x.md")).toBe("x");
+  });
+  test("due tasks: on or before today, not done; dates in either form", () => {
+    const v = vault({
+      soon: 'type: Task\ntitle: "Review the gate"\nstatus: open\ndue: 2026-10-25',
+      late: "type: Task\ntitle: Late\nstatus: in-progress\ndue: 2026-10-01",
+      finished: "type: Task\ntitle: Finished\nstatus: done\ndue: 2026-10-01",
+      undated: "type: Task\ntitle: Undated\nstatus: open\ndue:",
+    });
+    expect(dueTasks("2026-10-24", v).map((t) => t.id)).toEqual(["late"]);
+    expect(dueTasks("2026-10-25", v).map((t) => t.id).sort()).toEqual(["late", "soon"]);
   });
 });
