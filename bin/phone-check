@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# phone-check - is this Mac ready for phone access to Herdr over Tailscale and SSH?
+# (docs/remote-ops.md, "Phone → laptop"). Read-only: it changes nothing.
+#
+# Usage:
+#   bin/phone-check            every check, with what to do for each that fails
+#   bin/phone-check --help
+#
+# Exit 0 when the checks ran (failing checks are the answer, listed with what to
+# do), 2 on bad usage.
+set -uo pipefail
+
+case "${1:-}" in
+  "") ;;
+  -h|--help)
+    cat <<'HELP'
+command: phone-check
+summary: Check Tailscale, the phone, SSH (keys only), and Herdr for phone access; read-only
+usage: bin/phone-check
+flags[1]{flag,description}:
+  --help,show this help
+examples[2]:
+  bin/phone-check
+  just phone-check
+HELP
+    exit 0 ;;
+  *) printf 'error: unknown argument %s\nsuggestion: run bin/phone-check with no arguments, or bin/phone-check --help\n' "$1"; exit 2 ;;
+esac
+
+rows=()
+todo=()
+add() { rows+=("  $1,$2,\"$3\""); [ "$2" = pass ] || todo+=("$4"); }
+
+ts_json="$(tailscale status --json 2>/dev/null || true)"
+state="$(printf '%s' "$ts_json" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("BackendState",""))
+except Exception: print("")' 2>/dev/null)"
+host="$(printf '%s' "$ts_json" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))
+except Exception: print("")' 2>/dev/null)"
+if [ "$state" = Running ]; then add tailscale pass "running as $host" ""
+else add tailscale fail "state ${state:-unknown}" "Open Tailscale and sign in"; fi
+
+phones="$(printf '%s' "$ts_json" | python3 -c 'import json,sys
+try:
+  peers=json.load(sys.stdin).get("Peer",{}).values()
+  print(" ".join(p.get("DNSName","").split(".")[0]+("" if p.get("Online") else " (offline)") for p in peers if p.get("OS") in ("iOS","android")))
+except Exception: print("")' 2>/dev/null)"
+if [ -n "$phones" ]; then add phone pass "$phones" ""
+else add phone fail "no phone on the tailnet" "Install Tailscale on the phone and sign in with the same account"; fi
+
+if nc -z -w2 127.0.0.1 22 2>/dev/null; then add ssh pass "Remote Login is on" ""
+else add ssh fail "port 22 closed" "Turn on Remote Login: System Settings > General > Sharing > Remote Login (allow only avega)"; fi
+
+if [ -f /etc/ssh/sshd_config.d/050-fleet-phone.conf ] && grep -q '^PasswordAuthentication no' /etc/ssh/sshd_config.d/050-fleet-phone.conf; then
+  add keys-only pass "password logins off" ""
+else add keys-only fail "passwords still allowed" "sudo cp fleet/config/sshd-phone.conf /etc/ssh/sshd_config.d/050-fleet-phone.conf"; fi
+
+n_keys="$(grep -cE '^(ssh-|ecdsa-|sk-)' "$HOME/.ssh/authorized_keys" 2>/dev/null || true)"
+if [ "${n_keys:-0}" -gt 0 ]; then add phone-key pass "$n_keys key(s) in ~/.ssh/authorized_keys" ""
+else add phone-key fail "no authorized keys" "Make a key in the phone's SSH app and add its public key to ~/.ssh/authorized_keys"; fi
+
+if herdr status 2>/dev/null | grep -A1 '^server:' | grep -q running; then
+  add herdr pass "server running; sessions: $(herdr session list 2>/dev/null | awk 'NR>1{printf "%s ", $1}')" ""
+else add herdr fail "server not running" "Start Herdr on the Mac (run herdr in a terminal)"; fi
+
+echo "checks[${#rows[@]}]{check,status,detail}:"
+printf '%s\n' "${rows[@]}"
+if [ ${#todo[@]} -eq 0 ]; then
+  echo "result: ready"
+  echo "next: on the phone, ssh avega@${host:-<mac>.ts.net}, then run herdr"
+  exit 0
+fi
+echo "result: ${#todo[@]} of ${#rows[@]} checks need doing"
+echo "todo[${#todo[@]}]:"
+for t in "${todo[@]}"; do echo "  - $t"; done
+echo "help[1]:"
+echo "  bin/phone-check"
+exit 0

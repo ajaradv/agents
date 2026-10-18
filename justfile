@@ -68,6 +68,10 @@ css:
 typecheck:
     cd "{{root}}" && node_modules/.bin/tsc -p .
 
+# Is this Mac ready for phone access to Herdr (Tailscale, SSH keys only, Herdr)? Read-only.
+phone-check:
+    cd "{{root}}" && bin/phone-check
+
 # Check a CLI agents run against the AXI principles (docs/tool-standards.md), e.g. just axi-check "bin/stamp-ship".
 axi-check cmd:
     cd "{{root}}" && npx -y axi-axi@0.1.0 validate "{{cmd}}" --strict
