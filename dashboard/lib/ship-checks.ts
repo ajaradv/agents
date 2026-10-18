@@ -1,3 +1,5 @@
+import { jevAsk } from "./jev.ts";
+import { redact } from "./redact.ts";
 import { readShips } from "./fleet-layers.ts";
 import { spawnTimed } from "./proc.ts";
 import { recordRun } from "./metrics.ts";
@@ -28,6 +30,38 @@ export async function treeState(cwd: string): Promise<{ commit: string; dirty: b
   return { commit: head.exitCode === 0 ? head.stdout.trim() : "", dirty: status.exitCode !== 0 || status.stdout.trim().length > 0 };
 }
 
+/** What a failed check's cause usually means for the next step (failure triage, vault note jev-system-one). */
+const TRIAGE_HINT: Record<string, string> = {
+  code_bug: "fix the code the failure points at, then run the check again",
+  test_problem: "look at the test itself (outdated expectation, timing, ordering, random data) before changing the code",
+  environment: "the tooling failed, not the code (Docker, a missing binary or dependency, network, permissions, disk, a port): fix or report the environment rather than editing code",
+  other: "read the output closely",
+};
+
+/**
+ * Failure triage (Level 10A): one Jev choice over the redacted end of a failed
+ * check's output. Advisory: it adds a line to the result, it never changes it.
+ */
+export async function triageFailure(name: string, cmd: string, output: string, ask: typeof jevAsk = jevAsk): Promise<string | null> {
+  const r = await ask("failure-triage", { check: name, command: cmd, output_tail: redact(output).slice(-6000) }, {
+    cause: {
+      type: "choice",
+      instructions: "A project check (tests, lint, or build) failed. From `output_tail`, what most likely caused the failure?",
+      criteria: {
+        code_bug: "A real failure in the code under test: an assertion that does not hold, an exception or type error raised by the project's own code, a lint rule the code breaks",
+        test_problem: "The test itself is wrong or unreliable: an outdated expected value, a timing or ordering dependence, random data, a flaky external call",
+        environment: "The tooling or environment failed rather than the code: Docker or a service not running, a missing binary or dependency, a network or registry error, permissions, disk space, a port in use",
+        other: "None of these, or the output does not say",
+      },
+    },
+  });
+  if (!r.ok) return null;
+  const a = r.answers.cause;
+  if (!a || a.type !== "choice" || a.choice === "other" || a.confidence < 0.5) return null;
+  const pct = Math.round((a.probabilities[a.choice] ?? a.confidence) * 100);
+  return `Triage (Jev, advisory): most likely ${a.choice.replace("_", " ")} (${pct}%); ${TRIAGE_HINT[a.choice]}.`;
+}
+
 export async function runCheck(shipId: string, from: string, name: string): Promise<{ ok: boolean; message: string }> {
   const ship = (await readShips()).find((s) => s.id === shipId);
   if (!ship) return { ok: false, message: `No ship ${shipId}.` };
@@ -52,7 +86,9 @@ export async function runCheck(shipId: string, from: string, name: string): Prom
     logShipEvent(shipId, from, "check", `Check ${name} ${verdict}`, { name, exitCode: res.exitCode, timedOut: res.timedOut, secs });
     recordRun({ ship: shipId, agent: from, kind: "check", name, ok: passed, ms: Date.now() - started, detail: verdict, commit, dirty });
     const out = tail(`${res.stdout}${res.stderr ? `\n${res.stderr}` : ""}`.trim());
-    return { ok: passed, message: `Check ${name} (${cmd}) ${verdict}.\n\n${out || "(no output)"}` };
+    const triage = !passed && !res.timedOut && out ? await triageFailure(name, cmd, out).catch(() => null) : null;
+    if (triage) logShipEvent(shipId, "helm", "check", `Check ${name}: ${triage}`, { name });
+    return { ok: passed, message: `Check ${name} (${cmd}) ${verdict}.${triage ? `\n${triage}` : ""}\n\n${out || "(no output)"}` };
   } finally {
     running.delete(key);
   }

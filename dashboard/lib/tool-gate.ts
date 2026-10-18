@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { acceptCrewLine } from "./chat-bridge.ts";
 import { jevAsk, type Question } from "./jev.ts";
+import { redact } from "./redact.ts";
 import { getWorkflow, listWorkflows, updateWorkflow, upsertWorkflow } from "./journal.ts";
 import { metricsDb } from "./metrics.ts";
 import { OFFICER_SHIP, shipOf } from "./ship-events.ts";
@@ -42,16 +43,7 @@ function db() {
   return d;
 }
 
-/** Obvious secrets out of anything sent to Jev or written to the log. */
-export function redact(text: string): string {
-  return text
-    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[REDACTED KEY]")
-    .replace(/\b(sk|pk|rk)[-_][A-Za-z0-9_-]{16,}/g, "[REDACTED]")
-    .replace(/\b(ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9_]{16,}/g, "[REDACTED]")
-    .replace(/\b(xox[abposr]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})/g, "[REDACTED]")
-    .replace(/\b([A-Z][A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD))(\s*[=:]\s*)(["']?)[^\s"']{6,}\4/g, "$1$3[REDACTED]")
-    .replace(/(Authorization:\s*Bearer\s+)\S+/gi, "$1[REDACTED]");
-}
+export { redact } from "./redact.ts";
 
 /** One line the captain reads: what the agent wants to do. */
 export function describeCall(c: Pick<GateCall, "tool" | "input">): string {

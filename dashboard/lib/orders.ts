@@ -1,3 +1,5 @@
+import { jevAsk } from "./jev.ts";
+import { redact } from "./redact.ts";
 import { watch } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { hostRunning, hostWaiting } from "./agent-host.ts";
@@ -41,6 +43,10 @@ type Running = {
   order: Order;
   next: number;
   called: Set<number>;
+  /** Each step's actual tool output (from recordOrderCall), for the independent expect check. */
+  results?: Map<number, string>;
+  /** Steps where Alice logged ok against the independent check once; a second ok is accepted. */
+  disputed?: Set<number>;
   unplannedReads: string[];
   refused: string[];
   lastActive: number;
@@ -299,7 +305,32 @@ export function recordOrderCall(n: number, tool: string, args: Record<string, st
   if (!r) return;
   r.lastActive = Date.now();
   stepFinished(r.slug, `call:${n}`, { tool, result: result.slice(0, 500) });
+  (r.results ??= new Map()).set(n, result.slice(0, 6000));
   log(r.order, "order-call", `Step ${n}: ${tool}`, { step: n, tool, args, result: result.slice(0, 500) });
+}
+
+/** Jev's probability that `actual` meets `expect` (Level 4C), or null when Jev does not answer. */
+export async function expectMet(expect: string, actual: string, ask: typeof jevAsk = jevAsk): Promise<number | null> {
+  const r = await ask("order-expect", { expected: expect, actual_result: redact(actual).slice(0, 6000) }, {
+    met: {
+      type: "noul",
+      instructions: "An agent ran a fleet tool for one step of an approved plan. `expected` is the plan author's short note of what the step's result should show (it may be terse, and \"if any\" means an empty answer is fine). Is `actual_result` consistent with `expected`?",
+      criteria: {
+        true: "The result shows the kind of thing `expected` describes, in any wording, with any extra detail; or it is an empty or none answer where `expected` allows one",
+        false: "The tool failed (an error, a refusal, a missing ship or agent), or the result is about something different from what `expected` describes",
+      },
+    },
+  });
+  if (!r.ok) return null;
+  const a = r.answers.met;
+  return a && a.type === "noul" ? a.noul : null;
+}
+
+let checkExpect: (expect: string, actual: string) => Promise<number | null> = (e, a) => expectMet(e, a);
+
+/** Test seam: replace the independent expect check (tests never call Jev). */
+export function _setExpectCheckForTest(fn: (expect: string, actual: string) => Promise<number | null>): void {
+  checkExpect = fn;
 }
 
 export async function orderStep(order: string, n: number, ok: boolean, result: string, evidence: string): Promise<{ ok: boolean; message: string }> {
@@ -309,7 +340,22 @@ export async function orderStep(order: string, n: number, ok: boolean, result: s
   if (n !== r.next) return { ok: false, message: `The next step to log is ${r.next}, not ${n}.` };
   const step = r.order.steps.find((s) => s.n === n)!;
   if (ok && !r.called.has(n)) return { ok: false, message: `Call step ${n}'s tool first (${stepLabel(step)} with order and step), then log it.` };
-  const event = log(r.order, "order-step", `Step ${n} ${ok ? "ok" : "blocked"}: ${result.slice(0, 200)}`, { step: n, tool: step.tool, ok, result: result.slice(0, 1000), evidence: evidence.slice(0, 300) });
+  // The independent check: does the tool's actual output meet the step's expect line? Once, advisory.
+  let override = "";
+  const actual = r.results?.get(n);
+  if (ok && actual && step.expect) {
+    const p = await checkExpect(step.expect, actual);
+    // 0.15: measured, correct results scored 0.24-0.73 and failed ones 0.05-0.07 on terse expect lines.
+    if (p !== null && p < 0.15) {
+      if (!(r.disputed ??= new Set()).has(n)) {
+        r.disputed.add(n);
+        log(r.order, "order-check", `Step ${n}: the independent check says the result does not meet "${step.expect}" (${Math.round(p * 100)}%)`, { step: n, p });
+        return { ok: false, message: `Not logged yet: an independent check of step ${n}'s actual output says it does not meet the expect line ("${step.expect}"; ${Math.round(p * 100)}% that it does). Look at the output again. If it is not met, log the step as blocked. If you are sure it is met, call order_step with ok again and put the reason in evidence; it will be accepted and the disagreement recorded.` };
+      }
+      override = ` (logged ok over the independent check, ${Math.round(p * 100)}%)`;
+    }
+  }
+  const event = log(r.order, "order-step", `Step ${n} ${ok ? "ok" : "blocked"}${override}: ${result.slice(0, 200)}`, { step: n, tool: step.tool, ok, result: result.slice(0, 1000), evidence: evidence.slice(0, 300), ...(override ? { override: true } : {}) });
   stepStarted(r.slug, `step:${n}`);
   stepFinished(r.slug, `step:${n}`, { result: result.slice(0, 500), evidence: evidence.slice(0, 300), event }, ok);
   if (ok) r.next += 1;

@@ -42,6 +42,7 @@ describe("order watcher", () => {
   let slug = "";
   beforeAll(async () => {
     orders._resetOrdersForTest();
+    orders._setExpectCheckForTest(async () => null); // no Jev in tests
     const r = await notes.createOrder({ title: "Kinwork check", ship: "kinwork", by: "claude-code", body: BODY });
     expect(r.errors).toEqual([]);
     slug = r.slug;
@@ -133,3 +134,25 @@ describe("orders survive a node restart", () => {
     expect(n.meta!.reason).toContain("check whether it happened");
   });
 });
+
+describe("independent expect check", () => {
+  test("a clear disagreement holds the step once; a second ok is accepted and recorded", async () => {
+    orders._resetOrdersForTest();
+    const r = await notes.createOrder({ title: "Expect check", ship: "kinwork", by: "claude-code", body: BODY });
+    expect((await notes.approveOrder(r.slug)).ok).toBe(true);
+    await orders.kickOrders();
+    const asked: string[] = [];
+    orders._setExpectCheckForTest(async (exp, actual) => (asked.push(`${exp} | ${actual}`), 0.1));
+    expect((await orders.checkOrderCall("ship_tasks", { ship: "kinwork" }, true, { order: r.slug, step: 1 })).ok).toBe(true);
+    orders.recordOrderCall(1, "ship_tasks", { ship: "kinwork" }, "error: No ship named kinwork.");
+    const first = await orders.orderStep(r.slug, 1, true, "looks fine", "");
+    expect(first.ok).toBe(false);
+    expect(first.message).toContain("independent check");
+    expect(asked[0]).toBe("the voyage, if any | error: No ship named kinwork.");
+    const second = await orders.orderStep(r.slug, 1, true, "it is fine: no voyage is a valid answer", "checked by hand");
+    expect(second.ok).toBe(true);
+    expect(recentShipEvents("fleet", 20).some((e) => e.kind === "order-step" && e.summary.includes("over the independent check"))).toBe(true);
+    orders._setExpectCheckForTest(async () => null);
+  });
+});
+
