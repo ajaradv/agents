@@ -12,6 +12,8 @@ skill_paths:
   - .claude/skills/sssf
   # How tools are built here (docs/tool-standards.md).
   - skills/tool-standards
+  # How fleet decisions use Jev (docs/system-one.md).
+  - skills/system-one
 extra_prompts:
   - prompts/system/sr_opus_5_system_prompt.md
 authority:

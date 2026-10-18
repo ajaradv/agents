@@ -50,7 +50,7 @@ To refresh a ship after editing templates here: `bin/stamp-ship <id> <path> --fo
 
 ## Tools
 
-Adding or changing a tool (a pi tool in an extension, a read tool's output, or a script or CLI agents run) follows `docs/tool-standards.md` (skill `tool-standards`). Before committing, run `just test` (typecheck and tool standard checks) and, for a CLI, `just axi-check "<command>"`; say which you ran in the commit message.
+Adding or changing a tool (a pi tool in an extension, a read tool's output, or a script or CLI agents run) follows `docs/tool-standards.md` (skill `tool-standards`). Before committing, run `just test` (typecheck and tool standard checks) and, for a CLI, `just axi-check "<command>"`; say which you ran in the commit message. A decision made by Jev (a gate, classifier, score, or check) follows `docs/system-one.md` (skill `system-one`).
 
 ## Other repo upkeep
 
