@@ -96,12 +96,37 @@ export function withoutSecrets(env: Record<string, string | undefined>): Record<
   return Object.fromEntries(Object.entries(env).filter(([k]) => !AGENT_KEYS.includes(k)));
 }
 
-export async function agentKeyEnv(): Promise<Record<string, string>> {
-  let dotenv = await loadFleetDotenv();
-  if (!Object.keys(dotenv).length) {
-    await Bun.sleep(500);
-    dotenv = await loadFleetDotenv();
+let saCache: { at: number; keys: Record<string, string> } | null = null;
+
+/** Keys read with the 1Password service account (bin/fleet-secrets); cached 10 minutes. Empty when not set up. */
+export async function serviceAccountEnv(): Promise<Record<string, string>> {
+  if (saCache && Date.now() - saCache.at < 10 * 60_000) return { ...saCache.keys };
+  try {
+    const proc = Bun.spawn([join(ROOT, "bin", "fleet-secrets")], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+    const timer = setTimeout(() => proc.kill(), 20_000);
+    const text = await new Response(proc.stdout).text();
+    clearTimeout(timer);
+    await proc.exited;
+    const keys = Object.fromEntries(Object.entries(parseEnvLines(text)).filter(([, v]) => v && !v.startsWith("op://")));
+    if (Object.keys(keys).length) saCache = { at: Date.now(), keys };
+    return keys;
+  } catch {
+    return {};
   }
+}
+
+export async function agentKeyEnv(): Promise<Record<string, string>> {
+  // The service account first (works while 1Password is locked), the fleet/home/.env mount for the rest.
+  const sa = await serviceAccountEnv();
+  let dotenv: Record<string, string> = {};
+  if (!AGENT_KEYS.filter((k) => k !== "HF_TOKEN" && k !== "ANTHROPIC_API_KEY").every((k) => sa[k] || process.env[k])) {
+    dotenv = await loadFleetDotenv();
+    if (!Object.keys(dotenv).length && !Object.keys(sa).length) {
+      await Bun.sleep(500);
+      dotenv = await loadFleetDotenv();
+    }
+  }
+  dotenv = { ...dotenv, ...sa };
   applyHfKeyAlias(dotenv);
   const out: Record<string, string> = {};
   for (const k of AGENT_KEYS) {

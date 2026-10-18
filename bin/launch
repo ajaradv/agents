@@ -242,11 +242,33 @@ def parse_env_file(path: Path) -> dict[str, str]:
     return out
 
 
+def service_account_env() -> dict[str, str]:
+    """Keys read with the 1Password service account (bin/fleet-secrets): works while the app is locked."""
+    try:
+        r = subprocess.run([str(ROOT / "bin" / "fleet-secrets")], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    out: dict[str, str] = {}
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        v = v.strip().strip('"').strip("'")
+        if k.strip() and v and not v.startswith("op://"):
+            out[k.strip()] = v
+    return out
+
+
 def apply_fleet_home_env() -> None:
-    env_path = FLEET_HOME / ".env"
-    for key, val in parse_env_file(env_path).items():
-        if key in ENV_ALLOWLIST and key not in os.environ and val:
-            os.environ[key] = val
+    # The service account first (no 1Password unlock needed), then the fleet/home/.env mount for anything missing.
+    sources = [service_account_env()]
+    if not all(k in os.environ or k in sources[0] for k in ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY")):
+        sources.append(parse_env_file(FLEET_HOME / ".env"))
+    for src in sources:
+        for key, val in src.items():
+            if key in ENV_ALLOWLIST and key not in os.environ and val:
+                os.environ[key] = val
     _apply_hf_key_alias()
 
 

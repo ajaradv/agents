@@ -58,6 +58,27 @@ If you use 1Password **Environments** (Labs in the desktop app), you can mount s
 
 Do not read mounted `.env` paths into chat; use 1Password’s variable list tools.
 
+### D. Service account (set up on this Mac; works while 1Password is locked)
+
+The fleet's agents and node read keys with a 1Password **service account**:
+read-only, scoped to the `Fleet` vault, no app unlock and no prompts.
+`bin/launch` and the node try it first and fall back to the `.env` mount (C)
+for anything it does not supply.
+
+1. Create the service account (1password.com → Developer → Service Accounts):
+   read-only access to vault **Fleet** only.
+2. Store its token in the login Keychain: `bin/fleet-op-token --store` (paste;
+   nothing is shown; it checks the token with 1Password before saving). Do not
+   use `security add-generic-password -w`: its prompt cuts input at 128
+   characters, and the token is longer.
+3. List each key's vault reference in **`fleet/home/.env.op`** (gitignored; see
+   `fleet/config/env.op.example`).
+4. Check: `bin/fleet-op-token` (token works, vaults it sees). `bin/fleet-secrets`
+   resolves the references; it only writes into a pipe, never to a terminal.
+
+To revoke: delete the service account in 1Password; the fleet falls back to the
+`.env` mount. To rotate: create a new token and run `bin/fleet-op-token --store`.
+
 ## tmux / Herdr workers
 
 Worker panes take allowlisted credentials from the **pane environment at spawn time**, not from Firstmate's process. Start tmux/Herdr from a shell that already ran `op run`, or rely on keys stored in Pi's account root via `pi auth`.

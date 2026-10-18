@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# fleet-op-token - store or check the 1Password service account token the fleet
+# reads secrets with (docs/onepassword.md, "Service account"). The token goes to
+# the login Keychain (service op-service-account, account fleet); it is never
+# printed, put in shell history, or written to a file.
+#
+# Usage:
+#   bin/fleet-op-token           check the stored token (length, sign-in, vaults)
+#   bin/fleet-op-token --store   paste a new token (hidden), verify it, then save it
+#   bin/fleet-op-token --help
+#
+# Why not `security add-generic-password -w`: its prompt silently cuts input at
+# 128 characters, and service account tokens are much longer.
+set -uo pipefail
+
+SERVICE=op-service-account
+ACCOUNT=fleet
+
+check() {
+  local t="$1"
+  [ "${t#ops_}" != "$t" ] || { echo "error: the token does not start with ops_"; return 1; }
+  [ "${#t}" -gt 300 ] || { echo "error: the token is only ${#t} characters; it was probably cut short"; return 1; }
+  local vaults
+  vaults="$(OP_SERVICE_ACCOUNT_TOKEN="$t" op vault list --format json 2>&1)" || { echo "error: 1Password refused it: $(printf '%s' "$vaults" | head -c 160)"; return 1; }
+  printf '%s' "$vaults" | python3 -c 'import json,sys; print("vaults: " + ", ".join(v["name"] for v in json.load(sys.stdin)))'
+}
+
+case "${1:-}" in
+  "")
+    t="$(security find-generic-password -a "$ACCOUNT" -s "$SERVICE" -w 2>/dev/null || true)"
+    if [ -z "$t" ]; then echo "result: no token stored"; echo "help[1]:"; echo "  bin/fleet-op-token --store"; exit 0; fi
+    if out="$(check "$t")"; then echo "result: token works (${#t} characters)"; echo "$out"; else echo "result: stored token does not work"; echo "$out"; echo "help[1]:"; echo "  bin/fleet-op-token --store"; fi
+    unset t; exit 0 ;;
+  --store)
+    printf 'Paste the service account token, then press Return (nothing is shown): ' >&2
+    # Non-canonical mode: the terminal's line editor caps a line at 1024 bytes.
+    old="$(stty -g 2>/dev/null || true)"
+    stty -echo -icanon min 1 time 0 2>/dev/null || true
+    t=""
+    while IFS= read -r -n 1 c; do [ -z "$c" ] && break; t+="$c"; done
+    [ -n "$old" ] && stty "$old" 2>/dev/null
+    printf '\n' >&2
+    t="$(printf '%s' "$t" | tr -d '[:space:]')"
+    if ! out="$(check "$t")"; then echo "$out"; echo "result: not saved"; unset t; exit 1; fi
+    security add-generic-password -U -a "$ACCOUNT" -s "$SERVICE" -l "1Password service account (fleet)" -w "$t" >/dev/null 2>&1 \
+      || { echo "error: the Keychain refused the token (is the login keychain unlocked?)"; unset t; exit 1; }
+    unset t
+    echo "result: saved to the Keychain and verified"
+    echo "$out"
+    exit 0 ;;
+  -h|--help)
+    cat <<'HELP'
+command: fleet-op-token
+summary: Store or check the 1Password service account token the fleet reads secrets with
+usage: bin/fleet-op-token [--store]
+flags[2]{flag,description}:
+  --store,paste a new token (hidden), verify it with 1Password, then save it to the Keychain
+  --help,show this help
+examples[2]:
+  bin/fleet-op-token
+  bin/fleet-op-token --store
+HELP
+    exit 0 ;;
+  *) echo "error: unknown argument $1"; echo "suggestion: run bin/fleet-op-token, or bin/fleet-op-token --store"; exit 2 ;;
+esac
