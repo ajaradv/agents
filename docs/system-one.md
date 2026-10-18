@@ -80,6 +80,11 @@ first. Our own local classifiers are a later project.
 | Failure triage (why did a check fail?) | `lib/ship-checks.ts` | on (one advisory line) |
 | Order expect check (does the result meet the plan?) | `lib/orders.ts` | on (holds a step once) |
 | Captain message routing | `bin/fleet-route-resolve.sh` | on |
+| Failure noise (was that exit 1 a real failure?) | `lib/tool-failures.ts` | on (code first, Jev for the rest) |
+| Dock review (how closely to review the branch) | `lib/dock-review.ts` | on (advisory, in the dock message) |
+| Notice urgency (does a digest notice need the captain now?) | `lib/notify.ts` | on (raises at 0.75) |
+| Helper routing (cheap or strong model for a helper) | `lib/delegate.ts` | on (strong only for a confident hard task) |
+| Cheap reads (answers about files instead of the files) | `extensions/cheap-reads.ts`, `lib/cheap-reads.ts` | experiment (`fleet/home/config/experiments.json`) |
 
 Adding one: put the questions and thresholds in one module, call `jevAsk` with
 a new `use` name, inject the ask function for tests (tests never call Jev),
