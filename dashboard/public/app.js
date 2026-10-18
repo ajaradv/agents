@@ -742,6 +742,31 @@ function dashboardApp() {
           <div class="row question-actions"><button type="button" class="btn btn-ink" data-go="go">Go</button><button type="button" class="btn" data-go="no">No</button>${openChat}<span class="muted" data-note></span></div>
         </div>`;
         card.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => this.answerGo(item.goId, b.dataset.go, card)));
+      } else if (item.kind === "gate") {
+        card.classList.add("is-question");
+        card.innerHTML = `${face}<div class="need-body">
+          <div class="need-head"><h3>${escapeHtml(item.label)}: a tool call held for review</h3>${when}</div>
+          <p class="need-reason"><code>${escapeHtml(item.summary)}</code></p>
+          <p class="muted">${escapeHtml(item.why)} · ${escapeHtml(item.jev)}</p>
+          <div class="row question-actions"><button type="button" class="btn btn-ink" data-gate="allow">Allow once</button><button type="button" class="btn" data-gate="deny">Deny</button>${openChat}<span class="muted" data-note></span></div>
+        </div>`;
+        card.querySelectorAll("[data-gate]").forEach((b) =>
+          b.addEventListener("click", async () => {
+            const note = card.querySelector("[data-note]");
+            card.querySelectorAll("[data-gate]").forEach((x) => (x.disabled = true));
+            try {
+              const r = await fetch(`/api/gate/${encodeURIComponent(item.gateId)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision: b.dataset.gate }) });
+              const j = await r.json();
+              if (note) note.textContent = j.message || "";
+              if (r.ok) card.classList.add("is-done");
+              else card.querySelectorAll("[data-gate]").forEach((x) => (x.disabled = false));
+            } catch {
+              if (note) note.textContent = "The dashboard did not answer.";
+              card.querySelectorAll("[data-gate]").forEach((x) => (x.disabled = false));
+            }
+            this.refreshNeeds();
+          }),
+        );
       } else if (item.kind === "order") {
         const alice = this.findTarget("alice") || { id: "alice", label: "Alice", art: null };
         const oface = alice.art ? `<img class="avatar" src="${alice.art}" alt="" width="48" height="48" />` : face;

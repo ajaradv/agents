@@ -18,13 +18,14 @@ import { helmPropose } from "./lib/helm.ts";
 import { materializeAllShips } from "./lib/ship-config.ts";
 import { freeRegistryAge, refreshFreeModels } from "./lib/free-models.ts";
 import { readShips } from "./lib/fleet-layers.ts";
-import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos } from "./lib/fleet-api.ts";
+import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos, needsChanged } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
 import { askPublic } from "./lib/public-helper.ts";
 import { toolText, VIEWS } from "./lib/tool-out.ts";
 import { VAULT_FILTERS, vaultTasksReport, type VaultFilter } from "./lib/vault-tasks.ts";
 import { scheduledVaultCheck } from "./lib/vault-doctor.ts";
+import { decideGate, judgeCall, recordLocalStop } from "./lib/tool-gate.ts";
 import { dashLog } from "./lib/log.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
 import { backfillMetrics } from "./lib/metrics-backfill.ts";
@@ -359,6 +360,26 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const url = new URL(req.url);
   const path = url.pathname;
 
+  // The tool gate's second layer (lib/tool-gate.ts): any live agent may ask, by its token.
+  if (path === "/api/gate/stopped" && req.method === "POST") {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ ok: false }, { status: 403 });
+    const b = await body(req);
+    const input = b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
+    recordLocalStop({ agent: from, tool: String(b.tool ?? ""), input, cwd: String(b.cwd ?? ""), why: String(b.why ?? "").slice(0, 200) });
+    return Response.json({ ok: true });
+  }
+  if (path === "/api/gate" && req.method === "POST") {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ decision: "stop", message: "Tool gate: calls come from a live agent session." }, { status: 403 });
+    const b = await body(req);
+    const input = b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
+    const writable = Array.isArray(b.writable) ? b.writable.map(String).slice(0, 8) : [];
+    const r = await judgeCall({ agent: from, tool: String(b.tool ?? ""), input, cwd: String(b.cwd ?? ""), why: String(b.why ?? "").slice(0, 200), writable }, undefined, { observe: b.mode === "observe" });
+    if (r.decision === "hold") needsChanged();
+    return Response.json(r);
+  }
+
   const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|public|recall|vault-tasks)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
@@ -376,6 +397,11 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
 
   const b = await body(req);
   const agentId = String(b.agentId ?? "");
+  if (path === "/v1/gate") {
+    const r = await decideGate(String(b.id ?? ""), b.decision === "allow");
+    needsChanged();
+    return Response.json(r, { status: r.ok ? 200 : 409 });
+  }
   if (path === "/v1/go") {
     const r = await decideGo(String(b.id ?? ""), b.decision === "go");
     return Response.json(r, { status: r.ok ? 200 : 409 });

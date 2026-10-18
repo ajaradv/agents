@@ -94,6 +94,7 @@
         <!-- Diagnostics: tool failures, the bus, the vault. -->
         <div x-show="healthTab === 'diagnostics'" class="stack">
           <div id="tool-failures" hx-get="/partials/tool-failures" hx-trigger="load, every 60s" hx-swap="innerMorph"></div>
+          <div id="tool-gate" hx-get="/partials/tool-gate" hx-trigger="load, every 60s" hx-swap="innerMorph"></div>
           <div id="vault-doctor" hx-get="/partials/vault-doctor" hx-trigger="load, every 300s" hx-swap="innerMorph"></div>
           <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerMorph"></div>
         </div>

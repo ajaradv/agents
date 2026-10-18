@@ -85,6 +85,8 @@ export async function fleetStatus(detail = false): Promise<Res> {
       ? { kind: n.kind, task: n.taskId, title: n.title, reason: n.reason }
       : n.kind === "go"
         ? { kind: n.kind, from: n.agentId, action: n.summary }
+        : n.kind === "gate"
+          ? { kind: n.kind, from: n.agentId, held: n.summary, why: n.why }
         : n.kind === "question"
           ? { kind: n.kind, agent: n.agentId, asked: n.ts, question: n.questions.map((q) => q.question).join(" / ") }
           : n.kind === "notice"
@@ -205,6 +207,11 @@ let fleetChanged: (what: "rail" | "ship" | "go") => void = () => {};
 /** The node tells the dashboard when an action changed crews, ships, or pending Gos. */
 export function onFleetChange(fn: (what: "rail" | "ship" | "go") => void): void {
   fleetChanged = fn;
+}
+
+/** Needs you changed (a held call, a decision): the dashboard refreshes it. */
+export function needsChanged(): void {
+  fleetChanged("go");
 }
 
 /** Run a fleet action now: the captain said Go, or it is an approved order's step. */

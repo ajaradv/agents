@@ -34,6 +34,8 @@
     "extensions/gondolin/**/*.ts",
     "extensions/image-window.ts",
     "extensions/subagent.ts",
-    "extensions/subagent/**/*.ts"
+    "extensions/subagent/**/*.ts",
+    "extensions/tool-gate.ts",
+    "extensions/tool-gate/**/*.ts"
   ]
 }

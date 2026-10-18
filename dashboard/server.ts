@@ -22,6 +22,8 @@ import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fl
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
 import { toolFailuresHtml } from "./lib/tool-failures.ts";
 import { vaultDoctorHtml } from "./lib/vault-doctor.ts";
+import { toolGateHtml } from "./lib/tool-gate.ts";
+import { escapeHtml } from "./lib/quota.ts";
 import { describeGates, runGates } from "./lib/gates.ts";
 import { addSubscription, pushNewNeeds, removeSubscription, sendToAll, subscriptions, validSub, vapidKeys } from "./lib/push.ts";
 import { ackNotice, notifyCaptain, quietState, snooze, wake } from "./lib/notify.ts";
@@ -50,6 +52,7 @@ import {
   hostRunning,
   hostWaiting,
   decideGo,
+  decideGate,
   kickNodeOrders,
   newSession,
   refreshNodeTargets,
@@ -474,6 +477,14 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return Response.json({ ok }, { status: ok ? 200 : 400 });
     }
 
+    const gateAnswer = path.match(/^\/api\/gate\/(gate-[a-z0-9-]{6,40})$/);
+    if (gateAnswer && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { decision?: string };
+      const res = await decideGate(gateAnswer[1]!, b.decision === "allow");
+      needsChanged();
+      return Response.json(res, { status: res.ok ? 200 : 409 });
+    }
+
     const goAnswer = path.match(/^\/api\/go\/([a-z0-9-]{6,40})$/);
     if (goAnswer && req.method === "POST") {
       const b = (await req.json().catch(() => ({}))) as { decision?: string };
@@ -519,6 +530,9 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       });
     }
 
+    if (path === "/partials/tool-gate" && req.method === "GET") {
+      return new Response(toolGateHtml(escapeHtml), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
     if (path === "/partials/vault-doctor" && req.method === "GET") {
       return new Response(vaultDoctorHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }

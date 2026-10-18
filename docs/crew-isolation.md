@@ -195,3 +195,39 @@ crewmate that keeps the ship's process fit as the project grows.
   ship's live overlay (docs/ship-config.md), never the committed file;
   **Dismiss** drops it. Nothing changes without the captain. Crewmates pick up applied
   changes at their next start.
+
+## Tool gate (R4f)
+
+Every agent's tool calls pass through `extensions/tool-gate.ts` (loaded for
+every assistant by `bin/launch`). Two layers:
+
+1. **Local rules** (`extensions/tool-gate/rules.ts`), instant, nothing sent:
+   - **allow**: fleet and crew tools, reads, routine project commands (git,
+     just, tests, builds, linters, file edits inside the agent's folders),
+     and everything a crewmate's own tools do inside its VM;
+   - **stop**: secrets (`~/.ssh`, `.env`, 1Password, pi's logins, private
+     keys), downloading and running code, pushing to main or forcing,
+     `sudo`, deleting home or root folders, erasing disks;
+   - **ask**: anything else, inline code (`python3 - <<EOF`, `node -e`),
+     writes outside the agent's folders, unfamiliar tools, and messages that
+     ask another agent to push, merge, or reveal secrets.
+2. **Jev** (`dashboard/lib/tool-gate.ts`), for the asked calls: one choice
+   question with secrets redacted, about 0.1–0.3 s. safe → allowed;
+   stop → blocked and logged (ship log, Health tool failures); inspect or
+   unsure (under 60%) → held in Needs you with **Allow once** / **Deny**. With
+   no answer from Jev or the node, the call is held or blocked, never allowed.
+
+**Mode** (`FLEET_TOOL_GATE`, default `observe`): `observe` enforces the local
+stops and judges everything else in the background, logging what the gate would
+have done without blocking; `enforce` makes holds and stops take effect; `off`
+disables the gate. Health > Diagnostics shows the gate's last day. Switch to
+`enforce` once the would-hold rate on real traffic is low.
+
+Measured on last week's 985 fleet tool calls: the local rules decide 89%
+(allow) and send 11% to Jev; none stopped. Before calibration Jev would have
+held 14 of 20 sampled asked calls, mostly harmless scratch edits, which is why
+the gate starts in observe mode.
+
+Not covered yet: Firstmate (an orchestrator with its own pipeline) does not load
+the gate; Cursor agents started by the `cursor` tool run their own tools,
+which the gate cannot see (only the prompt sent to them is screened).

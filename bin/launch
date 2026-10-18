@@ -807,11 +807,13 @@ def prepare_pi_launch(
     if agent_type == "assistant":
         # Crewmates also work as a crew: tasks, crew messages, maneuvers (crew.ts).
         isolated = bool(aboard) and str(aboard.get("isolation") or "") == "vm"
-        for name in ("ask-captain", "canvas", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()) + (("gondolin",) if isolated else ()):
+        for name in ("tool-gate", "ask-captain", "canvas", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()) + (("gondolin",) if isolated else ()):
             ref = str(ROOT / "extensions" / f"{name}.ts")
             if ref not in ext_refs:
                 ext_refs.append(ref)
     os.environ["FLEET_AGENT_ID"] = agent_id
+    # R4f tool gate (extensions/tool-gate.ts): observe until Jev is calibrated on real traffic.
+    os.environ.setdefault("FLEET_TOOL_GATE", "observe")
     # Per-agent tuning (e.g. Firstmate's FM_* watcher settings); the caller's env wins.
     for key, val in (agent.get("env") or {}).items():
         if re.fullmatch(r"[A-Z][A-Z0-9_]*", str(key)) and val is not None and key not in os.environ:

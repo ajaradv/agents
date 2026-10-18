@@ -1,3 +1,4 @@
+import { pendingGateHolds } from "./tool-gate.ts";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WaitHold } from "./captain-wait.ts";
@@ -32,10 +33,11 @@ export type NeedItem =
   | { kind: "hold"; id: string; taskId: string; title: string; reason: string }
   | (Who & { kind: "failed"; id: string; ts: string; error: string; sentText: string; sentTs: string })
   | (Who & { kind: "go"; id: string; goId: string; ts: string; tool: string; summary: string })
+  | (Who & { kind: "gate"; id: string; gateId: string; ts: string; tool: string; summary: string; why: string; jev: string })
   | { kind: "notice"; id: string; noticeId: number; ts: string; from: string; noticeKind: NoticeKind; summary: string; detail: string; ref: string }
   | { kind: "order"; id: string; slug: string; ts: string; title: string; by: string; status: "queued" | "needs-captain"; steps: string[]; reason?: string; resume?: number };
 
-const KIND_ORDER = { go: 0, question: 0, notice: 1, order: 1, hold: 2, failed: 3 } as const;
+const KIND_ORDER = { go: 0, gate: 0, question: 0, notice: 1, order: 1, hold: 2, failed: 3 } as const;
 
 function who(t: ChatTarget): Who {
   return { agentId: t.id, label: t.label, art: t.art, ...(t.ship ? { ship: t.ship } : {}) };
@@ -147,6 +149,11 @@ export async function collectNeedsYou(opts: { waiting: (agentId: string) => bool
     const t = agents.find((a) => a.id === g.from);
     return { kind: "go", id: `go:${g.id}`, goId: g.id, ts: g.ts, tool: g.tool, summary: g.summary, agentId: g.from, label: t?.label ?? g.from, art: t?.art ?? null };
   });
+  // Calls the tool gate held for review (lib/tool-gate.ts): the agent waits on these.
+  const gates: NeedItem[] = pendingGateHolds().map((g) => {
+    const t = agents.concat(workers).find((a) => a.id === g.agent);
+    return { kind: "gate", id: `gate:${g.id}`, gateId: g.id, ts: g.ts, tool: g.tool, summary: g.summary, why: g.why, jev: g.jev, agentId: g.agent, label: t?.label ?? g.agent, art: t?.art ?? null };
+  });
   const notices: NeedItem[] = openNotices().map((n) => ({ kind: "notice", id: `notice:${n.id}`, noticeId: n.id, ts: n.ts, from: n.from, noticeKind: n.kind, summary: n.summary, detail: n.detail, ref: n.ref }));
-  return sortNeeds(items.concat(holdItems(opts.holds), await orderItems(), gos, notices));
+  return sortNeeds(items.concat(holdItems(opts.holds), await orderItems(), gos, gates, notices));
 }

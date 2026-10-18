@@ -1,0 +1,82 @@
+/**
+ * The fleet's tool gate (R4f in the vault plan fleet/plans/feature/r4-crew-isolation).
+ * Every tool call an agent makes passes here first:
+ *
+ * 1. Local rules (extensions/tool-gate/rules.ts), instantly and with nothing
+ *    sent anywhere: known-safe calls go through, clear dangers are blocked.
+ * 2. The rest goes to the node (dashboard/lib/tool-gate.ts), which asks Jev:
+ *    safe goes through, stop is blocked and logged, inspect is held for the
+ *    captain in Needs you. No answer from the node or Jev means held or
+ *    blocked: the gate never fails open.
+ *
+ * bin/launch loads this for every agent. Crewmates whose tools run in a VM
+ * (FLEET_VM=1) pass their built-in tools through: the Mac is not in the VM.
+ *
+ * FLEET_TOOL_GATE picks the mode: `observe` (the rollout default: local stops
+ * are enforced, everything else is judged and logged but allowed), `enforce`
+ * (holds and stops take effect), or `off`.
+ */
+
+import os from "node:os";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { localVerdict, type GateContext } from "./tool-gate/rules.ts";
+
+const base = (process.env.FLEET_DASHBOARD_URL ?? "").replace(/\/$/, "");
+const token = process.env.FLEET_CREW_TOKEN ?? "";
+// Read once at load: an agent's VM and mode do not change during its session.
+const inVm = process.env.FLEET_VM === "1";
+const mode = ["off", "observe", "enforce"].includes(process.env.FLEET_TOOL_GATE ?? "") ? (process.env.FLEET_TOOL_GATE as string) : "observe";
+
+function context(cwd: string): GateContext {
+	const writable = [process.env.ALICE_VAULT, process.env.FLEET_INBOX, process.env.FLEET_SHIP_WORKTREE, os.tmpdir(), "/tmp", "/private/tmp"].filter((x): x is string => Boolean(x));
+	return { cwd, home: os.homedir(), inVm, writable };
+}
+
+async function askNode(tool: string, input: Record<string, unknown>, cwd: string, why: string, writable: string[]): Promise<{ decision: string; message: string }> {
+	if (mode === "observe" && (!base || !token)) return { decision: "allow", message: "" };
+	if (!base || !token) return { decision: "stop", message: `Blocked by the fleet's tool gate: it needs a closer look (${why}), and this session cannot reach the fleet node to ask. Ask the captain to run it.` };
+	try {
+		const res = await fetch(`${base}/api/gate`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "x-fleet-crew-token": token },
+			body: JSON.stringify({ tool, input, cwd, why, writable, mode }),
+			signal: AbortSignal.timeout(12_000),
+		});
+		const j = (await res.json()) as { decision?: string; message?: string };
+		return { decision: String(j.decision ?? "stop"), message: String(j.message ?? "Blocked by the fleet's tool gate.") };
+	} catch (e) {
+		if (mode === "observe") return { decision: "allow", message: "" };
+		return { decision: "stop", message: `Blocked by the fleet's tool gate: the fleet node did not answer (${e instanceof Error ? e.message : String(e)}), and unfamiliar calls are never let through unchecked. Try again shortly, or ask the captain.` };
+	}
+}
+
+export default function (pi: ExtensionAPI) {
+	if (mode === "off") return;
+	pi.on("tool_call", async (event, ctx) => {
+		const input = (event.input ?? {}) as Record<string, unknown>;
+		const cwd = ctx?.cwd ?? process.cwd();
+		const gctx = context(cwd);
+		const v = localVerdict(event.toolName, input, gctx);
+		if (v.decision === "allow") return;
+		if (v.decision === "stop") {
+			// Logged by the node when it can be reached; the block does not wait for it.
+			if (base && token) {
+				void fetch(`${base}/api/gate/stopped`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json", "x-fleet-crew-token": token },
+					body: JSON.stringify({ tool: event.toolName, input, cwd, why: v.reason }),
+					signal: AbortSignal.timeout(5000),
+				}).catch(() => {});
+			}
+			return { block: true, reason: `Blocked by the fleet's tool gate: ${v.reason}. Do not retry it or work around it; if it is really needed, explain why to the captain and let them run it.` };
+		}
+		// Observing: judged and logged in the background; the agent does not wait.
+		if (mode === "observe") {
+			void askNode(event.toolName, input, cwd, v.reason, gctx.writable);
+			return;
+		}
+		const r = await askNode(event.toolName, input, cwd, v.reason, gctx.writable);
+		if (r.decision === "allow") return;
+		return { block: true, reason: r.message };
+	});
+}
