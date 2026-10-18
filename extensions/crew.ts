@@ -4,7 +4,7 @@
  * crewmate (<ship>-<role>) and sets FLEET_SHIP and FLEET_AGENT_ID; the agent
  * host sets FLEET_DASHBOARD_URL.
  *
- * Everyone aboard: voyage_status, crew_message, task_report, run_check (the
+ * Everyone aboard: voyage_status, crew_message, task_report, task_claim, run_check (the
  * host commands the captain lists for the ship; FLEET_SHIP_CHECKS names them),
  * and maneuver_start when the ship gives the role maneuvers (FLEET_SHIP_MANEUVERS).
  * The lead (<ship>-lead) also gets: task_add, task_update. The helmsman
@@ -51,7 +51,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "voyage_status",
     label: "Voyage status",
-    description: "The ship's current voyage: goal, task list with status and assignee, progress, each crewmate's latest activity, the lead's id, and the ship's ADWs.",
+    description: "The ship's current voyage: goal, task list with status, assignee, and what each task waits on, the ready tasks (open, waiting on nothing), progress, each crewmate's latest activity, the lead's id, and the ship's maneuvers and gates.",
     parameters: Type.Object({}),
     async execute() {
       return text(await call("GET", "status"));
@@ -82,6 +82,16 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, p) {
       return text(await call("POST", `tasks/${p.id}`, { status: p.status, note: p.summary }));
+    },
+  });
+
+  pi.registerTool({
+    name: "task_claim",
+    label: "Claim a ready task",
+    description: "Take a ready voyage task (open, unassigned or already yours, waiting on nothing; voyage_status lists them) in one step: it becomes yours and working, and the lead is told. Refused if someone else has it or it still waits on other tasks.",
+    parameters: Type.Object({ id: Type.Number({ description: "Task number" }) }),
+    async execute(_id, p) {
+      return text(await call("POST", `tasks/${p.id}`, { claim: true }));
     },
   });
 
@@ -148,26 +158,28 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "task_add",
     label: "Add a voyage task",
-    description: "Lead only. Add a task to the voyage. With an assignee (a crewmate id) the task is sent to them now with its detail; without one it waits for you. Write the detail so the crewmate can act without asking: the intent, the files or area, and what done means.",
+    description: "Lead only. Add a task to the voyage. With an assignee (a crewmate id) the task is sent to them now with its detail; without one it waits for you or for a crewmate to claim it. With blocked_by (task numbers) it waits until those are done, then goes to its assignee (or becomes claimable) automatically: plan a whole voyage up front this way. Write the detail so the crewmate can act without asking: the intent, the files or area, and what done means.",
     parameters: Type.Object({
       title: Type.String({ description: "Short task title" }),
       detail: Type.String({ description: "What to do, where, and what done means" }),
       assignee: Type.Optional(Type.String({ description: "Crewmate id; omit to keep it unassigned" })),
+      blocked_by: Type.Optional(Type.Array(Type.Number(), { description: "Task numbers that must be done first" })),
     }),
     async execute(_id, p) {
-      return text(await call("POST", "tasks", { title: p.title, detail: p.detail, ...(p.assignee ? { assignee: p.assignee } : {}) }));
+      return text(await call("POST", "tasks", { title: p.title, detail: p.detail, ...(p.assignee ? { assignee: p.assignee } : {}), ...(p.blocked_by?.length ? { blockedBy: p.blocked_by } : {}) }));
     },
   });
 
   pi.registerTool({
     name: "task_update",
     label: "Update a voyage task",
-    description: "Lead only. Change any task's status or note, or reassign it (the new assignee gets the task).",
+    description: "Lead only. Change any task's status or note, reassign it (the new assignee gets the task, or gets it once what it waits on is done), or change what it waits on (blocked_by: the full list; [] for nothing).",
     parameters: Type.Object({
       id: Type.Number(),
       status: Type.Optional(Status),
       note: Type.Optional(Type.String()),
       assignee: Type.Optional(Type.String({ description: "Crewmate id to reassign to" })),
+      blocked_by: Type.Optional(Type.Array(Type.Number(), { description: "Task numbers it waits on, replacing the current list" })),
     }),
     async execute(_id, p) {
       return text(
@@ -175,6 +187,7 @@ export default function (pi: ExtensionAPI) {
           ...(p.status ? { status: p.status } : {}),
           ...(p.note !== undefined ? { note: p.note } : {}),
           ...(p.assignee ? { assignee: p.assignee } : {}),
+          ...(p.blocked_by ? { blockedBy: p.blocked_by } : {}),
         }),
       );
     },

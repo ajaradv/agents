@@ -11,7 +11,7 @@ import { recentConfigChanges, shipTemplates } from "./ship-config.ts";
 import { voyageId } from "./metrics.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
-import { listTasks, taskProgress, type VoyageTask } from "./voyage-tasks.ts";
+import { listTasks, taskProgress, type VoyageTask, waitingOn } from "./voyage-tasks.ts";
 import { crewBudget, crewRoles, listVoyages, MODES, readyToSail, shipChecklist, spentToday, type CheckItem, type Voyage } from "./shipyard.ts";
 
 /**
@@ -606,6 +606,13 @@ function shipyardHtml(
 
 const TASK_MARK: Record<string, string> = { open: "○", working: "◐", done: "●", blocked: "✗" };
 
+/** A task's status as the deck shows it: an open task says what it waits on, or that it is ready. */
+function waitLabel(t: VoyageTask, tasks: VoyageTask[]): string {
+  if (t.status !== "open") return t.status;
+  const waits = waitingOn(t, tasks);
+  return waits.length ? `waiting on ${waits.map((n) => `#${n}`).join(", ")}` : t.assignee ? "open" : "ready to claim";
+}
+
 function tasksHtml(tasks: VoyageTask[], cards: CrewCard[]): string {
   if (!tasks.length) return `<p class="muted">No tasks yet. A lead plans the voyage into tasks; without one, the crewmate works the goal directly.</p>`;
   const p = taskProgress(tasks);
@@ -619,7 +626,7 @@ function tasksHtml(tasks: VoyageTask[], cards: CrewCard[]): string {
         <span class="vtask-mark" aria-hidden="true">${TASK_MARK[t.status] ?? "○"}</span>
         <span class="stack-tight">
           <span><strong>#${t.id}</strong> ${escapeHtml(t.title)}</span>
-          <span class="muted">${t.kind === "maneuver" ? `maneuver <code>${escapeHtml(t.adwId ?? "")}</code>` : escapeHtml(label(t.assignee))} · ${escapeHtml(t.status)}${t.note ? ` · ${escapeHtml(plain(t.note).slice(0, 200))}` : ""}</span>
+          <span class="muted">${t.kind === "maneuver" ? `maneuver <code>${escapeHtml(t.adwId ?? "")}</code>` : escapeHtml(label(t.assignee))} · ${escapeHtml(waitLabel(t, tasks))}${t.note ? ` · ${escapeHtml(plain(t.note).slice(0, 200))}` : ""}</span>
         </span>
       </li>`,
       )

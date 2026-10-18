@@ -16,7 +16,7 @@ import { describeGates, gateFolder, gateStatus, runGates } from "./gates.ts";
 import { describeManeuver, findManeuver, launchRefusal, maneuverAvailability, type ManeuverAvailability } from "./maneuvers.ts";
 import { runCheck, tail, treeState } from "./ship-checks.ts";
 import { openVoyage, type Voyage } from "./shipyard.ts";
-import { addTask, getTask, listTasks, taskProgress, TASK_STATUSES, updateTask, type TaskStatus, type VoyageTask } from "./voyage-tasks.ts";
+import { addTask, blockersRefusal, claimTask, getTask, listTasks, parseIds, readyTasks, taskProgress, TASK_STATUSES, unblockedBy, updateTask, waitingOn, type TaskStatus, type VoyageTask } from "./voyage-tasks.ts";
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 
@@ -77,7 +77,12 @@ export async function voyageStatus(shipId: string, from: string): Promise<Res> {
     message: v ? `${shipId} under sail: ${v.goal}` : `${shipId} is not under sail.`,
     voyage: v ? { goal: v.goal, started: v.started, record: v.file } : null,
     progress: taskProgress(tasks),
-    tasks: tasks.map((t) => ({ id: t.id, title: t.title, assignee: t.assignee, kind: t.kind, status: t.status, note: t.note.slice(0, 300), adwId: t.adwId })),
+    tasks: tasks.map((t) => {
+      const waits = waitingOn(t, tasks);
+      return { id: t.id, title: t.title, assignee: t.assignee, kind: t.kind, status: t.status, note: t.note.slice(0, 300), adwId: t.adwId, ...(t.blockedBy.length ? { blockedBy: t.blockedBy } : {}), ...(waits.length ? { waitingOn: waits } : {}) };
+    }),
+    // Open tasks that wait on nothing: unassigned ones can be claimed (task_claim), assigned ones are being sent.
+    ready: readyTasks(tasks).map((t) => ({ id: t.id, title: t.title, assignee: t.assignee })),
     crew,
     lead: leadOf(a.ship),
     maneuvers: maneuverAvailability(a.ship, a.role).map((m) => ({ name: m.name, yours: m.yours, about: describeManeuver(m) })),
@@ -90,7 +95,7 @@ export async function voyageStatus(shipId: string, from: string): Promise<Res> {
 
 // ---------------------------------------------------------------- tasks
 
-export async function crewAddTask(shipId: string, b: { from: string; title?: string; detail?: string; assignee?: string | null }): Promise<Res> {
+export async function crewAddTask(shipId: string, b: { from: string; title?: string; detail?: string; assignee?: string | null; blockedBy?: unknown }): Promise<Res> {
   const a = await aboard(shipId, b.from);
   if ("error" in a) return a.error;
   if (a.role !== "lead") return { ok: false, message: "Only the ship's lead adds tasks. Message the lead with crew_message instead." };
@@ -100,18 +105,34 @@ export async function crewAddTask(shipId: string, b: { from: string; title?: str
   if (title.length < 3) return { ok: false, message: "A task needs a title." };
   const assignee = b.assignee ? String(b.assignee) : null;
   if (assignee && !crewIds(a.ship).includes(assignee)) return { ok: false, message: `${assignee} is not aboard. Crew: ${crewIds(a.ship).join(", ")}.` };
-  const t = await addTask(shipId, { voyage: v.file, title, detail: String(b.detail ?? ""), assignee, createdBy: b.from, status: assignee && assignee !== b.from ? "working" : "open" });
-  if (assignee && assignee !== b.from) await acceptCrewLine(assignee, b.from, taskBrief(t, a.ship));
+  const blockedBy = parseIds(b.blockedBy);
+  const existing = listTasks(shipId, v.file);
+  const refusal = blockersRefusal(existing, blockedBy);
+  if (refusal) return { ok: false, message: refusal };
+  // A task that waits on unfinished work is held: its brief goes out when the last of them is done.
+  const waits = blockedBy.filter((id) => existing.find((t) => t.id === id)?.status !== "done");
+  const sendNow = Boolean(assignee && assignee !== b.from && !waits.length);
+  const t = await addTask(shipId, { voyage: v.file, title, detail: String(b.detail ?? ""), assignee, blockedBy, createdBy: b.from, status: sendNow ? "working" : "open" });
+  if (sendNow && assignee) await acceptCrewLine(assignee, b.from, taskBrief(t, a.ship));
   recordHandoff({ ship: shipId, from: b.from, to: assignee ?? "", kind: "task-assigned", size: title.length + String(b.detail ?? "").length });
-  return { ok: true, message: `Task #${t.id} added${assignee ? ` and sent to ${assignee}` : ""}.`, task: t.id };
+  const after = waits.length ? ` It waits on ${waits.map((n) => `#${n}`).join(", ")}${assignee ? `; ${assignee} gets it when they are done` : "; it becomes claimable when they are done"}.` : "";
+  return { ok: true, message: `Task #${t.id} added${sendNow ? ` and sent to ${assignee}` : ""}.${after}`, task: t.id };
 }
 
-export async function crewUpdateTask(shipId: string, id: number, b: { from: string; status?: string; note?: string; assignee?: string | null }): Promise<Res> {
+export async function crewUpdateTask(shipId: string, id: number, b: { from: string; status?: string; note?: string; assignee?: string | null; blockedBy?: unknown; claim?: unknown }): Promise<Res> {
   const a = await aboard(shipId, b.from);
   if ("error" in a) return a.error;
   const t = getTask(shipId, id);
   if (!t) return { ok: false, message: `No task #${id} on ${shipId}.` };
+  if (b.claim === true) return claim(a.ship, t, b.from);
   const isLead = a.role === "lead";
+  let blockedBy: number[] | undefined;
+  if (b.blockedBy !== undefined) {
+    if (!isLead) return { ok: false, message: "Only the lead changes what a task waits on." };
+    blockedBy = parseIds(b.blockedBy);
+    const refusal = blockersRefusal(listTasks(shipId, t.voyage), blockedBy, id);
+    if (refusal) return { ok: false, message: refusal };
+  }
   if (!isLead && t.assignee !== b.from) return { ok: false, message: `Task #${id} is ${t.assignee ?? "unassigned"}'s. Report on your own tasks, or message the lead.` };
   const status = b.status ? String(b.status) : undefined;
   if (status && !(TASK_STATUSES as string[]).includes(status)) return { ok: false, message: `Status is one of ${TASK_STATUSES.join(", ")}.` };
@@ -122,6 +143,9 @@ export async function crewUpdateTask(shipId: string, id: number, b: { from: stri
     if (assignee && !crewIds(a.ship).includes(assignee)) return { ok: false, message: `${assignee} is not aboard.` };
   }
   const reassigned = assignee !== undefined && assignee !== t.assignee;
+  // A reassigned task that still waits on others stays open; its brief goes out when they are done.
+  const waits = waitingOn({ ...t, blockedBy: blockedBy ?? t.blockedBy }, listTasks(shipId, t.voyage));
+  const sendOnAssign = reassigned && Boolean(assignee) && waits.length === 0 && t.status !== "done";
   // Declared task gates: "done" is earned. The helm runs them in the background; the task stays
   // working until they pass (then done) or fail (then blocked, with the output).
   const gated = status === "done" && a.ship.gates.task.length > 0;
@@ -132,14 +156,16 @@ export async function crewUpdateTask(shipId: string, id: number, b: { from: stri
     return { ok: true, message: `Task #${id}: running its gates (${a.ship.gates.task.join(", ")}) before it counts as done. You and the lead hear the result; carry on or end your turn.` };
   }
   const updated = await updateTask(shipId, id, {
-    ...(status ? { status: status as TaskStatus } : reassigned && assignee ? { status: "working" as TaskStatus } : {}),
+    ...(status ? { status: status as TaskStatus } : sendOnAssign ? { status: "working" as TaskStatus } : {}),
     ...(b.note !== undefined ? { note: String(b.note) } : {}),
     ...(assignee !== undefined ? { assignee } : {}),
+    ...(blockedBy !== undefined ? { blockedBy } : {}),
     by: b.from,
   });
   if (!updated) return { ok: false, message: "Update failed." };
+  if (updated.status === "done") await releaseDependents(a.ship, updated);
   recordHandoff({ ship: shipId, from: b.from, to: reassigned ? (assignee ?? "") : isLead ? (t.assignee ?? "") : (leadOf(a.ship) ?? ""), kind: reassigned ? "task-reassigned" : `task-${updated.status}`, size: String(b.note ?? "").length });
-  if (reassigned && assignee && assignee !== b.from) await acceptCrewLine(assignee, b.from, taskBrief(updated, a.ship));
+  if (sendOnAssign && assignee && assignee !== b.from) await acceptCrewLine(assignee, b.from, taskBrief(updated, a.ship));
   const lead = leadOf(a.ship);
   if (!isLead && lead && lead !== b.from) {
     await acceptCrewLine(lead, b.from, `Task #${id} (${t.title}) is ${updated.status}.${b.note ? `\n\n${b.note}` : ""}`);
@@ -158,9 +184,10 @@ async function verifyTask(ship: ShipRow, id: number, reporter: string, note: str
       for (const who of new Set([reporter, lead].filter((x): x is string => Boolean(x)))) await acceptCrewLine(who, "helm", text);
     };
     if (report.green) {
-      await updateTask(ship.id, id, { status: "done", note: `${note ? `${note}\n\n` : ""}${describeGates(report)}`, by: "helm" });
+      const done = await updateTask(ship.id, id, { status: "done", note: `${note ? `${note}\n\n` : ""}${describeGates(report)}`, by: "helm" });
       recordHandoff({ ship: ship.id, from: "helm", to: reporter, kind: "task-done", size: 0 });
       await tell(`Task #${id} (${t.title}) is done: ${describeGates(report)}`);
+      if (done) await releaseDependents(ship, done);
     } else {
       await updateTask(ship.id, id, { status: "blocked", note: `${note ? `${note}\n\n` : ""}${describeGates(report)}`, by: "helm" });
       recordHandoff({ ship: ship.id, from: "helm", to: reporter, kind: "task-blocked", size: failures.length });
@@ -168,6 +195,35 @@ async function verifyTask(ship: ShipRow, id: number, reporter: string, note: str
     }
   } catch (e) {
     logShipEvent(ship.id, "helm", "notice", `Task #${id} gates could not run: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** A crewmate takes a ready task (lib/voyage-tasks claimTask); the lead is told. */
+async function claim(ship: ShipRow, t: VoyageTask, who: string): Promise<Res> {
+  const r = await claimTask(ship.id, t.id, who);
+  if ("refusal" in r) return { ok: false, message: `${r.refusal} voyage_status lists ready tasks.` };
+  recordHandoff({ ship: ship.id, from: who, to: who, kind: "task-claimed", size: 0 });
+  const lead = leadOf(ship);
+  if (lead && lead !== who) await acceptCrewLine(lead, who, `I claimed task #${t.id} (${t.title}).`);
+  return { ok: true, message: `Task #${t.id} is yours and working.\n\n${taskBrief(r.task, ship)}` };
+}
+
+/**
+ * A task is done: send each task that was waiting only on finished work to its
+ * assignee, and tell the lead about ready ones nobody has.
+ */
+async function releaseDependents(ship: ShipRow, done: VoyageTask): Promise<void> {
+  const lead = leadOf(ship);
+  const free: VoyageTask[] = [];
+  for (const t of unblockedBy(ship.id, done.voyage, done.id)) {
+    if (t.assignee) {
+      const sent = await updateTask(ship.id, t.id, { status: "working", by: "helm" });
+      if (sent) await acceptCrewLine(t.assignee, t.createdBy, taskBrief(sent, ship));
+      recordHandoff({ ship: ship.id, from: "helm", to: t.assignee, kind: "task-released", size: 0 });
+    } else free.push(t);
+  }
+  if (free.length && lead) {
+    await acceptCrewLine(lead, "helm", `Task #${done.id} is done, so ${free.map((t) => `#${t.id} (${t.title})`).join(", ")} ${free.length > 1 ? "are" : "is"} ready and unassigned. Assign with task_update, or a crewmate can take it with task_claim.`);
   }
 }
 
@@ -301,8 +357,9 @@ async function runCheckManeuver(ship: ShipRow, m: ManeuverAvailability, runId: s
 
 /** Settle a maneuver's task and tell whoever launched it, the lead, and Alice. */
 async function finishManeuverTask(ship: ShipRow, taskId: number, runId: string, ok: boolean, note: string, by: string, actor = "helm"): Promise<void> {
-  await updateTask(ship.id, taskId, { status: ok ? "done" : "blocked", note, by: actor });
+  const settled = await updateTask(ship.id, taskId, { status: ok ? "done" : "blocked", note, by: actor });
   recordHandoff({ ship: ship.id, from: actor, to: by, kind: ok ? "maneuver-done" : "maneuver-failed", size: note.length });
+  if (ok && settled) await releaseDependents(ship, settled);
   for (const who of new Set([by, leadOf(ship)].filter((x): x is string => Boolean(x) && crewIds(ship).includes(x!)))) {
     await acceptCrewLine(who, actor, `Maneuver ${runId} (task #${taskId}) ${ok ? "finished" : "failed"}. ${note}`);
   }

@@ -16,7 +16,7 @@ import { recentShipEvents, shipTurnTotals } from "./ship-log.ts";
 import { recentManeuvers } from "./ship-maneuvers.ts";
 import { crewStatus } from "./ship-view.ts";
 import { dockVoyage, findShip, openVoyage, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./shipyard.ts";
-import { listTasks, taskProgress } from "./voyage-tasks.ts";
+import { listTasks, taskProgress, waitingOn, readyTasks } from "./voyage-tasks.ts";
 
 /**
  * The fleet API for officers (extensions/fleet.ts), served by the fleet node.
@@ -147,7 +147,11 @@ export async function shipTasks(ship: string): Promise<Res> {
     message: `${ship} under sail: ${v.goal}`,
     voyage: { goal: v.goal, to: v.to, started: v.started, record: v.file },
     progress: taskProgress(tasks),
-    tasks: tasks.map((t) => ({ id: t.id, title: t.title, assignee: t.assignee, kind: t.kind, status: t.status, note: t.note.slice(0, 300), adwId: t.adwId })),
+    tasks: tasks.map((t) => {
+      const waits = waitingOn(t, tasks);
+      return { id: t.id, title: t.title, assignee: t.assignee, kind: t.kind, status: t.status, note: t.note.slice(0, 300), adwId: t.adwId, ...(waits.length ? { waitingOn: waits } : {}) };
+    }),
+    ready: readyTasks(tasks).map((t) => t.id),
   };
 }
 
