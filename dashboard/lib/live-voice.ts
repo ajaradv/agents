@@ -1,8 +1,8 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { nodeKey } from "./fleet-env.ts";
 import { recordFreeCall } from "./free-models.ts";
-import { fleetInboxRoot } from "./paths.ts";
+import { fleetInboxRoot, ROOT } from "./paths.ts";
 
 /**
  * Conversation mode V1 (vault task fleet-voice-modes, built toward
@@ -24,15 +24,50 @@ export type LiveSink = { audio(pcm: Uint8Array): void; event(e: Record<string, u
 /** The upstream socket: a WebSocket, or a fake in tests. */
 export type Upstream = { send(data: string): void; close(): void; onopen: (() => void) | null; onmessage: ((e: { data: unknown }) => void) | null; onclose: ((e: { code: number; reason: string }) => void) | null; onerror: (() => void) | null };
 
-/** Who the captain is talking to, by voice. Short: voice replies are spoken. */
-export function persona(agent: string): string {
+/** The agent's character (agents/<id>/character.md), or "" when it has none. */
+export function characterFor(agent: string, root = ROOT): string {
+  const f = join(root, "agents", agent, "character.md");
+  return existsSync(f) ? readFileSync(f, "utf8").trim() : "";
+}
+
+/** The agent's Gemini Live voice (`live_voice:` in agents/<id>/agent.yaml), else the default. */
+export function liveVoiceFor(agent: string, root = ROOT): string {
+  try {
+    const m = readFileSync(join(root, "agents", agent, "agent.yaml"), "utf8").match(/^live_voice:\s*([A-Za-z]+)\s*$/m);
+    return m ? m[1]! : LIVE_VOICE;
+  } catch {
+    return LIVE_VOICE;
+  }
+}
+
+/** A read-only snapshot of the fleet for the start of a talk: what Alice knows without tools (V2 adds tools). */
+export async function fleetBriefing(): Promise<string> {
+  const { fleetStatus } = await import("./fleet-api.ts");
+  const { vaultTasksReport } = await import("./vault-tasks.ts");
+  const s = (await fleetStatus(true)) as Record<string, unknown>;
+  const ready = vaultTasksReport("ready") as { tasks?: { id: string; title: string; priority: string }[] };
+  const lines: string[] = [`As of ${new Date().toLocaleString("en-GB", { weekday: "long", hour: "2-digit", minute: "2-digit" })}: ${String(s.message ?? "")}`];
+  for (const sh of (s.ships as Record<string, unknown>[] | string[] | undefined) ?? []) lines.push(`- ${typeof sh === "string" ? sh : JSON.stringify(sh).slice(0, 300)}`);
+  const needs = (s.needsCaptain as unknown[] | undefined) ?? [];
+  if (needs.length) lines.push(`Waiting on the captain: ${needs.map((n) => (typeof n === "string" ? n : JSON.stringify(n))).join("; ").slice(0, 600)}`);
+  if (typeof s.spendTodayUsd === "number") lines.push(`Spend today: $${s.spendTodayUsd.toFixed(2)}.`);
+  if (ready.tasks?.length) lines.push(`Ready vault tasks: ${ready.tasks.slice(0, 6).map((t) => `${t.title} (${t.priority})`).join("; ")}.`);
+  return lines.join("\n").slice(0, 3500);
+}
+
+/** Who the captain is talking to, by voice: character, how to talk, and what the fleet looks like now. */
+export function persona(agent: string, character = "", briefing = ""): string {
   const who = agent === "alice" ? "Alice, the fleet's omni agent" : agent;
   return [
     `You are ${who}, speaking with the captain by voice in the fleet dashboard.`,
+    character ? `Your character:\n${character}` : "",
     "The fleet is the captain's set of AI agents: officers (Alice, the Architect, the Designer) and ship crews (a lead, a builder, a scout, a designer, a helmsman) that sail voyages on the captain's projects.",
     "Speak naturally and briefly: one to three sentences, then let the captain talk. The captain can interrupt you; when they do, stop and listen.",
-    "In this voice mode you cannot see the fleet's live state or act on it yet. If the captain asks for status or an action, say so plainly and suggest typing it to Alice in the chat, where the full Alice can act. Never invent fleet facts.",
-  ].join(" ");
+    briefing ? `What you know about the fleet right now (a snapshot from when this talk began; it does not update):\n${briefing}` : "",
+    "You can describe the snapshot, but you cannot act on the fleet or look anything else up by voice yet. For an action or fresh detail, say so plainly and suggest typing it to Alice in the chat, where the full Alice can act. Never invent fleet facts beyond the snapshot.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export class LiveSession {
@@ -47,7 +82,7 @@ export class LiveSession {
 
   constructor(
     private sink: LiveSink,
-    private opts: { agent: string; connect?: (url: string) => Upstream; key?: () => Promise<string> },
+    private opts: { agent: string; connect?: (url: string) => Upstream; key?: () => Promise<string>; briefing?: () => Promise<string>; character?: string; voice?: string },
   ) {}
 
   async start(): Promise<void> {
@@ -57,6 +92,9 @@ export class LiveSession {
       this.sink.close();
       return;
     }
+    const briefing = await (this.opts.briefing ?? fleetBriefing)().catch(() => "");
+    const instruction = persona(this.opts.agent, this.opts.character ?? characterFor(this.opts.agent), briefing);
+    const voice = this.opts.voice ?? liveVoiceFor(this.opts.agent);
     const up = (this.opts.connect ?? ((url) => new WebSocket(url) as unknown as Upstream))(`${LIVE_URL}?key=${key}`);
     this.up = up;
     up.onopen = () =>
@@ -64,8 +102,8 @@ export class LiveSession {
         JSON.stringify({
           setup: {
             model: `models/${LIVE_MODEL}`,
-            generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: LIVE_VOICE } } } },
-            systemInstruction: { parts: [{ text: persona(this.opts.agent) }] },
+            generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
+            systemInstruction: { parts: [{ text: instruction }] },
             inputAudioTranscription: {},
             outputAudioTranscription: {},
           },
@@ -123,7 +161,7 @@ export class LiveSession {
     if (m.setupComplete) {
       this.ready = true;
       for (const s of this.queued.splice(0)) this.up?.send(s);
-      this.sink.event({ type: "ready", model: LIVE_MODEL, voice: LIVE_VOICE });
+      this.sink.event({ type: "ready", model: LIVE_MODEL });
     }
     const sc = m.serverContent;
     if (sc) {

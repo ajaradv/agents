@@ -27,11 +27,14 @@ describe("conversation mode bridge (V1)", () => {
     const audio: Uint8Array[] = [];
     const events: any[] = [];
     let closed = false;
-    const s = new LiveSession({ audio: (p) => void audio.push(p), event: (e) => void events.push(e), close: () => void (closed = true) }, { agent: "alice", connect: (url) => (expect(url).toContain("key=test-key"), up as never), key: async () => "test-key" });
+    const s = new LiveSession({ audio: (p) => void audio.push(p), event: (e) => void events.push(e), close: () => void (closed = true) }, { agent: "alice", connect: (url) => (expect(url).toContain("key=test-key"), up as never), key: async () => "test-key", briefing: async () => "4 ships, pochteca docked." });
     await s.start();
     up.onopen();
     expect(up.sent[0].setup.model).toBe("models/gemini-3.1-flash-live-preview");
     expect(up.sent[0].setup.systemInstruction.parts[0].text).toContain("Alice");
+    expect(up.sent[0].setup.systemInstruction.parts[0].text).toContain("pochteca docked");
+    expect(up.sent[0].setup.systemInstruction.parts[0].text).toContain("royal princess");
+    expect(up.sent[0].setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe("Leda");
     // Words spoken before setup completes are held, then sent.
     s.audio(new Uint8Array([1, 2, 3, 4]));
     expect(up.sent.length).toBe(1);
@@ -60,8 +63,11 @@ describe("conversation mode bridge (V1)", () => {
     expect(events[0].message).toContain("GEMINI_FREE_API_KEY");
     expect(closed).toBe(true);
   });
-  test("the voice persona keeps replies short and does not invent fleet facts", () => {
-    expect(persona("alice")).toContain("one to three sentences");
-    expect(persona("alice")).toContain("Never invent fleet facts");
+  test("the voice persona keeps replies short, carries the character and the snapshot, and invents nothing", () => {
+    const p = persona("alice", "A runaway princess.", "pochteca docked");
+    expect(p).toContain("one to three sentences");
+    expect(p).toContain("A runaway princess.");
+    expect(p).toContain("pochteca docked");
+    expect(p).toContain("Never invent fleet facts");
   });
 });
