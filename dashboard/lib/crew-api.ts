@@ -501,3 +501,25 @@ export async function crewDockRequest(shipId: string, b: { from: string; summary
   const { requestGo } = await import("./fleet-api.ts");
   return requestGo(b.from, "voyage_dock", { ship: shipId, summary });
 }
+
+/**
+ * Crew eyes: a crewmate asks a vision model about its screenshots (bin/fleet-shot).
+ * The node holds the key; images may come only from the voyage worktree, the
+ * ship's repo, or temp folders.
+ */
+export async function crewLook(shipId: string, b: { from: string; images?: unknown; question?: string }): Promise<Res> {
+  const a = await aboard(shipId, b.from);
+  if ("error" in a) return a.error;
+  const question = String(b.question ?? "").trim();
+  if (question.length < 5) return { ok: false, message: "Ask a specific question about the screenshot (what should be visible, and where)." };
+  const images = Array.isArray(b.images) ? b.images.map(String) : [];
+  const { checkImages, lookAt } = await import("./look.ts");
+  const { voyageWorktree } = await import("./voyage-worktree.ts");
+  const { tmpdir } = await import("node:os");
+  const roots = [voyageWorktree(shipId)?.path, a.ship.path, process.env.TMPDIR ?? tmpdir(), "/tmp", "/private/tmp"].filter((r): r is string => Boolean(r));
+  const checked = checkImages(images, roots);
+  if (!checked.ok) return { ok: false, message: checked.message };
+  const r = await lookAt(checked.files, question);
+  logShipEvent(shipId, b.from, "tool", `look: ${question.slice(0, 120)}${r.ok ? "" : ` (failed: ${r.error})`}`, { cost: r.cost, model: r.model });
+  return r.ok ? { ok: true, message: r.answer, cost: r.cost } : { ok: false, message: `The look failed: ${r.error}` };
+}

@@ -154,6 +154,19 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
+  pi.registerTool({
+    name: "look",
+    label: "Look at screenshots",
+    description: "Crew eyes: ask a vision model a specific question about up to 4 screenshots, and get a plain description back (your own model may not see images). Take the screenshots first with bash: `bin/fleet-shot <url> --both` (desktop and phone; prints the PNG paths). Ask about what should be visible: elements, text, colours, positions, overlap, what looks broken. Use it before reporting UI work done.",
+    parameters: Type.Object({
+      images: Type.Array(Type.String(), { description: "PNG/JPEG/WebP paths from bin/fleet-shot (worktree or temp folders)" }),
+      question: Type.String({ description: "What to check, specifically" }),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "look", { images: p.images, question: p.question }));
+    },
+  });
+
   if (!isLead) return;
 
   pi.registerTool({

@@ -35,6 +35,8 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 - **Prototype motion on the canvas first.** Build a self-contained html study (GSAP or three from the CDN), show it with `canvas_show` (`kind: html`), and let the captain feel it before it goes into the project. Re-use the id as it changes.
 - `impeccable generate-image` needs `OPENAI_API_KEY`. When it is absent, say so and use whatever image tool the session has; never invent a pick or skip an approval point.
 
+- **Crew eyes** (aboard ships): `bin/fleet-shot <url> --both` takes desktop and phone screenshots with nothing left running; the `look` tool asks a vision model about them. Use them for every visual change before you report it done, and say what you checked.
+
 ## Find the project
 
 - Use **Resolved paths** (ships) or the path the request gives. If neither has it, ask; do not borrow another repo as a stand-in.
