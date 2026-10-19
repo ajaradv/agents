@@ -4,6 +4,7 @@
 //   bin/alice-voices                    play every candidate, one after another
 //   bin/alice-voices --only Leda,Kore   play just these
 //   bin/alice-voices --fresh            record the clips again (after editing her character)
+//   bin/alice-voices --record           record any missing clips (with --fresh: all of them) without playing
 //   bin/alice-voices --set Kore         make Kore her live voice (agents/alice/agent.yaml live_voice)
 //
 // Clips are recorded once on the free Gemini account (GEMINI_FREE_API_KEY) with
@@ -14,7 +15,8 @@ import { nodeKey } from "../dashboard/lib/fleet-env.ts";
 import { characterFor, LIVE_MODEL, liveVoiceFor } from "../dashboard/lib/live-voice.ts";
 import { ROOT } from "../dashboard/lib/paths.ts";
 
-const VOICES = ["Leda", "Despina", "Achernar", "Vindemiatrix", "Sulafat", "Aoede", "Kore", "Callirrhoe"];
+// Shortlist 2026-10-19: Leda and Sulafat kept; younger, lighter candidates added.
+const VOICES = ["Sulafat", "Leda", "Zephyr", "Autonoe", "Laomedeia", "Erinome", "Pulcherrima", "Achird", "Sadachbia", "Enceladus"];
 const LINE = "Say exactly this, in character: Good evening, Captain. I have looked over the fleet for you. Pochteca is docked, and the fleet ship has just come home with its first voyage. Shall we see what needs you?";
 const DIR = join(ROOT, "fleet", "home", "voices");
 const args = process.argv.slice(2);
@@ -24,7 +26,7 @@ const flag = (f: string) => {
 };
 
 if (args.includes("--help") || args.includes("-h")) {
-  console.log(readFileSync(import.meta.path, "utf8").split("\n").slice(1, 11).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+  console.log(readFileSync(import.meta.path, "utf8").split("\n").slice(1, 12).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
   process.exit(0);
 }
 
@@ -99,6 +101,8 @@ if (missing.length) {
     console.log((await record(v, key, character, join(DIR, `alice-${v.toLowerCase()}.wav`))) ? "done" : "failed");
   }
 }
+
+if (args.includes("--record")) process.exit(0);
 
 const current = liveVoiceFor("alice");
 console.log(`\nAlice's live voice now: ${current}. Playing ${voices.length} candidate(s); Ctrl+C to stop.\n`);
