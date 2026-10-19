@@ -29,15 +29,28 @@ export const LIVE_TOOLS = [
 
 /** V3: acting by voice. The dashboard supplies these; every call passes the policy door below. */
 export type LiveActions = {
-  /** Hand a message to the full Alice (her chat thread, as the captain's words); her reply is relayed later. */
-  sendToAlice(text: string): Promise<void>;
+  /** Hand a message to the agent's full self (its chat thread, as the captain's words); the reply is relayed later. */
+  sendToAgent(text: string): Promise<void>;
   /** What waits on the captain (Go requests with their goId, questions, proposals). */
   needsYou(): Promise<{ id: string; kind: string; goId?: string; summary: string }[]>;
   decideGo(goId: string, go: boolean): Promise<{ ok: boolean; message: string }>;
 };
 
-export const ACTION_TOOLS = [
-  { name: "ask_alice", description: "Hand a request to the full Alice in the chat, who can act on the fleet (set sail, dock, crew changes, orders) and asks the captain's Go for anything that changes things. Use it for any action or for work you cannot do by voice. Returns at once; her reply arrives later and you will be told to relay it.", parameters: { type: "OBJECT", properties: { message: { type: "STRING", description: "The request in the captain's words, complete enough for Alice to act on" } }, required: ["message"] } },
+/** The hand-off tool's name: Alice hands to the full Alice; any other agent to its own full self in the chat. */
+export function askTool(agent: string): string {
+  return agent === "alice" ? "ask_alice" : "ask_in_chat";
+}
+
+/** V3 action tools for a talk with `agent` (V4: any agent with a live voice). */
+export function actionTools(agent: string) {
+  const ask =
+    agent === "alice"
+      ? { name: "ask_alice", description: "Hand a request to the full Alice in the chat, who can act on the fleet (set sail, dock, crew changes, orders) and asks the captain's Go for anything that changes things. Use it for any action or for work you cannot do by voice. Returns at once; her reply arrives later and you will be told to relay it.", parameters: { type: "OBJECT", properties: { message: { type: "STRING", description: "The request in the captain's words, complete enough for Alice to act on" } }, required: ["message"] } }
+      : { name: "ask_in_chat", description: "Hand a request to your full self in the chat: the same agent with its tools, files, and work in progress. Use it for any real work or anything you cannot answer by voice. Returns at once; the reply arrives later and you will be told to relay it.", parameters: { type: "OBJECT", properties: { message: { type: "STRING", description: "The request in the captain's words, complete enough to act on" } }, required: ["message"] } };
+  return [ask, ...ACTION_TOOLS];
+}
+
+const ACTION_TOOLS = [
   { name: "needs_you", description: "What waits on the captain right now: Go requests (each with a go_id), questions, helm proposals, notices.", parameters: { type: "OBJECT", properties: {} } },
   { name: "decide_go", description: "Give or refuse the captain's Go on one pending Go request (go_id from needs_you). Only after the captain has just said go (or no) to that specific request in their own words; read it back first. The server checks the captain's last words and refuses otherwise.", parameters: { type: "OBJECT", properties: { go_id: { type: "STRING" }, decision: { type: "STRING", description: "go or no" } }, required: ["go_id", "decision"] } },
 ];
@@ -107,15 +120,16 @@ export async function fleetBriefing(): Promise<string> {
 }
 
 /** Who the captain is talking to, by voice: character, how to talk, and what the fleet looks like now. */
-export function persona(agent: string, character = "", briefing = ""): string {
-  const who = agent === "alice" ? "Alice, the fleet's omni agent" : agent;
+export function persona(agent: string, character = "", briefing = "", about: { label?: string; role?: string; description?: string } = {}): string {
+  const alice = agent === "alice";
+  const who = alice ? "Alice, the fleet's omni agent" : `${about.label || agent}${about.role && about.role !== agent ? `, the fleet's ${about.role}` : ""}${about.description ? ` (${about.description})` : ""}`;
   return [
     `You are ${who}, speaking with the captain by voice in the fleet dashboard.`,
     character ? `Your character:\n${character}` : "",
     "The fleet is the captain's set of AI agents: officers (Alice, the Architect, the Designer) and ship crews (a lead, a builder, a scout, a designer, a helmsman) that sail voyages on the captain's projects.",
     "Speak naturally and briefly: one to three sentences, then let the captain talk. The captain can interrupt you; when they do, stop and listen.",
     briefing ? `What you know about the fleet right now (a snapshot from when this talk began; it does not update):\n${briefing}` : "",
-    "For fresh detail, use your tools (fleet_status, ship, vault_tasks) rather than guessing; say briefly that you are checking. To act on the fleet, hand it to the full Alice with ask_alice (she asks the captain's Go); tell the captain you have passed it on. For a pending Go, read the request back (needs_you), wait for the captain to say go or no, then call decide_go. Never invent fleet facts.",
+    `For fresh detail, use your tools (fleet_status, ship, vault_tasks) rather than guessing; say briefly that you are checking. ${alice ? "To act on the fleet, hand it to the full Alice with ask_alice (she asks the captain's Go)" : "For real work (files, code, your voyage), hand it to your full self in the chat with ask_in_chat"}; tell the captain you have passed it on. For a pending Go, read the request back (needs_you), wait for the captain to say go or no, then call decide_go. Never invent fleet facts.`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -135,7 +149,7 @@ export class LiveSession {
 
   constructor(
     private sink: LiveSink,
-    private opts: { agent: string; connect?: (url: string) => Upstream; key?: () => Promise<string>; briefing?: () => Promise<string>; character?: string; voice?: string; tool?: typeof runLiveTool; actions?: LiveActions },
+    private opts: { agent: string; role?: string; label?: string; description?: string; connect?: (url: string) => Upstream; key?: () => Promise<string>; briefing?: () => Promise<string>; character?: string; voice?: string; tool?: typeof runLiveTool; actions?: LiveActions },
   ) {}
 
   async start(): Promise<void> {
@@ -146,8 +160,9 @@ export class LiveSession {
       return;
     }
     const briefing = await (this.opts.briefing ?? fleetBriefing)().catch(() => "");
-    const instruction = persona(this.opts.agent, this.opts.character ?? characterFor(this.opts.agent), briefing);
-    const voice = this.opts.voice ?? liveVoiceFor(this.opts.agent);
+    const role = this.opts.role ?? this.opts.agent;
+    const instruction = persona(this.opts.agent, this.opts.character ?? characterFor(role), briefing, { label: this.opts.label, role, description: this.opts.description });
+    const voice = this.opts.voice ?? liveVoiceFor(role);
     const up = (this.opts.connect ?? ((url) => new WebSocket(url) as unknown as Upstream))(`${LIVE_URL}?key=${key}`);
     this.up = up;
     up.onopen = () =>
@@ -159,7 +174,7 @@ export class LiveSession {
             systemInstruction: { parts: [{ text: instruction }] },
             inputAudioTranscription: {},
             outputAudioTranscription: {},
-            tools: [{ functionDeclarations: this.opts.actions ? [...LIVE_TOOLS, ...ACTION_TOOLS] : LIVE_TOOLS }],
+            tools: [{ functionDeclarations: this.opts.actions ? [...LIVE_TOOLS, ...actionTools(this.opts.agent)] : LIVE_TOOLS }],
           },
         }),
       );
@@ -249,7 +264,7 @@ export class LiveSession {
       const t0 = Date.now();
       let out: { result: string; summary: string; verdict?: "allowed" | "blocked" };
       try {
-        out = ACTION_TOOLS.some((t) => t.name === c.name) ? await this.action(c.name, c.args ?? {}) : await (this.opts.tool ?? runLiveTool)(c.name, c.args ?? {});
+        out = actionTools(this.opts.agent).some((t) => t.name === c.name) ? await this.action(c.name, c.args ?? {}) : await (this.opts.tool ?? runLiveTool)(c.name, c.args ?? {});
       } catch (e) {
         out = { result: `The lookup failed: ${e instanceof Error ? e.message : String(e)}`, summary: `${c.name} failed` };
       }
@@ -264,11 +279,16 @@ export class LiveSession {
   private async action(name: string, args: Record<string, unknown>): Promise<{ result: string; summary: string; verdict?: "allowed" | "blocked" }> {
     const a = this.opts.actions;
     if (!a) return { result: "Acting by voice is not available in this session.", summary: `${name} unavailable`, verdict: "blocked" };
-    if (name === "ask_alice") {
+    if (name === askTool(this.opts.agent)) {
+      const alice = this.opts.agent === "alice";
       const message = String(args.message ?? "").trim().slice(0, 2000);
-      if (!message) return { result: "Say what to ask Alice.", summary: "ask_alice with no message", verdict: "blocked" };
-      await a.sendToAlice(`(by voice) ${message}`);
-      return { result: "Sent to Alice in the chat. Tell the captain briefly; you will be given her reply to relay when it comes.", summary: `asked Alice: ${message.slice(0, 80)}`, verdict: "allowed" };
+      if (!message) return { result: "Say what to pass on.", summary: `${name} with no message`, verdict: "blocked" };
+      await a.sendToAgent(`(by voice) ${message}`);
+      return {
+        result: alice ? "Sent to Alice in the chat. Tell the captain briefly; you will be given her reply to relay when it comes." : "Sent to your full self in the chat. Tell the captain briefly; you will be given the reply to relay when it comes.",
+        summary: `${alice ? "asked Alice" : "passed to the chat"}: ${message.slice(0, 80)}`,
+        verdict: "allowed",
+      };
     }
     if (name === "needs_you") {
       const items = await a.needsYou();
@@ -289,10 +309,16 @@ export class LiveSession {
     return this.captainText.trim() || this.prevCaptainText;
   }
 
-  /** The full Alice replied in the chat: have the live voice tell the captain. */
+  /** The agent this talk is with (its chat thread id). */
+  get agent(): string {
+    return this.opts.agent;
+  }
+
+  /** The agent's full self replied in the chat: have the live voice tell the captain. */
   relay(text: string): void {
-    this.send({ realtimeInput: { text: `[Alice's reply in the chat just arrived. Tell the captain, briefly and in your own words: ${text.slice(0, 1500)}]` } });
-    this.sink.event({ type: "action", name: "relay", summary: "Alice replied in the chat", ms: 0 });
+    const alice = this.opts.agent === "alice";
+    this.send({ realtimeInput: { text: `[${alice ? "Alice's" : "Your full self's"} reply in the chat just arrived. Tell the captain, briefly and in your own words: ${text.slice(0, 1500)}]` } });
+    this.sink.event({ type: "action", name: "relay", summary: alice ? "Alice replied in the chat" : "the chat replied", ms: 0 });
   }
 
   /** One spoken exchange, appended to the agent's voice log (not its chat thread). */

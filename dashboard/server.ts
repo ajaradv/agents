@@ -70,7 +70,7 @@ import { HOST, PORT, ROOT } from "./lib/paths.ts";
 import { requestRefusal } from "./lib/request-guard.ts";
 import { dashLog } from "./lib/log.ts";
 
-type WsData = { agentId: string; live?: LiveSession };
+type WsData = { agentId: string; liveAgent?: string; live?: LiveSession };
 const chatSockets = new Map<string, Set<ServerWebSocket<WsData>>>();
 const sseEncoder = new TextEncoder();
 type SseController = ReadableStreamDefaultController<Uint8Array>;
@@ -109,12 +109,12 @@ function broadcastChatEvent(agentId: string, ev: HostEvent) {
   }
 }
 
-/** Live voice sessions talking to Alice: her chat replies are relayed to them (conversation mode V3). */
+/** Live voice sessions (conversation mode): each agent's chat replies are relayed to its talks (V3; any agent in V4). */
 const liveSessions = new Set<LiveSession>();
 
 function broadcastChat(agentId: string, line: ChatLine) {
   needsChanged();
-  if (agentId === "alice" && line.from === "alice" && line.kind === "chat" && !line.step && line.text.trim()) for (const s of liveSessions) s.relay(line.text);
+  if (line.from === agentId && line.kind === "chat" && !line.step && line.text.trim()) for (const s of liveSessions) if (s.agent === agentId) s.relay(line.text);
   const set = chatSockets.get(agentId);
   if (!set) return;
   const payload = JSON.stringify(chatPayload(line));
@@ -265,15 +265,21 @@ const server = Bun.serve<WsData>({
   websocket: {
     open(ws) {
       const data = ws.data;
-      if (data.agentId === "voice") {
-        // Conversation mode (lib/live-voice.ts): this socket bridges to one Gemini Live session.
+      if (data.agentId === "voice" && data.liveAgent) {
+        // Conversation mode (lib/live-voice.ts): this socket bridges to one Gemini Live session with one agent.
+        const agent = data.liveAgent;
+        const t = chatTarget(agent)!;
         data.live = new LiveSession(
           { audio: (pcm) => ws.send(pcm), event: (e) => ws.send(JSON.stringify(e)), close: () => ws.close() },
           {
-            agent: "alice",
-            // V3: hand-offs to the full Alice, what needs the captain, and the Go (behind lib/live-voice.ts's policy door).
+            agent,
+            role: t.agentRole,
+            label: t.label,
+            description: t.description,
+            voice: t.liveVoice,
+            // V3: hand-offs to the agent's full self, what needs the captain, and the Go (behind lib/live-voice.ts's policy door).
             actions: {
-              sendToAlice: async (text) => void (await captainSend("alice", text)),
+              sendToAgent: async (text) => void (await captainSend(agent, text)),
               needsYou: async () =>
                 (await collectNeedsYou({ waiting: hostWaiting, holds: currentHolds() })).map((i) => ({
                   id: i.id,
@@ -398,8 +404,11 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return new Response("upgrade failed", { status: 500 });
     }
 
-    if (path === "/ws/voice/alice") {
-      if (server.upgrade(req, { data: { agentId: "voice" } as WsData })) {
+    if (path.startsWith("/ws/voice/")) {
+      // Any agent with a live voice (agent.yaml live_voice; crewmates take their role's).
+      const agentId = path.split("/").pop() ?? "";
+      if (!chatAllowed(agentId) || !chatTarget(agentId)?.liveVoice) return new Response("no live voice for this agent", { status: 404 });
+      if (server.upgrade(req, { data: { agentId: "voice", liveAgent: agentId } as WsData })) {
         return undefined as unknown as Response;
       }
       return new Response("upgrade failed", { status: 500 });
@@ -987,7 +996,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
 /** Which page code is on disk (the files' change times): an open tab compares it and reloads when it changes. */
 function pageBuild(): string {
   let parts = "";
-  for (const f of ["index.html", "app.js", "md.js", "live-voice.js", "pcm-capture.js", "pixel.css", "ui.css"]) {
+  for (const f of ["index.html", "app.js", "md.js", "live-voice.js", "pcm-capture.js", "sfx.js", "pixel.css", "ui.css"]) {
     try {
       parts += statSync(join(publicDir, f)).mtimeMs.toFixed(0);
     } catch {

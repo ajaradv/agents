@@ -23,6 +23,8 @@ export type AgentMeta = {
   crewOnly: boolean;
   /** `voice:` Kokoro voice id (e.g. af_heart); empty means the role's default. */
   voice: string;
+  /** `live_voice:` Gemini Live voice for conversation mode; empty means no live talk with this agent. */
+  liveVoice: string;
   /** Set for ship crewmates (`<ship>-<role>`): the ship they serve aboard. */
   ship?: string;
   /** `daily_budget_usd:` for officers (crewmates use the ship's crew_budgets); 0 means none. */
@@ -81,6 +83,7 @@ export async function loadAgents(): Promise<AgentMeta[]> {
         crewEligible: y.crew === "true" || y.crew === "only",
         crewOnly: y.crew === "only",
         voice: y.voice ?? "",
+        liveVoice: /^[A-Za-z]+$/.test(y.live_voice ?? "") ? y.live_voice! : "",
         dailyBudgetUsd: Math.max(0, Number(y.daily_budget_usd) || 0),
       });
     } catch {

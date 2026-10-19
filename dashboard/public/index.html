@@ -172,6 +172,17 @@
         </div>
       </div>
       <div class="row">
+        <div class="mode-pick" role="radiogroup" aria-label="How to talk" x-show="!chatGroup" x-cloak>
+          <button type="button" role="radio" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': voiceMode === 'type' }" :aria-checked="voiceMode === 'type'"
+                  title="Type only (no mic)" @click="setVoiceMode('type')">Type</button>
+          <button type="button" role="radio" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': voiceMode === 'talk' }" :aria-checked="voiceMode === 'talk'"
+                  title="Tap to talk: speech to text, sent when you pause" @click="setVoiceMode('talk')">Talk</button>
+          <button type="button" role="radio" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': voiceMode === 'live' }" :aria-checked="voiceMode === 'live'"
+                  :disabled="!current().liveVoice" :title="current().liveVoice ? 'Live: a back-and-forth conversation you can interrupt (Gemini Live, free account)' : 'No live voice for this agent'"
+                  @click="setVoiceMode('live')">Live</button>
+        </div>
+        <button type="button" class="d-btn d-btn-sm" x-show="!chatGroup && voiceMode === 'talk'" x-cloak :class="{ 'd-btn-neutral': handsFree }" :aria-pressed="handsFree"
+                :title="handsFree ? 'Hands-free on: the mic opens again after each spoken reply' : 'Hands-free: the mic opens again after each spoken reply'" @click="toggleHandsFree()">Hands-free</button>
         <button type="button" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': showThinking }" :aria-pressed="showThinking" @click="toggleThinking()"
                 :title="showThinking ? 'Showing what agents write between steps; click to hide it' : 'Show what agents write between steps (their thinking)'">Thinking</button>
         <button type="button" class="d-btn d-btn-sm" x-show="!chatGroup && chatThinking && current().runtime === 'rpc'" @click="stopAgent()">Stop</button>
@@ -281,16 +292,16 @@
                 @click="voiceSpeaking ? stopSpeaking() : toggleVoiceReplies()">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6h3l4-3v10L5 10H2z"/><path x-show="voiceReplies" fill="currentColor" d="M11 5h1v6h-1zM13 3h1v10h-1z"/><path x-show="!voiceReplies" fill="currentColor" d="M11 6l1-1 3 3-1 1zm0 4l3-3 1 1-3 3z"/></svg>
         </button>
-        <button type="button" class="d-btn d-btn-sm icon-btn mic-btn" x-show="!chatGroup" :class="{ 'is-live': voiceState === 'listening', 'is-busy': voiceState === 'transcribing' }"
+        <button type="button" class="d-btn d-btn-sm icon-btn mic-btn" x-show="!chatGroup && voiceMode === 'talk'" :class="{ 'is-live': voiceState === 'listening', 'is-busy': voiceState === 'transcribing' }"
                 :aria-pressed="voiceState === 'listening'" :aria-label="voiceState === 'listening' ? 'Listening; tap or release to send' : 'Talk (tap, or hold with a mouse; Option+V)'"
                 title="Talk: tap to start (it sends when you pause), or hold with a mouse (Option+V)"
                 @pointerdown="micDown($event)" @pointerup="micUp()" @pointerleave="voiceState === 'listening' && !micToggled && micUp()" @click="micClick()">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M6 1h4v8H6zM4 7h1v2h6V7h1v3H9v2h2v2H5v-2h2v-2H4z"/></svg>
         </button>
-        <button type="button" class="d-btn d-btn-sm live-btn" x-show="chatId === 'alice' && !chatGroup" x-cloak
+        <button type="button" class="d-btn d-btn-sm live-btn" x-show="!chatGroup && voiceMode === 'live' && current().liveVoice" x-cloak
                 :class="{ 'd-btn-neutral': liveState !== 'off', 'is-speaking': liveState === 'speaking' }" :aria-pressed="liveState !== 'off'"
-                :title="liveState === 'off' ? 'Talk live with Alice: a back-and-forth conversation you can interrupt (Gemini Live, free account)' : 'End the live conversation'"
-                @click="toggleLive()" x-text="liveState === 'off' ? 'Live' : liveState === 'connecting' ? 'Live…' : 'End'"></button>
+                :title="liveState === 'off' ? 'Start talking live with ' + current().label : 'End the live conversation'"
+                @click="toggleLive()" x-text="liveState === 'off' ? 'Start' : liveState === 'connecting' ? 'Live…' : 'End'"></button>
         <button class="d-btn d-btn-neutral d-btn-sm" type="submit">Send</button>
       </div>
       <p class="voice-note" role="status" aria-live="polite" x-show="voiceNote || voiceSpeaking" x-cloak
@@ -337,6 +348,7 @@
 
   <script src="/md.js"></script>
   <script src="/live-voice.js"></script>
+  <script src="/sfx.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -59,3 +59,5 @@ authority:
     - spawn
     - push
     - backend-code
+# Conversation mode voice (Gemini Live prebuilt voice; breezy; matches af_heart).
+live_voice: Aoede

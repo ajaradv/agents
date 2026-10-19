@@ -1046,6 +1046,9 @@ body.chat-open { overflow: hidden; }
   .chat-bar > .row { order: 3; flex: 1 0 100%; flex-wrap: nowrap; gap: 0.4rem; }
   .chat-bar > .row:not(:has(.d-btn:not([style*="display: none"]))) { display: none; }
   .chat-bar > .row .d-btn { flex: 1 1 0; min-height: 40px; }
+  /* The voice mode picker gets its own line on a phone; the other buttons share the next. */
+  .chat-bar > .row:has(.mode-pick:not([style*="display: none"])) { flex-wrap: wrap; }
+  .chat-bar .mode-pick { flex: 1 0 100%; }
   .chat-bar .chat-close { position: relative; flex: none; width: 44px; height: 44px; padding: 0; display: grid; place-items: center; }
   .chat-close svg { display: block; width: 18px; height: 18px; }
   .chat-close-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -1224,6 +1227,11 @@ body.chat-open { overflow: hidden; }
 /* Conversation mode (V1): live transcripts and the Live button. */
 .bubble-row.is-live .bubble { border-style: dashed; }
 .live-btn.is-speaking { box-shadow: inset 0 0 0 2px var(--teal); }
+/* Voice mode picker (V4): Type · Talk · Live as one joined control. */
+.mode-pick { display: inline-flex; }
+.mode-pick > .d-btn { border-radius: 0; margin-left: -1px; }
+.mode-pick > .d-btn:first-child { margin-left: 0; }
+.mode-pick > .d-btn[disabled] { opacity: 0.45; }
 .bubble-row.is-action .bubble { font-size: 0.75rem; color: var(--quiet); padding: 0.2rem 0.5rem; }
 
 /* ---- Voyage progress and condition (sprite frames, bar, flag) ---- */

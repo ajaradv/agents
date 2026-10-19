@@ -9,3 +9,5 @@ model: deepseek/deepseek-v4-pro
 fallback_model: openrouter/deepseek/deepseek-v4-pro
 # crew: only — exists only aboard ships, as <ship>-helmsman.
 crew: only
+# Conversation mode voice (Gemini Live prebuilt voice; easy-going).
+live_voice: Umbriel

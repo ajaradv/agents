@@ -6,6 +6,15 @@ const ACK_LINES = {
   alice: ["Aye, Captain.", "One sec.", "On it.", "Right away, Captain.", "Let me look.", "Aye aye."],
   default: ["On it.", "One moment.", "Got it.", "Looking now."],
 };
+/** Non-verbal acknowledgements (public/sfx.js), on rotation with the spoken ones: about one send in three. */
+const SFX_SETS = {
+  alice: ["papers", "page"],
+  architect: ["page", "quill"],
+  designer: ["quill", "page"],
+  default: ["papers"],
+};
+/** How the captain talks in the drawer (per device): typing only, tap to talk, or a live conversation. */
+const VOICE_MODES = ["type", "talk", "live"];
 const CHAT_KEY = "fleet.chatId";
 
 function readChatId() {
@@ -93,8 +102,12 @@ function dashboardApp() {
     /** Voice: "idle" | "listening" | "transcribing"; replies are spoken when voiceReplies is on. */
     voiceState: "idle",
     voiceReplies: false,
-    /** Conversation mode (public/live-voice.js): "off" | "connecting" | "listening" | "speaking". Alice only in V1. */
+    /** Conversation mode (public/live-voice.js): "off" | "connecting" | "listening" | "speaking"; agents with a live voice. */
     liveState: "off",
+    /** The voice mode picker (VOICE_MODES); "talk" is tap to talk, sent on a pause. */
+    voiceMode: "talk",
+    /** Talk mode: the mic reopens after each spoken reply (hands-free). */
+    handsFree: false,
     /** Show agents' thinking: narration between tool calls and the live "writing" text (per device, off by default). */
     showThinking: false,
     voiceSpeaking: false,
@@ -188,11 +201,17 @@ function dashboardApp() {
     init() {
       try {
         this.voiceReplies = localStorage.getItem("fleet.voiceReplies") === "1";
+        const mode = localStorage.getItem("fleet.voiceMode");
+        if (VOICE_MODES.includes(mode) && mode !== "live") this.voiceMode = mode;
+        this.handsFree = localStorage.getItem("fleet.handsFree") === "1";
         this.showThinking = localStorage.getItem("fleet.showThinking") === "1";
       } catch {
         /* private window */
       }
       this.voiceSince = Date.now();
+      // Hands-free: when a reply has been spoken and the agent's turn is over, listen again.
+      this.$watch("voiceSpeaking", (v) => !v && this.handsFreeNext());
+      this.$watch("chatThinking", (v) => !v && this.handsFreeNext());
       const wideQuery = window.matchMedia("(min-width: 1200px)");
       this.wide = wideQuery.matches;
       wideQuery.addEventListener("change", (e) => (this.wide = e.matches));
@@ -205,6 +224,7 @@ function dashboardApp() {
       // The first tap anywhere unlocks audio playback on phones (see unlockAudio).
       const unlock = () => {
         this.unlockAudio();
+        window.FleetSfx?.unlock();
         if (this.audioUnlocked) ["click", "touchend"].forEach((t) => document.removeEventListener(t, unlock, true));
       };
       ["click", "touchend"].forEach((t) => document.addEventListener(t, unlock, true));
@@ -259,6 +279,9 @@ function dashboardApp() {
       }
       if (ev.altKey && ev.code === "KeyV" && this.chatOpen && !this.chatGroup) {
         ev.preventDefault();
+        // In Live the conversation is already listening; from Type the shortcut switches to Talk.
+        if (this.voiceMode === "live") return;
+        if (this.voiceMode === "type") this.setVoiceMode("talk");
         this.toggleListening();
         return;
       }
@@ -1151,19 +1174,23 @@ function dashboardApp() {
 
     // ------------------------------------------------------------ conversation mode (V1)
 
-    /** Start or stop talking live with the agent (Gemini Live on the free account; Alice only for now). */
+    /** Start or stop talking live with the agent (Gemini Live on the free account; agents with a live_voice). */
     toggleLive() {
       if (this.liveState !== "off") return this.stopLive();
-      if (this.chatId !== "alice" || !window.LiveVoice) return;
+      const t = this.current();
+      if (this.chatGroup || !t.liveVoice || !window.LiveVoice) return;
       if (this.voiceState === "listening") this.stopListening(false);
       this.stopSpeaking?.();
       this.liveRows = { captain: null, agent: null, last: "" };
-      this.voiceNote = "Connecting to Alice's voice… (headphones help: the mic can hear her otherwise)";
+      const name = t.label || this.chatId;
+      this.voiceNote = `Connecting to ${name}'s voice… (headphones help: the mic can hear the reply otherwise)`;
       this.live = new window.LiveVoice({
-        agent: "alice",
+        agent: this.chatId,
         onState: (st) => {
+          const was = this.liveState;
           this.liveState = st;
-          if (st === "listening") this.voiceNote = "Live with Alice: talk any time, and talk over her to interrupt. Tap Live to end.";
+          if (st === "listening" && was === "connecting") window.FleetSfx?.play("chime");
+          if (st === "listening") this.voiceNote = `Live with ${name}: talk any time, and talk over to interrupt. Tap End to stop.`;
           if (st === "off" && this.voiceNote.startsWith("Live with")) this.voiceNote = "";
         },
         onEvent: (e) => this.liveEvent(e),
@@ -1175,6 +1202,57 @@ function dashboardApp() {
       this.live?.stop();
       this.live = null;
       this.liveState = "off";
+      // Ending a conversation (End, another chat, closing the drawer) goes back to tap to talk.
+      if (this.voiceMode === "live") this.voiceMode = "talk";
+    },
+
+    // ------------------------------------------------------------ voice modes (V4)
+
+    /** Pick how to talk: type, talk (tap to talk), or live. Picking live starts the conversation (the click is the gesture the mic needs). */
+    setVoiceMode(mode) {
+      if (!VOICE_MODES.includes(mode)) return;
+      if (mode === "live" && !this.current().liveVoice) {
+        this.voiceNote = `${this.current().label || "This agent"} has no live voice yet (agent.yaml live_voice).`;
+        return;
+      }
+      if (mode !== "live") this.stopLive();
+      if (mode !== "talk" && this.voiceState === "listening") this.stopListening(false);
+      this.voiceMode = mode;
+      this.voiceNote = mode === "talk" && this.handsFree ? "Hands-free: tap the mic once; it listens again after each reply." : "";
+      try {
+        if (mode !== "live") localStorage.setItem("fleet.voiceMode", mode);
+      } catch {
+        /* private window */
+      }
+      if (mode === "live" && this.liveState === "off") this.toggleLive();
+    },
+
+    toggleHandsFree() {
+      this.handsFree = !this.handsFree;
+      this.handsFreeArmed = false;
+      this.voiceNote = this.handsFree ? "Hands-free: tap the mic once; it listens again after each reply." : "";
+      if (this.handsFree && !this.voiceReplies) this.toggleVoiceReplies();
+      try {
+        localStorage.setItem("fleet.handsFree", this.handsFree ? "1" : "0");
+      } catch {
+        /* private window */
+      }
+    },
+
+    /** Hands-free: once the reply to a spoken message has been said and the turn is over, open the mic again. */
+    handsFreeNext() {
+      const ready = () =>
+        this.handsFree && this.handsFreeArmed && this.voiceMode === "talk" && this.chatOpen && !this.chatGroup &&
+        this.voiceState === "idle" && !this.voiceSpeaking && !this.chatThinking && this.liveState === "off";
+      if (!ready()) return;
+      clearTimeout(this.handsFreeTimer);
+      // Settle first: the saved reply can land a moment after the turn ends, and then it is spoken.
+      this.handsFreeTimer = setTimeout(async () => {
+        if (!ready()) return;
+        this.handsFreeArmed = false;
+        await window.FleetSfx?.play("chime");
+        if (ready() || (this.handsFree && this.voiceState === "idle")) this.startListening({ auto: true });
+      }, 900);
     },
 
     /** Live transcripts as bubbles in the drawer (not saved to the chat thread; the voice log keeps them). */
@@ -1640,7 +1718,7 @@ function dashboardApp() {
       else if (this.voiceState === "idle") this.startListening();
     },
 
-    async startListening() {
+    async startListening(opts = {}) {
       // Barge-in: the captain talks over the agent. Stop now, and drop the rest of the reply that was being spoken.
       this.stopSpeaking();
       if (this.liveSpeech) this.liveSpeech.muted = true;
@@ -1655,6 +1733,7 @@ function dashboardApp() {
         // End of speech: once the captain has spoken, about 1.3 s of quiet sends it (unless the mic is being held).
         let heard = false;
         let lastLoud = Date.now();
+        const opened = Date.now();
         node.onaudioprocess = (e) => {
           const d = e.inputBuffer.getChannelData(0);
           chunks.push(new Float32Array(d));
@@ -1665,13 +1744,17 @@ function dashboardApp() {
             lastLoud = Date.now();
           } else if (heard && !this.micHolding && Date.now() - lastLoud > 1300 && this.rec && this.rec.node === node) {
             this.stopListening(true);
+          } else if (opts.auto && !heard && Date.now() - opened > 9000 && this.rec && this.rec.node === node) {
+            // Hands-free reopened the mic and the captain said nothing: stop quietly until the next tap.
+            this.stopListening(false);
+            this.voiceNote = "Hands-free is waiting: tap the mic to talk.";
           }
         };
         src.connect(node);
         node.connect(ctx.destination);
         this.rec = { stream, ctx, src, node, chunks, started: Date.now() };
         this.voiceState = "listening";
-        if (!this.voiceNote) this.voiceNote = "Listening… release to send.";
+        if (!this.voiceNote || opts.auto) this.voiceNote = opts.auto ? "Listening (hands-free)… speak, or stay quiet to pause." : "Listening… release to send.";
         // Talking to an agent means wanting to hear it back.
         if (!this.voiceReplies) this.toggleVoiceReplies();
         this.recTimer = setTimeout(() => this.stopListening(true), 60_000);
@@ -1721,11 +1804,13 @@ function dashboardApp() {
           this.voiceNote = "Didn't catch that.";
         } else if (this.voiceAnswer(text)) {
           this.voiceNote = `Answered by voice: “${text}”`;
+          this.handsFreeArmed = this.handsFree;
           this.playAck(this.chatId);
         } else {
           this.voiceNote = "";
           this.chatDraft = text;
           this.sendChat();
+          this.handsFreeArmed = this.handsFree;
           this.playAck(this.chatGroup ? this.groupTo : this.chatId);
         }
       } catch (e) {
@@ -1809,9 +1894,17 @@ function dashboardApp() {
       }
     },
 
-    /** A quick spoken acknowledgement, only when it is ready to play instantly (never delays anything). */
+    /** A quick acknowledgement, only when it is ready to play instantly (never delays anything): spoken, or now and then a sound. */
     playAck(agent) {
       if (!this.voiceReplies || !agent) return;
+      const sounds = SFX_SETS[agent] || SFX_SETS[(this.findTarget(agent) || {}).agentRole] || SFX_SETS.default;
+      if (window.FleetSfx && Math.random() < 1 / 3) {
+        const pick = sounds.filter((s) => s !== this.lastAck);
+        const sound = pick[Math.floor(Math.random() * pick.length)] || sounds[0];
+        this.lastAck = sound;
+        this.ackDone = window.FleetSfx.play(sound);
+        return;
+      }
       const lines = ACK_LINES[agent] || ACK_LINES.default;
       const ready = lines.filter((l) => this.ackCache && this.ackCache.get(`${agent}|${l}`) && l !== this.lastAck);
       if (!ready.length) return void this.preloadAcks(agent);

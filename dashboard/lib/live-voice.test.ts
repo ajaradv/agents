@@ -107,7 +107,7 @@ describe("acting by voice (V3)", () => {
     const sent: string[] = [];
     const decided: [string, boolean][] = [];
     const actions = {
-      sendToAlice: async (t: string) => void sent.push(t),
+      sendToAgent: async (t: string) => void sent.push(t),
       needsYou: async () => [{ id: "go:g1", kind: "go", goId: "g1", summary: "Dock fleet's voyage." }],
       decideGo: async (id: string, go: boolean) => (decided.push([id, go]), { ok: true, message: "Docked." }),
     };
@@ -134,5 +134,35 @@ describe("acting by voice (V3)", () => {
     expect(decided).toEqual([["g1", true]]);
     s.relay("The fleet ship is docked; the helmsman is reviewing.");
     expect(up.sent.at(-1).realtimeInput.text).toContain("the helmsman is reviewing");
+  });
+});
+
+describe("any agent with a live voice (V4)", () => {
+  test("a crewmate talks as itself in its role's voice and hands work to its own chat thread", async () => {
+    const up = fakeUpstream();
+    const sent: string[] = [];
+    const actions = { sendToAgent: async (t: string) => void sent.push(t), needsYou: async () => [], decideGo: async () => ({ ok: true, message: "" }) };
+    const s = new LiveSession({ audio: () => {}, event: () => {}, close: () => {} }, { agent: "kinwork-designer", role: "designer", label: "kinwork · designer", voice: "Aoede", connect: () => up as never, key: async () => "k", briefing: async () => "", actions });
+    await s.start();
+    up.onopen();
+    const setup = up.sent[0].setup;
+    expect(setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe("Aoede");
+    expect(setup.systemInstruction.parts[0].text).toContain("You are kinwork · designer, the fleet's designer");
+    expect(setup.systemInstruction.parts[0].text).toContain("ask_in_chat");
+    const names = setup.tools[0].functionDeclarations.map((f: any) => f.name);
+    expect(names).toContain("ask_in_chat");
+    expect(names).not.toContain("ask_alice");
+    up.onmessage({ data: JSON.stringify({ setupComplete: {} }) });
+    await tick();
+    up.onmessage({ data: JSON.stringify({ toolCall: { functionCalls: [{ id: "a", name: "ask_in_chat", args: { message: "tighten the hero spacing" } }] } }) });
+    for (let i = 0; i < 4; i++) await tick();
+    expect(sent).toEqual(["(by voice) tighten the hero spacing"]);
+    expect(s.agent).toBe("kinwork-designer");
+    s.relay("Spacing tightened to 24 px.");
+    expect(up.sent.at(-1).realtimeInput.text).toContain("Your full self's reply");
+  });
+  test("every role that can be talked to has a live voice", () => {
+    for (const role of ["alice", "architect", "designer", "firstmate", "shipwright", "lead", "builder", "scout", "helmsman"]) expect(liveVoiceFor(role)).toMatch(/^[A-Z][a-z]+$/);
+    expect(liveVoiceFor("alice")).toBe("Sulafat");
   });
 });

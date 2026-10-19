@@ -29,3 +29,5 @@ authority:
     - secrets
     - retire-home
     - spawn
+# Conversation mode voice (Gemini Live prebuilt voice; firm; matches am_adam).
+live_voice: Orus
