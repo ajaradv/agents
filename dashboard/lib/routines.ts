@@ -27,7 +27,7 @@ import { baseDir, readShipConfig } from "./ship-config.ts";
 
 export type Routine = { id: string; title: string; every: string; agent?: string; prompt?: string; job?: string; ship?: string; enabled: boolean; layer: string; watch: string[] };
 export type Schedule = { kind: "interval"; ms: number } | { kind: "daily"; h: number; m: number } | { kind: "weekly"; dow: number; h: number; m: number };
-type RunState = { lastRun?: string; status?: "ok" | "error" | "sent" | "skipped"; note?: string; next?: string; fingerprint?: string };
+type RunState = { lastRun?: string; status?: "ok" | "error" | "sent" | "skipped" | "running"; note?: string; next?: string; fingerprint?: string };
 export type RoutineDeps = {
   jobs: Record<string, (r: Routine) => Promise<string> | string>;
   runAgent: (agentId: string, text: string) => Promise<void>;
@@ -236,6 +236,12 @@ export async function tickRoutines(now: Date, deps: RoutineDeps, path = routines
   const state = readState();
   const ran: string[] = [];
   for (const r of routines) {
+    // A run this process did not finish (the node died mid-run): record it, never repeat it (N7).
+    const prev = state[r.id];
+    if (prev?.status === "running" && !running.has(r.id)) {
+      prev.status = "error";
+      prev.note = "interrupted: the node stopped during this run; it was not repeated";
+    }
     if (!r.enabled || running.has(r.id)) continue;
     const sched = parseSchedule(r.every)!;
     const st = (state[r.id] ??= {});
@@ -253,6 +259,10 @@ export async function tickRoutines(now: Date, deps: RoutineDeps, path = routines
         continue;
       }
       if (print !== null) st.fingerprint = print;
+      // Saved before the work starts, so a crash mid-run cannot run it twice.
+      st.status = "running";
+      st.note = "running";
+      writeState(state);
       if (r.job) {
         const job = deps.jobs[r.job];
         if (!job) throw new Error(`no node job named ${r.job}`);
