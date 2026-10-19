@@ -7,7 +7,7 @@ const inbox = mkdtempSync(join(tmpdir(), "live-voice-"));
 mkdirSync(join(inbox, ".node"), { recursive: true });
 const prev = process.env.FLEET_INBOX;
 process.env.FLEET_INBOX = inbox;
-const { LiveSession, persona } = await import("./live-voice.ts");
+const { LiveSession, liveVoiceFor, persona } = await import("./live-voice.ts");
 afterAll(() => {
   if (prev === undefined) delete process.env.FLEET_INBOX;
   else process.env.FLEET_INBOX = prev;
@@ -34,7 +34,9 @@ describe("conversation mode bridge (V1)", () => {
     expect(up.sent[0].setup.systemInstruction.parts[0].text).toContain("Alice");
     expect(up.sent[0].setup.systemInstruction.parts[0].text).toContain("pochteca docked");
     expect(up.sent[0].setup.systemInstruction.parts[0].text).toContain("royal princess");
-    expect(up.sent[0].setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe("Leda");
+    expect(liveVoiceFor("alice")).toBe("Sulafat");
+    // Her configured voice (agents/alice/agent.yaml live_voice), whatever the captain picked.
+    expect(up.sent[0].setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe(liveVoiceFor("alice"));
     // Words spoken before setup completes are held, then sent.
     s.audio(new Uint8Array([1, 2, 3, 4]));
     expect(up.sent.length).toBe(1);
