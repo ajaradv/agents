@@ -2,7 +2,7 @@
 // alice-voices - hear Alice's live-voice candidates and pick one.
 //
 //   bin/alice-voices                    play every candidate, one after another
-//   bin/alice-voices --only sulafat-original,sulafat-age   play just these
+//   bin/alice-voices --only sulafat-original,warm-sulafat   play just these
 //   bin/alice-voices --fresh            record the clips again (after editing her character)
 //   bin/alice-voices --record           record any missing clips (with --fresh: all of them) without playing
 //   bin/alice-voices --set Sulafat      make a voice her live voice (agents/alice/agent.yaml live_voice)
@@ -15,14 +15,21 @@ import { nodeKey } from "../dashboard/lib/fleet-env.ts";
 import { characterFor, LIVE_MODEL, liveVoiceFor } from "../dashboard/lib/live-voice.ts";
 import { ROOT } from "../dashboard/lib/paths.ts";
 
-// The captain's pick (2026-10-19): Sulafat with the original wording. Candidates are now
-// variations on it: each adds one nudge to agents/alice/character.md for the recording.
+// Finalist (2026-10-19): sulafat-original (kept). Candidates now explore two styles the
+// captain likes, described by their qualities (no imitation of real people): each replaces
+// the refined-accent line of agents/alice/character.md for the recording.
 const VOICES = ["Sulafat"];
+const WARM = "For this recording, set aside the Received Pronunciation. Her voice: warm, soft and slightly husky, with a natural, modern English accent (relaxed, not posh), expressive and kind, with an easy smile in it; youthful, early to mid twenties.";
+const LONDON = "For this recording, set aside the Received Pronunciation. Her voice: bright, sweet and light, with a casual London accent (dropped t's, relaxed vowels), conversational, breezy and a little cheeky; early twenties.";
 const VARIANTS: Record<string, { voice: string; extra: string }> = {
-  "sulafat-again": { voice: "Sulafat", extra: "" },
-  "sulafat-age": { voice: "Sulafat", extra: "She is a young woman of about 19 to 21, and she sounds it." },
-  "sulafat-bubbly": { voice: "Sulafat", extra: "A touch brighter and bubblier than usual, with a little more lift in her voice." },
-  "sulafat-soft": { voice: "Sulafat", extra: "Softer and closer than usual, almost hushed, very gentle." },
+  "warm-sulafat": { voice: "Sulafat", extra: WARM },
+  "warm-achernar": { voice: "Achernar", extra: WARM },
+  "warm-despina": { voice: "Despina", extra: WARM },
+  "warm-leda": { voice: "Leda", extra: WARM },
+  "london-leda": { voice: "Leda", extra: LONDON },
+  "london-zephyr": { voice: "Zephyr", extra: LONDON },
+  "london-laomedeia": { voice: "Laomedeia", extra: LONDON },
+  "london-autonoe": { voice: "Autonoe", extra: LONDON },
 };
 /** Earlier recordings kept for comparison (played, never re-recorded): fleet/home/voices/alice-<name>.wav. */
 const KEPT = ["sulafat-original"];
@@ -126,9 +133,9 @@ for (const k of kept) {
 for (const [i, n] of names.entries()) {
   const file = join(DIR, `alice-${n}.wav`);
   if (!existsSync(file)) continue;
-  console.log(`${i + 1}/${names.length}  ${n}${VARIANTS[n]!.extra ? `  (${VARIANTS[n]!.extra})` : "  (the original wording)"}`);
+  console.log(`${i + 1}/${names.length}  ${n}  (${VARIANTS[n]!.voice}, ${n.startsWith("warm") ? "warm, soft, slightly husky, natural English" : "bright, sweet, casual London"})`);
   await Bun.spawn(["afplay", file]).exited;
   await Bun.sleep(700);
 }
-console.log(`\nTell Claude Code which variation is closest; replay some with:  bin/alice-voices --only sulafat-original,sulafat-age`);
+console.log(`\nTell Claude Code which variation is closest; replay some with:  bin/alice-voices --only sulafat-original,warm-sulafat`);
 process.exit(0);
