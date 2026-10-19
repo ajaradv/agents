@@ -969,7 +969,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
 /** Which page code is on disk (the files' change times): an open tab compares it and reloads when it changes. */
 function pageBuild(): string {
   let parts = "";
-  for (const f of ["index.html", "app.js", "md.js", "live-voice.js", "pcm-capture.js", "pixel.css", "ui.css"]) {
+  for (const f of ["index.html", "app.js", "md.js", "live-voice.js", "pcm-capture.js", "harbor-chart.js", "pixel.css", "ui.css"]) {
     try {
       parts += statSync(join(publicDir, f)).mtimeMs.toFixed(0);
     } catch {

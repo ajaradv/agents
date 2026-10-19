@@ -27,6 +27,13 @@
   --vermilion: #9c1230;
   --night: #071018;
   --sheet: #fffaf2;
+  --sea: #cfe3dc;
+  --sea-deep: #2f6f7a;
+  --sea-deeper: #3a8590;
+  --drydock: #e8dcc2;
+  --drydock-deep: #8a6a3e;
+  --hull: #6b3f1f;
+  --hull-dark: #4a2a14;
   --line: #1a1a1a;
   --focus: #2436a8;
   --read: "Departure Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -861,6 +868,15 @@ body.chat-open { overflow: hidden; }
 .spend-note { background: var(--sheet); padding: 0.4rem 0.55rem; border: 1px solid var(--line); margin: 0; }
 
 /* ---------- Harbor and ship deck ---------- */
+/* Harbor sea chart: a 16:7 pixel canvas frame above the tile list. */
+.sea-chart { position: relative; margin-bottom: 0.9rem; }
+.sea-chart canvas { display: block; border: 1px solid var(--ink); background: var(--sheet); image-rendering: pixelated; }
+.sea-chart-tip {
+  position: absolute; z-index: 40; pointer-events: none; max-width: 18rem;
+  padding: 0.4rem 0.55rem; border: 1px solid var(--ink); background: var(--sheet); color: var(--ink);
+  font-family: "Silkscreen", ui-sans-serif, sans-serif; font-size: 0.72rem; line-height: 1.4;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
 .stack-tight { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
 .harbor { display: grid; gap: 0.9rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); }
 .ship-tile {
