@@ -488,3 +488,16 @@ export async function crewRequestRole(shipId: string, b: { from: string; role?: 
   const { requestGo } = await import("./fleet-api.ts");
   return requestGo(b.from, "crew_change", { ship: shipId, add: role }, why);
 }
+
+/** The lead asks to dock the voyage (with its summary): a Go request for the captain, never a direct API call. */
+export async function crewDockRequest(shipId: string, b: { from: string; summary?: string }): Promise<Res> {
+  const a = await aboard(shipId, b.from);
+  if ("error" in a) return a.error;
+  if (a.role !== "lead") return { ok: false, message: "Only the ship's lead asks to dock. Message the lead with crew_message instead." };
+  const v = await needVoyage(a.ship);
+  if ("ok" in v) return v;
+  const summary = String(b.summary ?? "").trim().replace(/\s+/g, " ").slice(0, 600);
+  if (summary.length < 10) return { ok: false, message: "Give the dock a summary: what the voyage delivered and how it was checked." };
+  const { requestGo } = await import("./fleet-api.ts");
+  return requestGo(b.from, "voyage_dock", { ship: shipId, summary });
+}

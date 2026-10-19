@@ -96,6 +96,8 @@ const DANGER: [RegExp, string][] = [
   [/\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+)+(\/|~|\$HOME|\/Users\/?[a-z]*\/?|\.\.)(\s|$|\/\*?(\s|$))/, "deletes a home or root folder"],
   [/\b(mkfs|diskutil\s+(erase|partition)|dd\s+[^;]*of=\/dev\/)/, "erases a disk"],
   [/\b(op\s+(read|item\s+get|inject|run)|security\s+(find-generic-password|find-internet-password|dump-keychain))\b/, "reads secrets"],
+  // The dashboard's and node's own APIs are for the captain's pages and fleet tools; an agent uses its tools (the fleet's first voyage docked itself with curl).
+  [/\b(curl|wget|http|xh)\b[^|;&]*\b(127\.0\.0\.1|localhost|0\.0\.0\.0):(8787|8786)\/(api|v1|chat|agents|partials\/[a-z-]+\/)/, "calls the fleet's own API directly instead of a fleet tool"],
   // The op CLI looks into the 1Password app's data on start, which asks the captain; agents get keys in their environment.
   [/(^|[\s;&|(])op\s+(whoami|signin|vault|item|account|document|user|group|connect|service-account|plugin|events-api)\b/, "runs the 1Password CLI"],
   [/\bchmod\s+(-R\s+)?777\s+\//, "opens permissions on system folders"],

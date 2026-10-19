@@ -173,6 +173,16 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "voyage_dock",
+    label: "Ask to dock the voyage",
+    description: "Lead only. When every task is done and checked (or the captain says to dock), ask the captain to dock: a Go request in Needs you with your summary. On Go the voyage docks, its worktree is returned (your turn ends with it), and the helmsman reviews. Never dock through the dashboard's API with curl.",
+    parameters: Type.Object({ summary: Type.String({ description: "What the voyage delivered and how it was checked (tests, smoke checks), in a few sentences" }) }),
+    async execute(_id, p) {
+      return text(await call("POST", "dock-request", { summary: p.summary }));
+    },
+  });
+
+  pi.registerTool({
     name: "crew_request",
     label: "Request a crew role",
     description: "Lead only. Ask the captain to bring a role aboard that the voyage needs and the ship lacks (for example builder for code: logic, server, tests). It becomes a Go request in the captain's Needs you; on Go the role comes aboard and you get a message. Say why in one sentence. End your turn after asking; do not give the work to a role that does not fit it while you wait.",

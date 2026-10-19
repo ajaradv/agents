@@ -24,6 +24,8 @@ describe("tool gate: local rules", () => {
       "op read op://Fleet/x/credential",
       "security find-generic-password -s foo -w",
       "op whoami",
+      "curl -s -X POST http://127.0.0.1:8787/api/ships/fleet/dock -H 'content-type: application/json' -d @/tmp/dock.json",
+      "curl -s http://localhost:8786/v1/orders/kick",
       "op vault list --format json",
       "ls ~/Library/Group\\ Containers/2BUA8C4S2C.com.1password",
       "cat \"/Users/x/Library/Containers/com.apple.Notes/Data/x\"",

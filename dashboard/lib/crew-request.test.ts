@@ -36,3 +36,13 @@ describe("the lead requests a missing role", () => {
     expect((await crewRequestRole("demo", { from: "demo-lead", role: "scout", why: "x" })).message).toContain("Say why");
   });
 });
+
+describe("the lead asks to dock", () => {
+  test("needs a summary and an open voyage; only the lead", async () => {
+    const { crewDockRequest } = await import("./crew-api.ts");
+    expect((await crewDockRequest("demo", { from: "demo-designer", summary: "All done and tested." })).message).toContain("Only the ship's lead");
+    const r = await crewDockRequest("demo", { from: "demo-lead", summary: "All done and tested." });
+    // No voyage is open on the scratch ship.
+    expect(r.ok).toBe(false);
+  });
+});

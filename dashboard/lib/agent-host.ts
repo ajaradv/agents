@@ -506,6 +506,18 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
     p.pending.clear();
     await dashLog("agent-host", `exit ${agentId} code=${code}`);
     const expected = code === 0 || code === 143 || code === null;
+    // A dock returns the voyage worktree, and treehouse ends the processes inside it: that is
+    // the voyage ending, not a crash (the lead that asked for the dock was mid-turn).
+    if (code === 143 && p.running && p.worktree) {
+      await Bun.sleep(1500); // the dock removes the worktree record right after the return
+      if (worktreeFor(agentId) !== p.worktree) {
+        hooks.event(agentId, { kind: "running", running: false });
+        hooks.event(agentId, { kind: "stream", text: "" });
+        hooks.event(agentId, { kind: "notice", text: "The voyage docked; this crewmate's turn ended with it.", level: "info" });
+        hooks.settled(agentId, { ok: true, ms: Date.now() - p.startedAt, cost: 0, tokens: 0 });
+        return;
+      }
+    }
     if (p.running || !expected) {
       const why = (p.stderrTail.trim().split("\n").filter(Boolean).slice(-3).join(" ") || `exit ${code}`).slice(0, 500);
       const reason = `${agentId} stopped${p.running ? " mid-task" : ""}: ${why}`;
