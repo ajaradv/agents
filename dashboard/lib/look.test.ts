@@ -35,4 +35,22 @@ describe("crew eyes", () => {
     expect(sent.messages[0].content[1].image_url.url).toStartWith("data:image/png;base64,");
     expect(sent.provider).toEqual({ data_collection: "deny" });
   });
+  test("an empty answer is tried once more, then named with the model's reason", async () => {
+    let calls = 0;
+    const empty = (async () => {
+      calls++;
+      return new Response(JSON.stringify({ choices: [{ message: { content: "" }, finish_reason: "length" }] }));
+    }) as unknown as typeof fetch;
+    const prev = process.env.OPENROUTER_API_KEY;
+    process.env.OPENROUTER_API_KEY = "test-key";
+    const r = await lookAt([{ path: png, type: "image/png" }], "Is there a flag?", empty);
+    let second = 0;
+    const flaky = (async () => new Response(JSON.stringify(second++ ? { choices: [{ message: { content: "Yes." } }] } : { choices: [{ message: { content: "" } }] }))) as unknown as typeof fetch;
+    const r2 = await lookAt([{ path: png, type: "image/png" }], "Is there a flag?", flaky);
+    if (prev === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = prev;
+    expect(calls).toBe(2);
+    expect(r).toMatchObject({ ok: false, error: "empty answer from the model (finish_reason length)" });
+    expect(r2).toMatchObject({ ok: true, answer: "Yes." });
+  });
 });

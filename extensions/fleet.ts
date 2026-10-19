@@ -50,7 +50,7 @@ async function call(method: "GET" | "POST", what: string, params: Record<string,
  * `tools: [+codemode, +tool_search]`); for others they stay ordinary tools.
  */
 const LAZY = process.env.FLEET_LAZY_TOOLS === "1";
-const RARE = LAZY ? ({ exposure: "codemode", namespace: { name: "fleet_actions", description: "Fleet actions that change state (each waits for the captain's Go outside an order) and maneuver history" } } as const) : {};
+const RARE = LAZY ? ({ exposure: "codemode", namespace: { name: "fleet_actions", description: "Fleet actions that change state (each waits for the captain's Go outside an order)" } } as const) : {};
 
 /** Every fleet tool can be a step of a running order. */
 const OrderArgs = {
@@ -101,7 +101,6 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "ship_maneuvers",
-    ...RARE,
     label: "Ship maneuvers",
     description: "A ship's recent SSSF maneuvers (ADW runs): status, phases, errors, cost; plus the ADWs it has.",
     parameters: Type.Object({ ship: Type.String(), ...OrderArgs }),

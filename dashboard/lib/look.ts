@@ -46,6 +46,16 @@ export async function lookAt(files: { path: string; type: string }[], question: 
     { type: "text", text: `${question.trim()}\n\nAnswer plainly and specifically about what is visible: name elements, their text, colours, and positions; say when something you were asked about is not visible. Do not guess beyond the image.` },
     ...files.map((f) => ({ type: "image_url", image_url: { url: `data:${f.type};base64,${readFileSync(f.path).toString("base64")}` } })),
   ];
+  // A 200 with no answer is a provider hiccup (OpenRouter puts the provider's error in the choice); one more try.
+  let last: LookResult | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    last = await lookOnce(fetchImpl, key, content, started);
+    if (last.ok || !last.error?.startsWith("empty answer")) return last;
+  }
+  return last!;
+}
+
+async function lookOnce(fetchImpl: typeof fetch, key: string, content: unknown[], started: number): Promise<LookResult> {
   try {
     const r = await fetchImpl("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -53,9 +63,12 @@ export async function lookAt(files: { path: string; type: string }[], question: 
       body: JSON.stringify({ model: LOOK_MODEL, messages: [{ role: "user", content }], max_tokens: 1600, usage: { include: true }, provider: { data_collection: "deny" } }),
       signal: AbortSignal.timeout(90_000),
     });
-    const body = (await r.json().catch(() => null)) as { choices?: { message?: { content?: string } }[]; usage?: { cost?: number }; error?: { message?: string } } | null;
-    const answer = String(body?.choices?.[0]?.message?.content ?? "").trim();
-    if (!r.ok || !answer) return { ok: false, answer: "", model: LOOK_MODEL, cost: Number(body?.usage?.cost) || 0, ms: Date.now() - started, error: body?.error?.message ?? `HTTP ${r.status}` };
+    const body = (await r.json().catch(() => null)) as { choices?: { message?: { content?: string }; finish_reason?: string; error?: { message?: string } }[]; usage?: { cost?: number }; error?: { message?: string } } | null;
+    const choice = body?.choices?.[0];
+    const answer = String(choice?.message?.content ?? "").trim();
+    const cost = Number(body?.usage?.cost) || 0;
+    if (!r.ok) return { ok: false, answer: "", model: LOOK_MODEL, cost, ms: Date.now() - started, error: body?.error?.message ?? `HTTP ${r.status}` };
+    if (!answer) return { ok: false, answer: "", model: LOOK_MODEL, cost, ms: Date.now() - started, error: `empty answer from the model (${choice?.error?.message ?? body?.error?.message ?? `finish_reason ${choice?.finish_reason ?? "none"}`})` };
     return { ok: true, answer, model: LOOK_MODEL, cost: Number(body?.usage?.cost) || 0, ms: Date.now() - started };
   } catch (e) {
     return { ok: false, answer: "", model: LOOK_MODEL, cost: 0, ms: Date.now() - started, error: e instanceof Error ? e.message : String(e) };

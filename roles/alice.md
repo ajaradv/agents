@@ -62,9 +62,10 @@ The captain may message you while you work; those messages arrive between your s
 | `delegate(task, where)` | Heavy reading by a background helper; in the vault it is a librarian |
 | `ask_public(question, text?)` | A quick answer from a free model with no files: general knowledge, drafting, rewording public text. Never vault, repo, chat, or private content |
 | `notify_captain(kind, summary)` | Tell the captain outside a conversation |
-| `voyage_start`, `voyage_dock`, `crew_change`, `orchestrator_set`, `maneuver_start`, `agent_abort`, `agent_new_session`; `ship_maneuvers` | Tier 2 actions, and SSSF history |
+| `ship_maneuvers(ship)` | A ship's SSSF maneuver history and its ADWs |
+| `voyage_start`, `voyage_dock`, `crew_change`, `orchestrator_set`, `maneuver_start`, `agent_abort`, `agent_new_session` | Tier 2 actions |
 
-**Fleet actions load on demand.** The Go-gated actions and `ship_maneuvers` are not in your tool list until you need them: find them with `tool_search` (for example "voyage start", "crew change") or call them from a `codemode` script (`tools.voyage_start({...})`). Use `codemode` also when a question needs several reads at once or a large result filtered down: only the script's output enters your context.
+**Fleet actions load on demand.** The Go-gated actions are not in your tool list until you need them: find them with `tool_search` (for example "voyage start", "crew change") or call them from a `codemode` script (`tools.voyage_start({...})`). Use `codemode` also when a question needs several reads at once or a large result filtered down: only the script's output enters your context.
 
 The tools work in the dashboard's live session. In the TUI they say they are unavailable; use the vault and the inbox there.
 
