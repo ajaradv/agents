@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   acceptCaptainLine,
@@ -32,6 +32,7 @@ import { decideGate, judgeCall, recordLocalStop, screenResult } from "./lib/tool
 import { adviseCompaction, cutPoint } from "./lib/compaction-advisor.ts";
 import { askAboutFiles } from "./lib/cheap-reads.ts";
 import { dashLog } from "./lib/log.ts";
+import { spawnTimed } from "./lib/proc.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
 import { backfillMetrics } from "./lib/metrics-backfill.ts";
 import { notifyCaptain, onNoticesChange, startDigestClock, type NoticeKind } from "./lib/notify.ts";
@@ -198,8 +199,19 @@ function startRuntime(): void {
     await acceptCrewLine(`${ship.id}-helmsman`, "helm", helmDigest(ship, `scheduled review (${r.every})`).slice(0, 8000));
     return `review sent to ${ship.id}-helmsman; proposals appear in Needs you`;
   };
+  // Code graphs (CodeGraph): keep each indexed ship repo current. Only repos that already have
+  // .codegraph/ are synced; indexing a repo is the captain's decision.
+  const codegraphSync = async (): Promise<string> => {
+    const synced: string[] = [];
+    for (const ship of await readShips()) {
+      if (!existsSync(join(ship.path, ".codegraph"))) continue;
+      const r = await spawnTimed(["codegraph", "sync", ship.path], { timeoutMs: 600_000, cwd: ship.path });
+      synced.push(`${ship.id}${r.exitCode === 0 ? "" : " (failed)"}`);
+    }
+    return synced.length ? `synced ${synced.join(", ")}` : "skipped: no ship repo has a code graph yet";
+  };
   startRoutines({
-    jobs: { "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview },
+    jobs: { "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview, "codegraph-sync": codegraphSync },
     runAgent: async (agentId, text) => void (await acceptCrewLine(agentId, "routine", text)),
     agentExists: (agentId) => allChatTargetIds().includes(agentId),
     budgetRefusal: (ship, agentId) => budgetRefusal(ship, agentId),

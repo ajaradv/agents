@@ -33,6 +33,21 @@ ENV_ALLOWLIST = frozenset(
 )
 
 
+def code_graph_line(ship_path: Path, isolation: str) -> str:
+    """A CodeGraph index in the ship repo (.codegraph/): tell the crew to start code questions there.
+    The index follows the captain's checkout (the base branch); VM crews have no codegraph binary."""
+    if isolation == "vm" or not (ship_path / ".codegraph").is_dir():
+        return ""
+    p = str(ship_path)
+    return (
+        f"- **Code graph:** this repo is indexed. Start code questions with `codegraph explore -p {p} \"<symbols or question>\"` "
+        f"(the relevant source and the call paths between it, in one call) before grep or reading files; "
+        f"`codegraph node -p {p} <symbol>` for one symbol with its callers and callees, `codegraph impact -p {p} <symbol>` "
+        f"before changing it, `codegraph affected -p {p} <files>` for the tests to run. The index follows the base branch, "
+        "so read the worktree's own copy of a file before editing it.\n"
+    )
+
+
 def parse_simple_yaml(path: Path) -> dict:
     """Parse flat agent.yaml files (scalars, lists, one-level nested maps).
 
@@ -724,6 +739,7 @@ def prepare_pi_launch(
             + f"- **Ship repo:** `{ship_path}`; stay in this project. Work for other ships belongs to their crews. "
             "During a voyage your working folder is the voyage's worktree (see This voyage, at the end).\n"
             + f"- **Delivery mode:** `{aboard.get('mode') or 'unset'}`\n"
+            + code_graph_line(ship_path, str(aboard.get("isolation") or ""))
             + f"- **Crew aboard:** {crew}\n"
             f"- **FLEET_INBOX:** `{inbox}`\n"
             f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
