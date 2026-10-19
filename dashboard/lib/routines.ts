@@ -1,8 +1,9 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { escapeHtml } from "./quota.ts";
-import { nodeStateDir, ROOT } from "./paths.ts";
+import { aliceVault, nodeStateDir, ROOT } from "./paths.ts";
+import { recentShipEvents } from "./ship-log.ts";
 import { baseDir, readShipConfig } from "./ship-config.ts";
 
 /**
@@ -24,9 +25,9 @@ import { baseDir, readShipConfig } from "./ship-config.ts";
  * `job: helm-review` reviews its own ship. Ship routines show as <ship>/<id>.
  */
 
-export type Routine = { id: string; title: string; every: string; agent?: string; prompt?: string; job?: string; ship?: string; enabled: boolean; layer: string };
+export type Routine = { id: string; title: string; every: string; agent?: string; prompt?: string; job?: string; ship?: string; enabled: boolean; layer: string; watch: string[] };
 export type Schedule = { kind: "interval"; ms: number } | { kind: "daily"; h: number; m: number } | { kind: "weekly"; dow: number; h: number; m: number };
-type RunState = { lastRun?: string; status?: "ok" | "error" | "sent" | "skipped"; note?: string; next?: string };
+type RunState = { lastRun?: string; status?: "ok" | "error" | "sent" | "skipped"; note?: string; next?: string; fingerprint?: string };
 export type RoutineDeps = {
   jobs: Record<string, (r: Routine) => Promise<string> | string>;
   runAgent: (agentId: string, text: string) => Promise<void>;
@@ -81,9 +82,13 @@ export function loadRoutines(path = routinesPath()): { routines: Routine[]; prob
 /** One routine from its fields, or the problem that keeps it from holding together. */
 function toRoutine(id: string, item: Record<string, unknown>, layer: string, ship?: string): { routine?: Routine; problem?: string } {
   const str = (k: string) => (typeof item?.[k] === "string" ? (item[k] as string).trim() : undefined);
-  const r: Routine = { id, title: str("title") ?? id, every: str("every") ?? "", agent: str("agent"), prompt: str("prompt"), job: str("job"), ship: ship ?? str("ship"), enabled: item?.enabled !== false, layer };
+  const r: Routine = { id, title: str("title") ?? id, every: str("every") ?? "", agent: str("agent"), prompt: str("prompt"), job: str("job"), ship: ship ?? str("ship"), enabled: item?.enabled !== false, layer, watch: [] };
+  // What the routine reads: when none of it changed since the last run, the run is skipped (N2).
+  const watch = Array.isArray(item?.watch) ? (item.watch as unknown[]).map(String) : typeof item?.watch === "string" ? [item.watch as string] : [];
+  r.watch = watch.length ? watch : r.job === "helm-review" && r.ship ? [`ship:${r.ship}`] : [];
   const key = ship ? id.slice(ship.length + 1) : id;
-  const bad = !/^[a-z][a-z0-9-]{1,60}$/.test(key) ? "needs an id (lowercase, dashes)" : !parseSchedule(r.every) ? `has a schedule the node does not read: "${r.every}"` : !!r.agent === !!r.job ? "needs exactly one of agent or job" : r.agent && !r.prompt ? "gives an agent no prompt" : ship && r.agent && !/^[a-z][a-z0-9_-]*$/.test(r.agent) ? "names a role that is not a role id" : null;
+  const badWatch = r.watch.find((w) => !/^(ships|ship:[a-z][a-z0-9_-]{0,63}|vault:[\w./ -]{1,200})$/.test(w) || w.includes(".."));
+  const bad = badWatch ? `watches something the node does not read: "${badWatch}" (ships, ship:<id>, or vault:<folder>)` : !/^[a-z][a-z0-9-]{1,60}$/.test(key) ? "needs an id (lowercase, dashes)" : !parseSchedule(r.every) ? `has a schedule the node does not read: "${r.every}"` : !!r.agent === !!r.job ? "needs exactly one of agent or job" : r.agent && !r.prompt ? "gives an agent no prompt" : ship && r.agent && !/^[a-z][a-z0-9_-]*$/.test(r.agent) ? "names a role that is not a role id" : null;
   return bad ? { problem: `${id || "(no id)"} ${bad}` } : { routine: r };
 }
 
@@ -163,6 +168,62 @@ export function agentText(r: Routine, now: Date): string {
   return `Routine "${r.title}" (${r.every}, ${now.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}).\n\n${r.prompt}\n\nWhen it is done, report with notify_captain: kind "info" when nothing needs the captain, "decision" or "blocked" when something does. Keep it short; put detail in the notice's detail.`;
 }
 
+/** Actors whose own events do not count as change (the routine's turns and the helm's reviews would otherwise always look new). */
+const QUIET_ACTORS = new Set(["helm", "routine", "orders"]);
+
+/** The newest activity on a ship's log, ignoring the routine's own agent; "" when there is none. */
+function shipActivity(ship: string, ignore: string): string {
+  const e = recentShipEvents(ship, 200).find((x) => !QUIET_ACTORS.has(x.actor) && x.actor !== ignore);
+  return e ? String(e.id) : "";
+}
+
+/** Names, sizes, and change times of the files under a vault folder (two levels), as one string. */
+function folderActivity(rel: string): string {
+  const root = join(aliceVault(), rel);
+  const out: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    let names: string[] = [];
+    try {
+      names = readdirSync(dir).filter((n) => !n.startsWith(".")).sort();
+    } catch {
+      return;
+    }
+    for (const n of names) {
+      const path = join(dir, n);
+      try {
+        const st = statSync(path);
+        if (st.isDirectory()) {
+          if (depth < 2) walk(path, depth + 1);
+        } else out.push(`${path.slice(root.length)}:${st.size}:${Math.round(st.mtimeMs)}`);
+      } catch {
+        /* vanished */
+      }
+    }
+  };
+  walk(root, 1);
+  return out.join("|");
+}
+
+/** One string for everything a routine watches; null when it watches nothing (it always runs). */
+export function fingerprint(r: Routine, shipIds: () => string[] = () => loadShipIds()): string | null {
+  if (!r.watch.length) return null;
+  const me = r.agent ? (r.layer === "fleet" ? r.agent : `${r.ship}-${r.agent}`) : r.ship ? `${r.ship}-helmsman` : "";
+  const parts = r.watch.map((w) => {
+    if (w === "ships") return shipIds().map((s) => `${s}=${shipActivity(s, me)}`).join(",");
+    if (w.startsWith("ship:")) return `${w}=${shipActivity(w.slice(5), me)}`;
+    return `${w}=${Bun.hash(folderActivity(w.slice(6))).toString(36)}`;
+  });
+  return Bun.hash(parts.join(";")).toString(36);
+}
+
+function loadShipIds(): string[] {
+  try {
+    return readdirSync(baseDir()).filter((f) => f.endsWith(".yaml")).map((f) => f.slice(0, -5)).sort();
+  } catch {
+    return [];
+  }
+}
+
 const running = new Set<string>();
 
 /**
@@ -181,9 +242,17 @@ export async function tickRoutines(now: Date, deps: RoutineDeps, path = routines
     if (!st.next) st.next = (sched.kind === "interval" && !st.lastRun ? new Date(now.getTime() + 3 * 60_000) : nextRun(sched, st.lastRun ? new Date(st.lastRun) : now)).toISOString();
     if (now < new Date(st.next)) continue;
     running.add(r.id);
+    const print = fingerprint(r);
+    const unchanged = print !== null && st.lastRun !== undefined && st.fingerprint === print;
     st.lastRun = now.toISOString();
     st.next = nextRun(sched, now).toISOString();
     try {
+      if (unchanged) {
+        st.status = "skipped";
+        st.note = `skipped: nothing changed in ${r.watch.join(", ")} since the last run`;
+        continue;
+      }
+      if (print !== null) st.fingerprint = print;
       if (r.job) {
         const job = deps.jobs[r.job];
         if (!job) throw new Error(`no node job named ${r.job}`);

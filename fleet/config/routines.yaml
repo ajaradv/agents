@@ -7,6 +7,8 @@
 #   agent     an agent id: it gets `prompt` as a message and a turn, and reports with notify_captain
 #   job       or a built-in node job: vault-doctor, free-models, due-tasks, helm-review (needs `ship`)
 #   enabled   false to keep a routine declared but off (default true)
+#   watch     what the routine reads: ships, ship:<id>, vault:<folder>; when none of it changed since
+#             the last run, the run is skipped (helm reviews watch their own ship by default)
 #
 # A ship's own routines (its helm review, a nightly check sweep) live under
 # `routines:` in fleet/ships/<ship>.yaml or its overlay; see docs/ship-config.md.
@@ -33,6 +35,7 @@ routines:
     title: Weekly fleet report for the captain
     every: weekly mon 09:00
     agent: alice
+    watch: [ships]
     prompt: |
       Write the captain's weekly fleet report for the last 7 days: spend by
       agent and model, voyages docked, Jev calls and cost, tool gate decisions
@@ -44,6 +47,7 @@ routines:
     title: Vault inbox triage
     every: daily 08:00
     agent: alice
+    watch: ["vault:inbox"]
     prompt: |
       Triage the vault inbox: file each new note where it belongs (task, plan,
       research, reference), fix its frontmatter, and link it from the right

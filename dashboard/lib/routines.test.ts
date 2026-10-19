@@ -117,3 +117,37 @@ describe("ship routines", () => {
     expect(sent).toEqual(["kinwork-lead"]);
   });
 });
+
+describe("skip when nothing changed (N2)", () => {
+  test("a watching routine runs, then skips while its inputs are unchanged, and runs again once they change", async () => {
+    const vault = join(inbox, "vault");
+    mkdirSync(join(vault, "inbox"), { recursive: true });
+    const prevVault = process.env.ALICE_VAULT;
+    process.env.ALICE_VAULT = vault;
+    const f = join(inbox, "watch.yaml");
+    writeFileSync(f, "routines:\n  - { id: triage, every: daily 08:00, agent: alice, prompt: Triage., watch: [\"vault:inbox\"] }\n  - { id: bad-watch, every: daily 08:00, job: count, watch: [\"vault:../x\"] }\n");
+    const sent: string[] = [];
+    // Only Alice's sends count (the ship fixtures above run in the same ticks).
+    const deps = { jobs: {}, runAgent: async (a: string) => void (a === "alice" && sent.push(a)), agentExists: () => true };
+    expect(r.loadFleetRoutines(f).problems[0]).toContain("watches something the node does not read");
+    writeFileSync(join(vault, "inbox", "a.md"), "one");
+    await r.tickRoutines(new Date(2026, 10, 3, 7, 0), deps, f);
+    await r.tickRoutines(new Date(2026, 10, 3, 8, 1), deps, f);
+    expect(sent.length).toBe(1);
+    await r.tickRoutines(new Date(2026, 10, 4, 8, 1), deps, f);
+    expect(sent.length).toBe(1);
+    process.env.FLEET_ROUTINES_FILE = f;
+    expect(r.routinesHtml()).toContain("skipped: nothing changed in vault:inbox");
+    delete process.env.FLEET_ROUTINES_FILE;
+    writeFileSync(join(vault, "inbox", "b.md"), "two");
+    await r.tickRoutines(new Date(2026, 10, 5, 8, 1), deps, f);
+    expect(sent.length).toBe(2);
+    if (prevVault === undefined) delete process.env.ALICE_VAULT;
+    else process.env.ALICE_VAULT = prevVault;
+  });
+  test("helm reviews watch their own ship by default", () => {
+    const { routines } = r.loadShipRoutines();
+    expect(routines.find((x) => x.id === "kinwork/helm-review")?.watch).toEqual(["ship:kinwork"]);
+    expect(routines.find((x) => x.id === "kinwork/nightly-checks")?.watch).toEqual([]);
+  });
+});
