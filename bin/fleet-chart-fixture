@@ -1,0 +1,216 @@
+#!/usr/bin/env bun
+// fleet-chart-fixture - seed a throwaway dashboard with a stormy ship, a
+// nearly-spent-budget ship, and a clear ship, then print the launch command.
+//
+//   bin/fleet-chart-fixture <scratch-dir>
+//
+// Writes, under <scratch-dir>:
+//   fleet/ships/*.yaml            ship configs with crew_budgets:
+//   vault/fleet/voyages/<ship>/   sailing voyage notes (ALICE_VAULT)
+//   inbox/ships/<ship>/ship.db    events + tasks (FLEET_INBOX)
+//
+// The scenario:
+//   galleon   storm   — 4 turn-end events in the last 30 min, all erroring.
+//   schooner  vermilion — today's turn-end cost sums past 85% of its budget.
+//   ketch     clear   — a little spend, no errors, most of its budget left.
+//
+// Timestamps are relative to now so both the 30-minute weather window and the
+// "today" budget window hit. Self-contained: bun:sqlite only, no dashboard
+// imports, so it runs anywhere bun does.
+
+import { Database } from "bun:sqlite";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+// ---------------------------------------------------------------- scenario
+
+const MIN = 60_000;
+
+type Ship = {
+  id: string;
+  role: string;
+  budget: number;
+  /** turn-end events: [minutesAgo, costUsd, error?] */
+  turns: [number, number, string | null][];
+};
+
+// galleon: 4 turn-ends all within the half hour, all erroring (rate 1.0 → storm).
+const galleon: Ship = {
+  id: "galleon",
+  role: "builder",
+  budget: 10,
+  turns: [
+    [4, 0.1, "maneuver phase failed"],
+    [9, 0.1, "turn-end error"],
+    [14, 0.1, "turn-end error"],
+    [19, 0.1, "turn-end error"],
+  ],
+};
+
+// schooner: clean turns, but today's cost is $8.60 of a $10 budget (86% → vermilion).
+const schooner: Ship = {
+  id: "schooner",
+  role: "builder",
+  budget: 10,
+  turns: [
+    [3, 2.15, null],
+    [8, 2.15, null],
+    [13, 2.15, null],
+    [18, 2.15, null],
+  ],
+};
+
+// ketch: a little spend, no errors (clear sky, teal gauge).
+const ketch: Ship = {
+  id: "ketch",
+  role: "builder",
+  budget: 10,
+  turns: [
+    [2, 0.25, null],
+    [7, 0.25, null],
+    [12, 0.25, null],
+    [17, 0.25, null],
+  ],
+};
+
+const SHIPS: Ship[] = [galleon, schooner, ketch];
+
+// ---------------------------------------------------------------- writing
+
+function shipYaml(s: Ship): string {
+  const path = `/nonexistent/${s.id}`; // no repo on disk: maneuvers read as [].
+  return `# Fixture ship seeded by bin/fleet-chart-fixture (throwaway dashboard only).
+id: ${s.id}
+path: ${path}
+orchestrator: lead
+mode: local-only
+crew:
+  - ${s.role}
+crew_budgets:
+  ${s.role}: ${s.budget}
+`;
+}
+
+function voyageNote(s: Ship, started: string): string {
+  return `---
+ship: ${s.id}
+status: sailing
+goal: ${s.id === "galleon" ? "Sail through a storm" : s.id === "schooner" ? "Spend the ration on the crossing" : "A calm crossing"} (fixture)
+to: the far island
+started: ${started}
+---
+
+# ${s.id} fixture voyage
+
+Seeded by \`bin/fleet-chart-fixture\`. Throwaway data for the phase-3 weather and
+supply smoke check; not a real voyage.
+`;
+}
+
+const EVENTS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS events (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts            TEXT NOT NULL,
+  actor         TEXT NOT NULL,
+  kind          TEXT NOT NULL,
+  summary       TEXT NOT NULL DEFAULT '',
+  payload_json  TEXT
+);
+CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
+CREATE INDEX IF NOT EXISTS events_actor ON events(actor, ts);
+CREATE TABLE IF NOT EXISTS tasks (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  voyage        TEXT NOT NULL,
+  title         TEXT NOT NULL,
+  detail        TEXT NOT NULL DEFAULT '',
+  assignee      TEXT,
+  kind          TEXT NOT NULL DEFAULT 'crew',
+  adw_id        TEXT,
+  status        TEXT NOT NULL DEFAULT 'open',
+  note          TEXT NOT NULL DEFAULT '',
+  blocked_by    TEXT NOT NULL DEFAULT '',
+  role          TEXT,
+  created_by    TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tasks_voyage ON tasks(voyage, id);
+`;
+
+function seedDb(db: Database, s: Ship, voyageFile: string, now: Date): void {
+  db.exec("PRAGMA journal_mode = WAL;");
+  db.exec(EVENTS_SCHEMA);
+
+  const actor = `${s.id}-${s.role}`;
+  const ins = db.query(
+    "INSERT INTO events (ts, actor, kind, summary, payload_json) VALUES (?, ?, ?, ?, ?)",
+  );
+  for (const [agoMin, cost, error] of s.turns) {
+    const ts = new Date(now.getTime() - agoMin * MIN).toISOString();
+    const payload = { cost, tokens: 1234, ...(error ? { error } : {}) };
+    ins.run(ts, actor, "turn-end", error ? `turn ended with ${error}` : "turn ended", JSON.stringify(payload));
+  }
+
+  // Two tasks per ship so the voyage has a plotted course.
+  const tasks = [
+    { title: "Sail out", status: "done", assignee: actor },
+    { title: "Make landfall", status: "working", assignee: actor },
+  ];
+  const tIns = db.query(
+    "INSERT INTO tasks (voyage, title, detail, assignee, kind, adw_id, status, note, blocked_by, role, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 'crew', NULL, ?, '', '', NULL, 'lead', ?, ?)",
+  );
+  for (const t of tasks) {
+    tIns.run(voyageFile, t.title, `${t.title} (fixture)`, t.assignee, t.status, now.toISOString(), now.toISOString());
+  }
+}
+
+// ---------------------------------------------------------------- main
+
+function main(): void {
+  const scratch = process.argv[2];
+  if (!scratch) {
+    console.error("usage: bin/fleet-chart-fixture <scratch-dir>");
+    process.exit(1);
+  }
+
+  const shipsDir = join(scratch, "fleet", "ships");
+  const vault = join(scratch, "vault");
+  const inbox = join(scratch, "inbox");
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+
+  mkdirSync(shipsDir, { recursive: true });
+
+  for (const s of SHIPS) {
+    // fleet/ships/<id>.yaml
+    writeFileSync(join(shipsDir, `${s.id}.yaml`), shipYaml(s));
+
+    // ALICE_VAULT/fleet/voyages/<id>/<date>-<slug>.md (sailing)
+    const voyageDir = join(vault, "fleet", "voyages", s.id);
+    mkdirSync(voyageDir, { recursive: true });
+    const fileName = `${today}-${s.id}-fixture.md`;
+    const voyageFile = join(voyageDir, fileName);
+    writeFileSync(voyageFile, voyageNote(s, now.toISOString()));
+
+    // FLEET_INBOX/ships/<id>/ship.db
+    const dbDir = join(inbox, "ships", s.id);
+    mkdirSync(dbDir, { recursive: true });
+    const db = new Database(join(dbDir, "ship.db"), { create: true });
+    seedDb(db, s, voyageFile, now);
+    db.close();
+  }
+
+  console.log(`Seeded ${SHIPS.length} ships into ${scratch}:`);
+  console.log(`  galleon   storm     — 4 erroring turn-ends in the last 30 min`);
+  console.log(`  schooner  vermilion — $8.60 of a $10 budget today (86%)`);
+  console.log(`  ketch     clear     — $1.00 of a $10 budget today (10%)`);
+  console.log("");
+  console.log("Launch the throwaway dashboard (and stop it by pid when done):");
+  console.log("");
+  console.log(`  DASHBOARD_PORT=8797 FLEET_NODE_SPAWN=0 FLEET_SHIPS_DIR=${shipsDir} FLEET_INBOX=${inbox} ALICE_VAULT=${vault} bun dashboard/server.ts`);
+  console.log("");
+  console.log("Then check:  curl http://127.0.0.1:8797/api/harbor/chart");
+  console.log("             bin/fleet-shot http://127.0.0.1:8797/harbor --both");
+}
+
+main();
