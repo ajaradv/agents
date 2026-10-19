@@ -468,3 +468,23 @@ async function reconcileManeuvers(ship: ShipRow, v: Voyage): Promise<void> {
     if (s.ended) await settleOnce(ship, t.id, t.adwId, s.status === "pass" || s.status === "ok" || s.status === "done" ? 0 : 1);
   }
 }
+
+/**
+ * The lead asks for a role that is not aboard (a builder for code, say). It
+ * becomes a Go request for the captain (crew_change add, with the lead's
+ * reason); on Go the role comes aboard and the lead is told.
+ */
+export async function crewRequestRole(shipId: string, b: { from: string; role?: string; why?: string }): Promise<Res> {
+  const a = await aboard(shipId, b.from);
+  if ("error" in a) return a.error;
+  if (a.role !== "lead") return { ok: false, message: "Only the ship's lead requests crew. Message the lead with crew_message instead." };
+  const role = String(b.role ?? "").trim();
+  const { crewRoles } = await import("./shipyard.ts");
+  const roles = (await crewRoles()).map((r) => r.id);
+  if (!roles.includes(role)) return { ok: false, message: `${role || "That"} is not a crew role. Roles: ${roles.join(", ")}.` };
+  if (a.ship.crew.includes(role)) return { ok: false, message: `A ${role} is already aboard: ${shipId}-${role}.` };
+  const why = String(b.why ?? "").trim();
+  if (why.length < 8) return { ok: false, message: "Say why the voyage needs this role (one sentence the captain reads with the request)." };
+  const { requestGo } = await import("./fleet-api.ts");
+  return requestGo(b.from, "crew_change", { ship: shipId, add: role }, why);
+}

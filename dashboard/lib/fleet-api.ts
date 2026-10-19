@@ -283,10 +283,11 @@ export async function runFleetAction(tool: string, a: Record<string, string>): P
 }
 
 /** Outside an order: hold the action for the captain's Go and ask in the officer's thread. */
-export async function requestGo(from: string, tool: string, a: Record<string, string>): Promise<Res> {
+export async function requestGo(from: string, tool: string, a: Record<string, string>, why = ""): Promise<Res> {
   const bad = tier2ArgError(tool, a);
   if (bad) return { ok: false, message: bad };
-  const summary = describeAction(tool, a);
+  const reason = why.trim().replace(/\s+/g, " ").slice(0, 300);
+  const summary = `${describeAction(tool, a)}${reason ? ` Why: ${reason}` : ""}`;
   const id = crypto.randomUUID().slice(0, 12);
   const line = await postLine(from, {
     ts: new Date().toISOString(),

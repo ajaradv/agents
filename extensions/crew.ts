@@ -173,6 +173,19 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "crew_request",
+    label: "Request a crew role",
+    description: "Lead only. Ask the captain to bring a role aboard that the voyage needs and the ship lacks (for example builder for code: logic, server, tests). It becomes a Go request in the captain's Needs you; on Go the role comes aboard and you get a message. Say why in one sentence. End your turn after asking; do not give the work to a role that does not fit it while you wait.",
+    parameters: Type.Object({
+      role: Type.String({ description: "The crew role to bring aboard (e.g. builder, scout, designer)" }),
+      why: Type.String({ description: "One sentence: what the voyage needs this role for" }),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "crew-request", { role: p.role, why: p.why }));
+    },
+  });
+
+  pi.registerTool({
     name: "task_update",
     label: "Update a voyage task",
     description: "Lead only. Change any task's status or note, reassign it (the new assignee gets the task, or gets it once what it waits on is done), or change what it waits on (blocked_by: the full list; [] for nothing).",

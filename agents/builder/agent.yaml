@@ -1,0 +1,14 @@
+id: builder
+type: assistant
+role: builder
+harness: pi
+# Writes the code aboard a ship: logic, server, data, tests (the designer owns
+# look and feel). DeepSeek V4 Pro, like the lead: long sessions need real prompt
+# caching. Backup: the same model through OpenRouter when DeepSeek fails that day.
+model: deepseek/deepseek-v4-pro
+fallback_model: openrouter/deepseek/deepseek-v4-pro
+# crew: only — exists only aboard ships, as <ship>-builder.
+crew: only
+# Branch names and commit messages in the conventional form python-semantic-release reads.
+skill_paths:
+  - skills/git-conventions
