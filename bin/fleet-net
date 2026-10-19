@@ -1,0 +1,115 @@
+#!/usr/bin/env bun
+// fleet-net - the machines the fleet runs on (fleet/home/fleet-network.yaml):
+// list them, check one (OS, chip, tools, repo, services), and install or update
+// the fleet node there. Secrets never travel: `up` copies 1Password references
+// only; store the service account token on the device with bin/fleet-op-token --store.
+//
+//   bin/fleet-net                    the devices, and problems with the file
+//   bin/fleet-net check <device>     what the device has and what it is missing
+//   bin/fleet-net up <device> [--dry-run]   clone or update, bun install, just test, services
+//
+// Example file: fleet/config/fleet-network.example.yaml. Output is TOON (docs/tool-standards.md).
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { encode } from "@toon-format/toon";
+import { loadDevices, missingTools, networkPath, onDevice, parseFacts, planUp, PROBE, repoProbe, type Device } from "../dashboard/lib/fleet-net.ts";
+import { ROOT } from "../dashboard/lib/paths.ts";
+import { spawnTimed } from "../dashboard/lib/proc.ts";
+
+const COMMANDS = ["check", "up"] as const;
+const FLAGS: Record<string, string[]> = { "": [], check: [], up: ["--dry-run"] };
+const HELP: Record<string, string> = {
+  "": `command: fleet-net
+summary: The machines the fleet runs on: list, check one, install or update the fleet node there
+usage: bin/fleet-net [check|up] <device> ...
+commands[2]{command,what}:
+  check,"OS, chip, memory, tools, the repo and its branch, and what is missing (with how to install it)"
+  up,"clone or update the repo on its branch, bun install, just test, copy 1Password references, install services (--dry-run prints the steps)"
+flags[1]{flag,description}:
+  --help,"show this help (also after a command)"
+examples[3]:
+  bin/fleet-net
+  bin/fleet-net check old-macbook
+  bin/fleet-net up old-macbook --dry-run`,
+  check: "command: fleet-net check\nusage: bin/fleet-net check <device>\nflags[1]{flag,description}:\n  --help,show this help\nexamples[2]:\n  bin/fleet-net check local\n  bin/fleet-net check old-macbook",
+  up: "command: fleet-net up\nusage: bin/fleet-net up <device> [--dry-run]\nsummary: Install or update the fleet on a device; nothing secret is copied\nflags[2]{flag,description}:\n  --dry-run,print the steps and run nothing\n  --help,show this help\nexamples[2]:\n  bin/fleet-net up old-macbook --dry-run\n  bin/fleet-net up old-macbook",
+};
+
+const [cmd = "", ...rest] = process.argv.slice(2);
+const out = (o: Record<string, unknown>) => console.log(encode(o));
+function fail(error: string, suggestion: string, code = 2): never {
+  out({ error, suggestion });
+  process.exit(code);
+}
+
+async function sh(command: string, timeoutMs = 60_000): Promise<{ ok: boolean; out: string }> {
+  const r = await spawnTimed(["bash", "-c", command], { timeoutMs, cwd: ROOT });
+  return { ok: !r.timedOut && r.exitCode === 0, out: (r.stdout + (r.exitCode === 0 ? "" : `\n${r.stderr}`)).trim() };
+}
+
+function device(id: string | undefined): Device {
+  const { devices } = loadDevices();
+  if (!id) fail("name a device", `devices: ${devices.map((d) => d.id).join(", ")} (bin/fleet-net)`);
+  const d = devices.find((x) => x.id === id);
+  if (!d) fail(`no device named ${id}`, `devices: ${devices.map((x) => x.id).join(", ")}; add it to ${networkPath()} (example: fleet/config/fleet-network.example.yaml)`);
+  return d;
+}
+
+async function main(): Promise<void> {
+  if (cmd === "--version" || cmd === "-v" || cmd === "-V") return void console.log("1.0.0");
+  if (cmd === "--help" || cmd === "-h" || rest.includes("--help")) {
+    const h = HELP[cmd.startsWith("-") ? "" : cmd];
+    if (h === undefined) fail(`unknown command ${cmd}`, `commands: ${COMMANDS.join(", ")} (bin/fleet-net --help)`);
+    return void console.log(h);
+  }
+  if (cmd && !(COMMANDS as readonly string[]).includes(cmd)) fail(`unknown command ${cmd}`, `commands: ${COMMANDS.join(", ")} (bin/fleet-net --help)`);
+  for (const a of rest) if (a.startsWith("--") && !(FLAGS[cmd] ?? []).includes(a)) fail(`unknown flag ${a}`, `valid flags: ${[...(FLAGS[cmd] ?? []), "--help"].join(", ")}`);
+
+  if (!cmd) {
+    const { devices, problems } = loadDevices();
+    return out({
+      file: existsSync(networkPath()) ? networkPath().replace(process.env.HOME ?? "\u0000", "~") : "none yet (only local); copy fleet/config/fleet-network.example.yaml to fleet/home/fleet-network.yaml",
+      devices: devices.map((d) => ({ id: d.id, name: d.name, kind: d.kind, ssh: d.ssh ?? "", branch: d.branch || "(current)", roles: d.roles.join(" ") })),
+      problems,
+      help: ["bin/fleet-net check <device>", "bin/fleet-net up <device> --dry-run"],
+    });
+  }
+
+  const d = device(rest.find((a) => !a.startsWith("--")));
+  if (cmd === "check") {
+    const probe = await sh(onDevice(d, `${PROBE}; ${repoProbe(d)}`), 30_000);
+    if (!probe.ok && !probe.out.includes("os=")) fail(`could not reach ${d.id} (${d.ssh ?? "local"}): ${probe.out.slice(0, 200)}`, `check Tailscale and Remote Login on the device, then ssh ${d.ssh ?? ""} once by hand`, 1);
+    const f = parseFacts(probe.out);
+    const missing = missingTools(f);
+    return out({
+      device: d.id,
+      result: `${f.os ?? "?"} ${f.version ?? ""} on ${f.arch ?? "?"}, ${f.cpus ?? "?"} CPUs, ${f.memory_gb ?? "?"} GB, ${f.disk_free ?? "?"} free`,
+      repo: f.repo === "yes" ? `${d.codeDir} on ${f.branch} (${f.head})` : `not at ${d.codeDir} yet`,
+      tailscale: f.tool_tailscale === "yes" ? "installed" : "not found on PATH (the app may still be installed)",
+      docker: f.tool_docker === "yes" ? "installed" : "not installed (pochteca's frontend check needs it)",
+      github: f.github === "yes" ? "ssh access works" : "no GitHub ssh access: on the device run gh auth login (or add an ssh key to GitHub) so up can clone",
+      missing: missing.length ? missing : "0 tools missing",
+      help: [missing.length ? "install the missing tools on the device, then check again" : `bin/fleet-net up ${d.id} --dry-run`],
+    });
+  }
+
+  // up
+  const dry = rest.includes("--dry-run");
+  const repoUrl = (await sh("git remote get-url origin")).out;
+  const hasRepo = d.kind === "local" ? true : parseFacts((await sh(onDevice(d, repoProbe(d)), 30_000)).out).repo === "yes";
+  const steps = planUp(d, { repoUrl, hasRepo, envOp: existsSync(join(ROOT, "fleet", "home", ".env.op")) });
+  if (dry) return out({ device: d.id, result: `${steps.length} step(s); nothing run (--dry-run)`, steps: steps.map((s) => ({ step: s.step, where: s.where, cmd: s.where === "device" ? onDevice(d, s.cmd) : s.cmd })), help: [`bin/fleet-net up ${d.id}`] });
+  const done: { step: string; ok: boolean; detail: string }[] = [];
+  for (const s of steps) {
+    const r = await sh(s.where === "device" ? onDevice(d, s.cmd) : s.cmd, 600_000);
+    done.push({ step: s.step, ok: r.ok, detail: r.out.split("\n").slice(-2).join(" ").slice(0, 160) });
+    if (!r.ok) {
+      out({ device: d.id, error: `step "${s.step}" failed`, steps: done, suggestion: "fix it on the device, then run up again (steps are safe to repeat)" });
+      process.exit(1);
+    }
+  }
+  return out({ device: d.id, result: `${steps.length} step(s) done`, steps: done, next: d.kind === "local" ? "" : `on the device: bin/fleet-op-token --store (the service account token), then bin/fleet-net check ${d.id}`, help: [`bin/fleet-net check ${d.id}`] });
+}
+
+await main();
+process.exit(0);

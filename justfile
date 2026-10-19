@@ -56,7 +56,7 @@ axi-check-scripts:
     set -uo pipefail
     cd "{{root}}"
     fails=0
-    for c in bin/stamp-ship bin/new-agent bin/order "bun bin/plan-execution.ts" bin/agent-portrait bin/vault-doctor bin/phone-check bin/fleet-op-token bin/fleet-axi; do
+    for c in bin/stamp-ship bin/new-agent bin/order "bun bin/plan-execution.ts" bin/agent-portrait bin/vault-doctor bin/phone-check bin/fleet-op-token bin/fleet-axi bin/fleet-net; do
       line="$(npx -y axi-axi@0.1.0 validate "$c" --strict 2>&1 | grep '^summary')"
       printf '%-28s %s\n' "$c" "$line"
       case "$line" in *" 0 fail, 0 warn"*) ;; *) fails=$((fails + 1)) ;; esac
