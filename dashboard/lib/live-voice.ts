@@ -27,6 +27,33 @@ export const LIVE_TOOLS = [
   { name: "vault_tasks", description: "The captain's vault tasks: by filter (ready, open, in-progress, blocked, done) or one task by id.", parameters: { type: "OBJECT", properties: { filter: { type: "STRING", description: "ready (default), open, in-progress, blocked, done" }, id: { type: "STRING", description: "One task's id" } } } },
 ];
 
+/** V3: acting by voice. The dashboard supplies these; every call passes the policy door below. */
+export type LiveActions = {
+  /** Hand a message to the full Alice (her chat thread, as the captain's words); her reply is relayed later. */
+  sendToAlice(text: string): Promise<void>;
+  /** What waits on the captain (Go requests with their goId, questions, proposals). */
+  needsYou(): Promise<{ id: string; kind: string; goId?: string; summary: string }[]>;
+  decideGo(goId: string, go: boolean): Promise<{ ok: boolean; message: string }>;
+};
+
+export const ACTION_TOOLS = [
+  { name: "ask_alice", description: "Hand a request to the full Alice in the chat, who can act on the fleet (set sail, dock, crew changes, orders) and asks the captain's Go for anything that changes things. Use it for any action or for work you cannot do by voice. Returns at once; her reply arrives later and you will be told to relay it.", parameters: { type: "OBJECT", properties: { message: { type: "STRING", description: "The request in the captain's words, complete enough for Alice to act on" } }, required: ["message"] } },
+  { name: "needs_you", description: "What waits on the captain right now: Go requests (each with a go_id), questions, helm proposals, notices.", parameters: { type: "OBJECT", properties: {} } },
+  { name: "decide_go", description: "Give or refuse the captain's Go on one pending Go request (go_id from needs_you). Only after the captain has just said go (or no) to that specific request in their own words; read it back first. The server checks the captain's last words and refuses otherwise.", parameters: { type: "OBJECT", properties: { go_id: { type: "STRING" }, decision: { type: "STRING", description: "go or no" } }, required: ["go_id", "decision"] } },
+];
+
+const AFFIRM = /\b(go|yes|yeah|yep|approve[ds]?|do it|go ahead|confirm(ed)?|proceed)\b/i;
+const DENY = /\b(no|nope|don'?t|do not|deny|decline|cancel|stop|reject)\b/i;
+
+/** The policy door for decide_go: the captain's own last words must say it (live-dj's before_tool_callback). */
+export function goPolicy(decision: string, captainWords: string): string | null {
+  const said = captainWords.trim();
+  if (!said) return "The captain has not said anything yet; ask them to say go or no for this request.";
+  if (decision === "go") return AFFIRM.test(said) && !DENY.test(said) ? null : `The captain's last words ("${said.slice(0, 120)}") are not a clear go; read the request back and ask them to say go.`;
+  if (decision === "no") return DENY.test(said) ? null : `The captain's last words ("${said.slice(0, 120)}") are not a clear no; ask them.`;
+  return "decision must be go or no.";
+}
+
 /** Run a live tool; compact text back to the model, a one-line summary for the drawer's action log. */
 export async function runLiveTool(name: string, args: Record<string, unknown>): Promise<{ result: string; summary: string }> {
   const { fleetStatus, shipLog, shipTasks } = await import("./fleet-api.ts");
@@ -88,7 +115,7 @@ export function persona(agent: string, character = "", briefing = ""): string {
     "The fleet is the captain's set of AI agents: officers (Alice, the Architect, the Designer) and ship crews (a lead, a builder, a scout, a designer, a helmsman) that sail voyages on the captain's projects.",
     "Speak naturally and briefly: one to three sentences, then let the captain talk. The captain can interrupt you; when they do, stop and listen.",
     briefing ? `What you know about the fleet right now (a snapshot from when this talk began; it does not update):\n${briefing}` : "",
-    "For fresh detail, use your tools (fleet_status, ship, vault_tasks) rather than guessing; say briefly that you are checking. You cannot act on the fleet by voice yet: for an action, say so plainly and suggest typing it to Alice in the chat, where the full Alice can act after the captain's Go. Never invent fleet facts.",
+    "For fresh detail, use your tools (fleet_status, ship, vault_tasks) rather than guessing; say briefly that you are checking. To act on the fleet, hand it to the full Alice with ask_alice (she asks the captain's Go); tell the captain you have passed it on. For a pending Go, read the request back (needs_you), wait for the captain to say go or no, then call decide_go. Never invent fleet facts.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -104,10 +131,11 @@ export class LiveSession {
   private started = Date.now();
   private closed = false;
   private actions: string[] = [];
+  private prevCaptainText = "";
 
   constructor(
     private sink: LiveSink,
-    private opts: { agent: string; connect?: (url: string) => Upstream; key?: () => Promise<string>; briefing?: () => Promise<string>; character?: string; voice?: string; tool?: typeof runLiveTool },
+    private opts: { agent: string; connect?: (url: string) => Upstream; key?: () => Promise<string>; briefing?: () => Promise<string>; character?: string; voice?: string; tool?: typeof runLiveTool; actions?: LiveActions },
   ) {}
 
   async start(): Promise<void> {
@@ -131,7 +159,7 @@ export class LiveSession {
             systemInstruction: { parts: [{ text: instruction }] },
             inputAudioTranscription: {},
             outputAudioTranscription: {},
-            tools: [{ functionDeclarations: LIVE_TOOLS }],
+            tools: [{ functionDeclarations: this.opts.actions ? [...LIVE_TOOLS, ...ACTION_TOOLS] : LIVE_TOOLS }],
           },
         }),
       );
@@ -219,17 +247,52 @@ export class LiveSession {
     const responses = [];
     for (const c of calls) {
       const t0 = Date.now();
-      let out: { result: string; summary: string };
+      let out: { result: string; summary: string; verdict?: "allowed" | "blocked" };
       try {
-        out = await (this.opts.tool ?? runLiveTool)(c.name, c.args ?? {});
+        out = ACTION_TOOLS.some((t) => t.name === c.name) ? await this.action(c.name, c.args ?? {}) : await (this.opts.tool ?? runLiveTool)(c.name, c.args ?? {});
       } catch (e) {
         out = { result: `The lookup failed: ${e instanceof Error ? e.message : String(e)}`, summary: `${c.name} failed` };
       }
-      this.sink.event({ type: "action", name: c.name, summary: out.summary, ms: Date.now() - t0 });
+      this.sink.event({ type: "action", name: c.name, summary: out.summary, ms: Date.now() - t0, ...(out.verdict ? { verdict: out.verdict } : {}) });
       this.actions.push(out.summary);
       responses.push({ id: c.id, name: c.name, response: { result: out.result } });
     }
     this.up?.send(JSON.stringify({ toolResponse: { functionResponses: responses } }));
+  }
+
+  /** V3 actions: hand-offs to the full Alice, what needs the captain, and the Go behind the policy door. */
+  private async action(name: string, args: Record<string, unknown>): Promise<{ result: string; summary: string; verdict?: "allowed" | "blocked" }> {
+    const a = this.opts.actions;
+    if (!a) return { result: "Acting by voice is not available in this session.", summary: `${name} unavailable`, verdict: "blocked" };
+    if (name === "ask_alice") {
+      const message = String(args.message ?? "").trim().slice(0, 2000);
+      if (!message) return { result: "Say what to ask Alice.", summary: "ask_alice with no message", verdict: "blocked" };
+      await a.sendToAlice(`(by voice) ${message}`);
+      return { result: "Sent to Alice in the chat. Tell the captain briefly; you will be given her reply to relay when it comes.", summary: `asked Alice: ${message.slice(0, 80)}`, verdict: "allowed" };
+    }
+    if (name === "needs_you") {
+      const items = await a.needsYou();
+      return { result: items.length ? items.map((i) => `${i.kind}${i.goId ? ` go_id=${i.goId}` : ""}: ${i.summary}`).join("\n").slice(0, 4000) : "Nothing waits on the captain.", summary: `checked Needs you (${items.length})` };
+    }
+    const goId = String(args.go_id ?? "");
+    const decision = String(args.decision ?? "").toLowerCase();
+    const refusal = goPolicy(decision, this.lastCaptainWords());
+    if (refusal) return { result: `Not done: ${refusal}`, summary: `decide_go ${decision} held by the policy door`, verdict: "blocked" };
+    const pending = (await a.needsYou()).find((i) => i.goId === goId);
+    if (!pending) return { result: `No pending Go with go_id ${goId}; check needs_you.`, summary: "decide_go: unknown request", verdict: "blocked" };
+    const r = await a.decideGo(goId, decision === "go");
+    return { result: r.message, summary: `${decision === "go" ? "gave the Go" : "refused"}: ${pending.summary.slice(0, 80)}`, verdict: r.ok ? "allowed" : "blocked" };
+  }
+
+  /** What the captain said this turn, else last turn. */
+  private lastCaptainWords(): string {
+    return this.captainText.trim() || this.prevCaptainText;
+  }
+
+  /** The full Alice replied in the chat: have the live voice tell the captain. */
+  relay(text: string): void {
+    this.send({ realtimeInput: { text: `[Alice's reply in the chat just arrived. Tell the captain, briefly and in your own words: ${text.slice(0, 1500)}]` } });
+    this.sink.event({ type: "action", name: "relay", summary: "Alice replied in the chat", ms: 0 });
   }
 
   /** One spoken exchange, appended to the agent's voice log (not its chat thread). */
@@ -242,6 +305,7 @@ export class LiveSession {
     } catch {
       /* the log never breaks the talk */
     }
+    if (this.captainText.trim()) this.prevCaptainText = this.captainText.trim();
     this.captainText = "";
     this.agentText = "";
   }

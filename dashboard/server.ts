@@ -109,8 +109,12 @@ function broadcastChatEvent(agentId: string, ev: HostEvent) {
   }
 }
 
+/** Live voice sessions talking to Alice: her chat replies are relayed to them (conversation mode V3). */
+const liveSessions = new Set<LiveSession>();
+
 function broadcastChat(agentId: string, line: ChatLine) {
   needsChanged();
+  if (agentId === "alice" && line.from === "alice" && line.kind === "chat" && !line.step && line.text.trim()) for (const s of liveSessions) s.relay(line.text);
   const set = chatSockets.get(agentId);
   if (!set) return;
   const payload = JSON.stringify(chatPayload(line));
@@ -265,8 +269,27 @@ const server = Bun.serve<WsData>({
         // Conversation mode (lib/live-voice.ts): this socket bridges to one Gemini Live session.
         data.live = new LiveSession(
           { audio: (pcm) => ws.send(pcm), event: (e) => ws.send(JSON.stringify(e)), close: () => ws.close() },
-          { agent: "alice" },
+          {
+            agent: "alice",
+            // V3: hand-offs to the full Alice, what needs the captain, and the Go (behind lib/live-voice.ts's policy door).
+            actions: {
+              sendToAlice: async (text) => void (await captainSend("alice", text)),
+              needsYou: async () =>
+                (await collectNeedsYou({ waiting: hostWaiting, holds: currentHolds() })).map((i) => ({
+                  id: i.id,
+                  kind: i.kind,
+                  ...(i.kind === "go" ? { goId: i.goId } : {}),
+                  summary: "summary" in i ? String(i.summary) : "what" in i ? String(i.what) : "title" in i ? String(i.title) : i.kind,
+                })),
+              decideGo: async (goId, go) => {
+                const r = await decideGo(goId, go);
+                needsChanged();
+                return r;
+              },
+            },
+          },
         );
+        liveSessions.add(data.live);
         void data.live.start();
         return;
       }
@@ -295,6 +318,7 @@ const server = Bun.serve<WsData>({
     },
     close(ws) {
       const data = ws.data;
+      if (data.live) liveSessions.delete(data.live);
       data.live?.close();
       chatSockets.get(data.agentId)?.delete(ws);
     },

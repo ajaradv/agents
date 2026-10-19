@@ -1193,7 +1193,9 @@ function dashboardApp() {
         if (!log) return;
         const row = document.createElement("div");
         row.className = "bubble-row is-system is-live is-action";
-        row.innerHTML = `<div class="bubble"><p>⚙ ${escapeHtml(this.current().label || "Alice")} ${escapeHtml(e.summary)}</p></div>`;
+        // Acting by voice (V3): a held action says so (live-dj's policy verdict in the action log).
+        const mark = e.verdict === "blocked" ? "✋ held:" : e.verdict === "allowed" ? "✓" : "⚙";
+        row.innerHTML = `<div class="bubble"><p>${mark} ${escapeHtml(this.current().label || "Alice")} ${escapeHtml(e.summary)}</p></div>`;
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
         this.liveRows.agent = null; // her answer after a lookup starts a new bubble

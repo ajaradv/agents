@@ -7,7 +7,7 @@ const inbox = mkdtempSync(join(tmpdir(), "live-voice-"));
 mkdirSync(join(inbox, ".node"), { recursive: true });
 const prev = process.env.FLEET_INBOX;
 process.env.FLEET_INBOX = inbox;
-const { LiveSession, liveVoiceFor, persona } = await import("./live-voice.ts");
+const { LiveSession, liveVoiceFor, persona, goPolicy } = await import("./live-voice.ts");
 afterAll(() => {
   if (prev === undefined) delete process.env.FLEET_INBOX;
   else process.env.FLEET_INBOX = prev;
@@ -90,5 +90,49 @@ describe("live tools (V2)", () => {
     const reply = up.sent.at(-1);
     expect(reply.toolResponse.functionResponses[0]).toEqual({ id: "c1", name: "vault_tasks", response: { result: 'vault_tasks:{"filter":"in-progress"} -> 2 in progress' } });
     expect(events.find((e) => e.type === "action")).toMatchObject({ name: "vault_tasks", summary: "listed in-progress vault tasks" });
+  });
+});
+
+describe("acting by voice (V3)", () => {
+  test("the policy door: a Go needs the captain's own clear go; a refusal needs a clear no", () => {
+    expect(goPolicy("go", "Yes, go ahead and dock it")).toBeNull();
+    expect(goPolicy("go", "Hmm, what would that do?")).toContain("not a clear go");
+    expect(goPolicy("go", "No, don't do that")).toContain("not a clear go");
+    expect(goPolicy("no", "No, leave it")).toBeNull();
+    expect(goPolicy("go", "")).toContain("has not said");
+  });
+  test("ask_alice hands off; decide_go is held until the captain says go, then decides; Alice's reply is relayed", async () => {
+    const up = fakeUpstream();
+    const events: any[] = [];
+    const sent: string[] = [];
+    const decided: [string, boolean][] = [];
+    const actions = {
+      sendToAlice: async (t: string) => void sent.push(t),
+      needsYou: async () => [{ id: "go:g1", kind: "go", goId: "g1", summary: "Dock fleet's voyage." }],
+      decideGo: async (id: string, go: boolean) => (decided.push([id, go]), { ok: true, message: "Docked." }),
+    };
+    const s = new LiveSession({ audio: () => {}, event: (e) => void events.push(e), close: () => {} }, { agent: "alice", connect: () => up as never, key: async () => "k", briefing: async () => "", actions });
+    await s.start();
+    up.onopen();
+    expect(up.sent[0].setup.tools[0].functionDeclarations.map((f: any) => f.name)).toContain("decide_go");
+    up.onmessage({ data: JSON.stringify({ setupComplete: {} }) });
+    await tick();
+    const call = async (id: string, name: string, args: object) => {
+      up.onmessage({ data: JSON.stringify({ toolCall: { functionCalls: [{ id, name, args }] } }) });
+      for (let i = 0; i < 4; i++) await tick();
+      return up.sent.at(-1).toolResponse.functionResponses[0].response.result as string;
+    };
+    expect(await call("a", "ask_alice", { message: "dock the fleet ship" })).toContain("Sent to Alice");
+    expect(sent).toEqual(["(by voice) dock the fleet ship"]);
+    up.onmessage({ data: JSON.stringify({ serverContent: { inputTranscription: { text: "What does that request do?" } } }) });
+    expect(await call("b", "decide_go", { go_id: "g1", decision: "go" })).toContain("not a clear go");
+    expect(decided).toEqual([]);
+    expect(events.filter((e) => e.type === "action").at(-1).verdict).toBe("blocked");
+    up.onmessage({ data: JSON.stringify({ serverContent: { turnComplete: true } }) });
+    up.onmessage({ data: JSON.stringify({ serverContent: { inputTranscription: { text: "Yes, go ahead." } } }) });
+    expect(await call("c", "decide_go", { go_id: "g1", decision: "go" })).toBe("Docked.");
+    expect(decided).toEqual([["g1", true]]);
+    s.relay("The fleet ship is docked; the helmsman is reviewing.");
+    expect(up.sent.at(-1).realtimeInput.text).toContain("the helmsman is reviewing");
   });
 });
