@@ -13,7 +13,7 @@ import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
 import { listTasks, taskProgress, type VoyageTask, waitingOn } from "./voyage-tasks.ts";
 import { crewBudget, crewRoles, listVoyages, MODES, readyToSail, shipChecklist, spentToday, type CheckItem, type Voyage } from "./shipyard.ts";
-import { CONDITION_LABEL, conditionOf, voyageProgress, type Condition } from "./voyage-progress.ts";
+import { CONDITION_LABEL, conditionOf, GAUGE_DETENTS, gaugeColor, gaugeDetents, supplyRemaining, voyageProgress, WEATHER_LABEL, weatherOf, type Condition, type Weather } from "./voyage-progress.ts";
 
 /**
  * Harbor (every ship) and ship deck (one ship) partials. Read-only: crew status
@@ -113,6 +113,25 @@ function usd(n: number): string {
   return n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : "$0";
 }
 
+/** The weather glyph for a tile/deck, with the word beside it when asked. */
+function weatherGlyphHtml(weather: Weather, withWord = false): string {
+  const label = WEATHER_LABEL[weather];
+  const word = withWord ? ` <span class="weather-word">${label}</span>` : "";
+  return `<span class="weather-glyph weather-${weather}" role="img" aria-label="${label}" title="${label}"></span>${word}`;
+}
+
+/** A segmented 8-detent bar of budget left today, or "no ration set" without one. */
+function supplyGaugeHtml(spend: number, budget: number | null): string {
+  if (budget === null || budget <= 0) {
+    return `<span class="supply-gauge supply-none" title="No daily budget set">no ration set</span>`;
+  }
+  const remaining = supplyRemaining(spend, budget)!;
+  const color = gaugeColor(remaining);
+  const lit = gaugeDetents(remaining);
+  const detents = Array.from({ length: GAUGE_DETENTS }, (_, i) => `<span class="supply-detent${i < lit ? " is-lit" : ""}" aria-hidden="true"></span>`).join("");
+  return `<span class="supply-gauge supply-${color}" title="Budget left today">${detents}<span class="supply-figure">${usd(spend)} of ${usd(budget)}</span></span>`;
+}
+
 const STATUS_LABEL: Record<CrewStatus, string> = { working: "Working", waiting: "Needs you", idle: "Idle", asleep: "Not started" };
 
 function portrait(t: ChatTarget, size = 56): string {
@@ -146,6 +165,19 @@ export async function harborHtml(): Promise<string> {
     const waiting = cards.filter((c) => c.status === "waiting").length;
     const needsYou = waiting > 0 || orderNeedsCaptain(orders, ship.id);
     const { progress, condition } = voyageProgress(ship, voyage, { state: st.state, running: shipRunning(cards, fm), needsYou });
+    const maneuvers = voyage ? recentManeuvers(ship.path) : [];
+    let spend = 0;
+    let budget = 0;
+    let hasBudget = false;
+    for (const role of ship.crew) {
+      const b = await crewBudget(ship.id, role);
+      if (b !== null) {
+        hasBudget = true;
+        budget += b;
+      }
+      spend += spentToday(ship.id, `${ship.id}-${role}`);
+    }
+    const weather = weatherOf({ events, maneuvers, spend, budget: hasBudget ? budget : null, state: st.state });
     const conditionWord = CONDITION_LABEL[condition];
     const pct = Math.round(progress * 100);
     const deck = [...cards.map((c) => c.target), ...fm].slice(0, 6);
@@ -161,11 +193,12 @@ export async function harborHtml(): Promise<string> {
       <div class="stack-tight">
         <div class="between">
           <h3 class="ship-name">${escapeHtml(ship.id)}</h3>
-          ${badge}
+          <span class="row">${weatherGlyphHtml(weather)}${badge}</span>
         </div>
         <p class="muted ship-meta">${escapeHtml(ship.orchestrator === "firstmate" ? "Orchestrator: Firstmate" : `Orchestrator: ${ship.orchestrator}`)} · ${escapeHtml(ship.mode || "mode unset")}${ship.adws.length ? ` · ${ship.adws.length} ADWs` : ""}</p>
         ${voyage ? `<p class="ship-voyage">⚑ ${escapeHtml(voyage.goal.slice(0, 120))}</p>` : ""}
         ${progressRow}
+        ${supplyGaugeHtml(spend, hasBudget ? budget : null)}
         <div class="ship-deck-faces">${deck.length ? deck.map((t) => portrait(t, 36)).join("") : `<span class="muted">No crew aboard</span>`}</div>
       </div>
     </a>`;
@@ -341,6 +374,10 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
   const needsYou = cards.some((c) => c.status === "waiting") || orderNeedsCaptain(orders, ship.id);
   const condition = conditionOf({ tasks, maneuvers, events, state: st.state, running: shipRunning(cards, fm), needsYou });
   const cost7d = cards.reduce((n, c) => n + c.cost7d, 0);
+  const spendToday = ship.crew.reduce((n, r) => n + spentToday(ship.id, `${ship.id}-${r}`), 0);
+  const budget = ship.crew.reduce((sum, r) => sum + (budgets[r] ?? 0), 0);
+  const hasBudget = ship.crew.some((r) => budgets[r] !== null);
+  const weather = weatherOf({ events, maneuvers, spend: spendToday, budget: hasBudget ? budget : null, state: st.state });
   const factory = ship.adws.length > 0 || maneuvers.length > 0;
   const rows = collapseLog(events);
   const failedRows = rows.slice(0, 80).filter((r) => isBad(r.event)).length;
@@ -358,12 +395,15 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
         </div>
       </div>
       <div class="row-wrap">
+        <span class="d-badge d-badge-outline d-badge-sm weather-badge weather-${weather}">${weatherGlyphHtml(weather, true)}</span>
         <span class="d-badge d-badge-outline d-badge-sm">${st.label}</span>
         <span class="d-badge d-badge-outline d-badge-sm">${escapeHtml(ship.mode || "mode unset")}</span>
         <span class="d-badge d-badge-outline d-badge-sm">Orchestrator: ${escapeHtml(ship.orchestrator)}</span>
         <span class="d-badge d-badge-outline d-badge-sm">7d ${usd(cost7d)}</span>
       </div>
     </div>
+
+    ${supplyGaugeHtml(spendToday, hasBudget ? budget : null)}
 
     ${ship.id === "fleet" ? await ordersPanelHtml() : voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels), tasks, condition)}
 
