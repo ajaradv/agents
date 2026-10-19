@@ -7,14 +7,30 @@ import {
   CONDITION_LABEL,
   CONDITIONS,
   conditionOf,
+  GAUGE_DETENTS,
+  GAUGE_TEAL_FRAC,
+  GAUGE_VERMILION_FRAC,
+  gaugeColor,
+  gaugeDetents,
   HARBOR_MOUTH_PROGRESS,
   HEADWAY_IDLE_MS,
   progressOf,
   STORM_TURN_ERRORS,
   STORM_WINDOW_MS,
+  supplyRemaining,
   taskScore,
+  WEATHER_LABEL,
+  WEATHER_MIN_TURNS,
+  WEATHER_OVERCAST_PRESSURE,
+  WEATHERS,
+  WEATHER_STORM_PRESSURE,
+  WEATHER_STORM_RATE,
+  WEATHER_WINDOW_MS,
+  weatherOf,
   type Condition,
   type ConditionInput,
+  type Weather,
+  type WeatherInput,
 } from "./voyage-progress.ts";
 
 const NOW = 1_700_000_000_000;
@@ -175,5 +191,111 @@ describe("constants and labels", () => {
     for (const c of CONDITIONS) expect(CONDITION_LABEL[c]).toBeTypeOf("string");
     expect(CONDITION_LABEL["needs-you"]).toBe("Needs you");
     expect(CONDITION_LABEL.yard).toBe("In the yard");
+  });
+});
+
+const weather = (over: Partial<WeatherInput> = {}): Weather =>
+  weatherOf({ events: [], maneuvers: [], spend: 0, budget: null, state: "docked", now: NOW, ...over });
+
+const turnEnds = (count: number, errorEvery = 0, from = NOW): ShipEvent[] =>
+  Array.from({ length: count }, (_, i) =>
+    ev(i + 1, iso(from - i * 1000), "turn-end", errorEvery > 0 && i % errorEvery === 0 ? { error: "boom" } : null),
+  );
+
+describe("weatherOf", () => {
+  test("an error rate needs at least WEATHER_MIN_TURNS turns before it counts", () => {
+    // Three erroring turns is below the minimum: no signal, so clear.
+    expect(weather({ events: turnEnds(3, 1) })).toBe("clear");
+    expect(WEATHER_MIN_TURNS).toBe(4);
+  });
+
+  test("a low error rate at the minimum is overcast, not storm", () => {
+    // 5 turns, 1 error = 0.2: above zero, below the storm rate.
+    expect(weather({ events: turnEnds(5, 5) })).toBe("overcast");
+  });
+
+  test("a burst at or past WEATHER_STORM_RATE is a storm", () => {
+    // 4 turns, 1 error = 0.25, the storm threshold.
+    expect(weather({ events: turnEnds(4, 4) })).toBe("storm");
+    expect(WEATHER_STORM_RATE).toBe(0.25);
+  });
+
+  test("a phase fail alone is a storm, regardless of turn count", () => {
+    const fail = [maneuver({ adwId: "m1", startedAt: iso(NOW - 60_000), endedAt: iso(NOW), phases: [phase(1, "fail")] })];
+    expect(weather({ maneuvers: fail })).toBe("storm");
+    expect(weather({ maneuvers: [maneuver({ adwId: "m1", startedAt: iso(NOW - 60_000), endedAt: iso(NOW), phases: [phase(1, "error")] })] })).toBe("storm");
+  });
+
+  test("a phase fail outside the window is not a storm", () => {
+    const stale = [maneuver({ adwId: "m1", startedAt: iso(NOW - WEATHER_WINDOW_MS - 1000), endedAt: iso(NOW - WEATHER_WINDOW_MS - 500), phases: [phase(1, "fail")] })];
+    expect(weather({ maneuvers: stale })).toBe("clear");
+  });
+
+  test("pressure at the storm threshold storms only while sailing; docked stays overcast", () => {
+    expect(weather({ spend: 90, budget: 100, state: "sailing" })).toBe("storm");
+    expect(weather({ spend: 90, budget: 100, state: "docked" })).toBe("overcast");
+    expect(WEATHER_STORM_PRESSURE).toBe(0.9);
+  });
+
+  test("pressure from 0.6 up to the storm threshold is overcast", () => {
+    expect(weather({ spend: 60, budget: 100, state: "sailing" })).toBe("overcast");
+    expect(weather({ spend: 70, budget: 100, state: "docked" })).toBe("overcast");
+    expect(weather({ spend: 89, budget: 100, state: "sailing" })).toBe("overcast");
+    expect(WEATHER_OVERCAST_PRESSURE).toBe(0.6);
+  });
+
+  test("no budget set with no errors is clear", () => {
+    expect(weather({ budget: null })).toBe("clear");
+  });
+
+  test("every weather has a label", () => {
+    expect(WEATHERS).toEqual(["clear", "overcast", "storm"]);
+    for (const w of WEATHERS) expect(WEATHER_LABEL[w]).toBeTypeOf("string");
+  });
+});
+
+describe("supply gauge", () => {
+  test("gauge colours at the thresholds: 0.41 teal, 0.15 yellow, 0.149 vermilion", () => {
+    expect(gaugeColor(0.41)).toBe("teal");
+    expect(gaugeColor(0.15)).toBe("yellow");
+    expect(gaugeColor(0.149)).toBe("vermilion");
+  });
+
+  test("spending 85% of a budget leaves 0.15, still yellow", () => {
+    expect(supplyRemaining(85, 100)).toBeCloseTo(0.15);
+    expect(gaugeColor(supplyRemaining(85, 100)!)).toBe("yellow");
+  });
+
+  test("spending past 85% (86%) turns the gauge vermilion", () => {
+    expect(supplyRemaining(86, 100)).toBeCloseTo(0.14);
+    expect(gaugeColor(supplyRemaining(86, 100)!)).toBe("vermilion");
+  });
+
+  test("supplyRemaining is null for a null or non-positive budget", () => {
+    expect(supplyRemaining(10, null)).toBeNull();
+    expect(supplyRemaining(10, 0)).toBeNull();
+    expect(supplyRemaining(10, -5)).toBeNull();
+  });
+
+  test("supplyRemaining clamps to [0, 1]", () => {
+    expect(supplyRemaining(0, 100)).toBe(1);
+    expect(supplyRemaining(100, 100)).toBe(0);
+    expect(supplyRemaining(150, 100)).toBe(0);
+    expect(supplyRemaining(-50, 100)).toBe(1);
+  });
+
+  test("gaugeDetents rounds clamp(remaining) × 8 into 0..8", () => {
+    expect(GAUGE_DETENTS).toBe(8);
+    expect(gaugeDetents(1)).toBe(8);
+    expect(gaugeDetents(0)).toBe(0);
+    expect(gaugeDetents(0.5)).toBe(4);
+    expect(gaugeDetents(0.15)).toBe(1);
+    expect(gaugeDetents(1.5)).toBe(8);
+    expect(gaugeDetents(-0.5)).toBe(0);
+  });
+
+  test("gauge constants are exported", () => {
+    expect(GAUGE_TEAL_FRAC).toBe(0.4);
+    expect(GAUGE_VERMILION_FRAC).toBe(0.15);
   });
 });

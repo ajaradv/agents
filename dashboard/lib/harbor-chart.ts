@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { HARBOR_MOUTH_PROGRESS, progressOf, taskScore, type Condition, type ShipState } from "./voyage-progress.ts";
+import { HARBOR_MOUTH_PROGRESS, progressOf, taskScore, weatherOf, type Condition, type ShipState, type Weather } from "./voyage-progress.ts";
 import type { ShipRow } from "./fleet-layers.ts";
 import type { Maneuver } from "./ship-maneuvers.ts";
 import type { Voyage } from "./shipyard.ts";
@@ -179,6 +179,7 @@ export type ChartShip = {
   berthPos: Point;
   state: ShipState;
   condition: Condition;
+  weather: Weather;
   progress: number;
   voyage: { goal: string; label: string; file: string; fileName: string } | null;
   island: Island | null;
@@ -191,7 +192,7 @@ export type ChartShip = {
   budget: number | null;
 };
 
-export type ChartModel = { size: ChartSize; ships: ChartShip[] };
+export type ChartModel = { size: ChartSize; ships: ChartShip[]; fleet: { spendToday: number; spendWeek: number } };
 
 /**
  * The real reads behind GET /api/harbor/chart. Everything heavy (the ship view,
@@ -207,6 +208,7 @@ export async function harborChartJson(): Promise<ChartModel> {
   const { voyageProgress } = await import("./voyage-progress.ts");
   const { crewCards, firstmateCrews, orderNeedsCaptain, shipRunning, shipState } = await import("./ship-view.ts");
   const { listOrders } = await import("./order-note.ts");
+  const { modelSpend } = await import("./model-spend.ts");
 
   const ships = await readShips();
   const orders = await listOrders();
@@ -214,7 +216,7 @@ export async function harborChartJson(): Promise<ChartModel> {
   const voyages = new Map<string, Voyage | null>();
   const tasks = new Map<string, VoyageTask[]>();
   const maneuvers = new Map<string, Maneuver[]>();
-  const facts = new Map<string, { state: ShipState; condition: Condition; crew: ChartCrew[]; spend: number; budget: number | null }>();
+  const facts = new Map<string, { state: ShipState; condition: Condition; weather: Weather; crew: ChartCrew[]; spend: number; budget: number | null }>();
 
   for (const ship of ships) {
     const voyage = await openVoyage(ship.id);
@@ -244,9 +246,12 @@ export async function harborChartJson(): Promise<ChartModel> {
       spend += spentToday(ship.id, `${ship.id}-${role}`);
     }
 
+    const weather = weatherOf({ events, maneuvers: shipManeuvers, spend, budget: hasBudget ? budget : null, state: st.state });
+
     facts.set(ship.id, {
       state: st.state,
       condition,
+      weather,
       crew: cards.map((c) => ({ id: c.target.id, status: c.status })),
       spend,
       budget: hasBudget ? budget : null,
@@ -255,8 +260,19 @@ export async function harborChartJson(): Promise<ChartModel> {
 
   const geometry = chartGeometry(ships, voyages, tasks, maneuvers);
 
+  // The harbor-wall fleet gauge: today's billed model spend, with the week as
+  // the reference denominator. Estimates and junie/ subscription credits are
+  // excluded (they are not billed against API keys).
+  const spendRows = await modelSpend();
+  const billed = spendRows.filter((r) => !r.estimated && !r.lane.startsWith("junie/"));
+  const fleet = {
+    spendToday: billed.reduce((n, r) => n + r.todayUsd, 0),
+    spendWeek: billed.reduce((n, r) => n + r.weekUsd, 0),
+  };
+
   return {
     size: CHART_SIZE,
+    fleet,
     ships: ships.map((ship, i) => {
       const g = geometry[i]!;
       const f = facts.get(ship.id)!;
@@ -267,6 +283,7 @@ export async function harborChartJson(): Promise<ChartModel> {
         berthPos: g.berthPos,
         state: f.state,
         condition: f.condition,
+        weather: f.weather,
         progress: g.progress,
         voyage: voyage ? { goal: voyage.goal, label: voyage.goal.slice(0, 32), file: voyage.file, fileName: basename(voyage.file) } : null,
         island: g.island,
