@@ -1,0 +1,113 @@
+#!/usr/bin/env bun
+// alice-voices - hear Alice's live-voice candidates and pick one.
+//
+//   bin/alice-voices                    play every candidate, one after another
+//   bin/alice-voices --only Leda,Kore   play just these
+//   bin/alice-voices --fresh            record the clips again (after editing her character)
+//   bin/alice-voices --set Kore         make Kore her live voice (agents/alice/agent.yaml live_voice)
+//
+// Clips are recorded once on the free Gemini account (GEMINI_FREE_API_KEY) with
+// agents/alice/character.md, kept in fleet/home/voices/, and played with afplay.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { nodeKey } from "../dashboard/lib/fleet-env.ts";
+import { characterFor, LIVE_MODEL, liveVoiceFor } from "../dashboard/lib/live-voice.ts";
+import { ROOT } from "../dashboard/lib/paths.ts";
+
+const VOICES = ["Leda", "Despina", "Achernar", "Vindemiatrix", "Sulafat", "Aoede", "Kore", "Callirrhoe"];
+const LINE = "Say exactly this, in character: Good evening, Captain. I have looked over the fleet for you. Pochteca is docked, and the fleet ship has just come home with its first voyage. Shall we see what needs you?";
+const DIR = join(ROOT, "fleet", "home", "voices");
+const args = process.argv.slice(2);
+const flag = (f: string) => {
+  const i = args.indexOf(f);
+  return i >= 0 ? args[i + 1] : undefined;
+};
+
+if (args.includes("--help") || args.includes("-h")) {
+  console.log(readFileSync(import.meta.path, "utf8").split("\n").slice(1, 11).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+  process.exit(0);
+}
+
+const set = flag("--set");
+if (set) {
+  const voice = VOICES.find((v) => v.toLowerCase() === set.toLowerCase());
+  if (!voice) {
+    console.log(`Not a candidate: ${set}. Candidates: ${VOICES.join(", ")}`);
+    process.exit(2);
+  }
+  const yaml = join(ROOT, "agents", "alice", "agent.yaml");
+  writeFileSync(yaml, readFileSync(yaml, "utf8").replace(/^live_voice:.*$/m, `live_voice: ${voice}`));
+  console.log(`Alice's live voice is now ${voice}. Her next Live conversation uses it (no restart needed).`);
+  process.exit(0);
+}
+
+function wav(pcm: Uint8Array, rate = 24000): Uint8Array {
+  const h = new DataView(new ArrayBuffer(44));
+  const w = (o: number, s: string) => [...s].forEach((c, i) => h.setUint8(o + i, c.charCodeAt(0)));
+  w(0, "RIFF"); h.setUint32(4, 36 + pcm.length, true); w(8, "WAVE"); w(12, "fmt "); h.setUint32(16, 16, true); h.setUint16(20, 1, true); h.setUint16(22, 1, true);
+  h.setUint32(24, rate, true); h.setUint32(28, rate * 2, true); h.setUint16(32, 2, true); h.setUint16(34, 16, true); w(36, "data"); h.setUint32(40, pcm.length, true);
+  const out = new Uint8Array(44 + pcm.length);
+  out.set(new Uint8Array(h.buffer));
+  out.set(pcm, 44);
+  return out;
+}
+
+async function record(voice: string, key: string, character: string, file: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${key}`);
+    const chunks: Uint8Array[] = [];
+    const persona = `You are Alice.\n${character}\nAlways speak with a soft British accent.`;
+    ws.onopen = () => ws.send(JSON.stringify({ setup: { model: `models/${LIVE_MODEL}`, generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } }, systemInstruction: { parts: [{ text: persona }] } } }));
+    ws.onmessage = async (e) => {
+      const m = JSON.parse(typeof e.data === "string" ? e.data : await new Response(e.data as Blob).text());
+      if (m.setupComplete) ws.send(JSON.stringify({ realtimeInput: { text: LINE } }));
+      for (const p of m.serverContent?.modelTurn?.parts ?? []) if (p.inlineData?.data) chunks.push(new Uint8Array(Buffer.from(p.inlineData.data, "base64")));
+      if (m.serverContent?.turnComplete) {
+        const pcm = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+        let o = 0;
+        for (const c of chunks) {
+          pcm.set(c, o);
+          o += c.length;
+        }
+        writeFileSync(file, wav(pcm));
+        ws.close();
+        resolve(true);
+      }
+    };
+    ws.onclose = () => resolve(existsSync(file));
+    setTimeout(() => {
+      ws.close();
+      resolve(false);
+    }, 40_000);
+  });
+}
+
+const only = flag("--only")?.split(",").map((v) => v.trim().toLowerCase());
+const voices = only ? VOICES.filter((v) => only.includes(v.toLowerCase())) : VOICES;
+mkdirSync(DIR, { recursive: true });
+const fresh = args.includes("--fresh");
+const missing = voices.filter((v) => fresh || !existsSync(join(DIR, `alice-${v.toLowerCase()}.wav`)));
+if (missing.length) {
+  const key = await nodeKey("GEMINI_FREE_API_KEY");
+  if (!key) {
+    console.log("No free Gemini key from the service account (GEMINI_FREE_API_KEY); cannot record clips.");
+    process.exit(1);
+  }
+  const character = characterFor("alice");
+  for (const v of missing) {
+    process.stdout.write(`Recording ${v}… `);
+    console.log((await record(v, key, character, join(DIR, `alice-${v.toLowerCase()}.wav`))) ? "done" : "failed");
+  }
+}
+
+const current = liveVoiceFor("alice");
+console.log(`\nAlice's live voice now: ${current}. Playing ${voices.length} candidate(s); Ctrl+C to stop.\n`);
+for (const [i, v] of voices.entries()) {
+  const file = join(DIR, `alice-${v.toLowerCase()}.wav`);
+  if (!existsSync(file)) continue;
+  console.log(`${i + 1}/${voices.length}  ${v}${v === current ? "  (current)" : ""}`);
+  await Bun.spawn(["afplay", file]).exited;
+  await Bun.sleep(700);
+}
+console.log(`\nPick one:  bin/alice-voices --set <Voice>     Replay some:  bin/alice-voices --only Leda,Kore`);
+process.exit(0);
