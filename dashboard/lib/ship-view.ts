@@ -21,9 +21,9 @@ import { CONDITION_LABEL, conditionOf, voyageProgress, type Condition } from "./
  * sssf.db, Firstmate's crews from the rail's task list.
  */
 
-type CrewStatus = "working" | "waiting" | "idle" | "asleep";
+export type CrewStatus = "working" | "waiting" | "idle" | "asleep";
 
-type CrewCard = {
+export type CrewCard = {
   target: ChatTarget;
   status: CrewStatus;
   activity: string;
@@ -61,7 +61,7 @@ export function crewStatus(id: string, events: ShipEvent[], running = hostRunnin
   return { status: "idle", activity: said?.summary ?? last.summary, lastAt: last.ts };
 }
 
-function crewCards(ship: ShipRow, events: ShipEvent[]): CrewCard[] {
+export function crewCards(ship: ShipRow, events: ShipEvent[]): CrewCard[] {
   const totals = shipTurnTotals(ship.id, new Date(Date.now() - 7 * DAY_MS).toISOString());
   // The fleet ship (this repo) is crewed by the officers: their turns are logged there (lib/ship-events.ts).
   return listChatTargets()
@@ -73,17 +73,17 @@ function crewCards(ship: ShipRow, events: ShipEvent[]): CrewCard[] {
     });
 }
 
-function firstmateCrews(ship: ShipRow): ChatTarget[] {
+export function firstmateCrews(ship: ShipRow): ChatTarget[] {
   return listChatTargets().workers.filter((w) => (w.project ?? "").toLowerCase() === ship.id.toLowerCase());
 }
 
 /** Someone is actively working: a crewmate's session is running, or a Firstmate worker is busy. */
-function shipRunning(cards: CrewCard[], fm: ChatTarget[]): boolean {
+export function shipRunning(cards: CrewCard[], fm: ChatTarget[]): boolean {
   return cards.some((c) => c.status === "working") || fm.some((w) => /work|run|busy|active|spawn|build/i.test(w.state ?? ""));
 }
 
 /** True when a queued or paused order on this ship is waiting on the captain. */
-function orderNeedsCaptain(orders: Awaited<ReturnType<typeof listOrders>>, shipId: string): boolean {
+export function orderNeedsCaptain(orders: Awaited<ReturnType<typeof listOrders>>, shipId: string): boolean {
   return orders.some((o) => o.meta && (o.meta.status === "needs-captain" || o.meta.status === "queued") && o.meta.ship === shipId);
 }
 
@@ -122,7 +122,7 @@ function portrait(t: ChatTarget, size = 56): string {
 }
 
 /** In the yard (not ready to sail), under sail (open voyage or crew at work), or docked. */
-function shipState(ready: boolean, voyage: Voyage | null, cards: CrewCard[], fmCrews: ChatTarget[]): { state: "yard" | "sailing" | "docked"; label: string } {
+export function shipState(ready: boolean, voyage: Voyage | null, cards: CrewCard[], fmCrews: ChatTarget[]): { state: "yard" | "sailing" | "docked"; label: string } {
   if (voyage || cards.some((c) => c.status === "working") || fmCrews.some((w) => /work|run|busy|active|spawn|build/i.test(w.state ?? ""))) {
     return { state: "sailing", label: "Under sail" };
   }
