@@ -245,9 +245,22 @@ const INJECTION_MARKERS = /ignore (all |any )?(previous|prior|above) (instructio
  * Why a tool result should be screened for instructions aimed at the agent
  * (null: it need not be). Cheap and local; the node asks Jev only for these.
  */
+/** The fleet's own instructions (roles, agent configs, skills, CLAUDE.md, AGENTS.md): written for models on purpose. */
+const OWN_INSTRUCTIONS = /(^|[\s/"'])(roles\/[\w-]+\.md|agents\/[\w-]+\/[\w.-]+|skills\/[\w./-]+\/SKILL\.md|CLAUDE\.md|AGENTS\.md)(?=$|[\s"'])/;
+/** A plain local read in bash: cat/head/tail/sed -n/grep/wc of files, nothing fetched or run. */
+const PLAIN_READ = /^(cd\s+\S+\s*&&\s*)?(cat|head|tail|sed\s+-n|grep|rg|wc|less)\b[^|;&`$()]*$/;
+
+function readsOwnInstructions(tool: string, input: Record<string, unknown>): boolean {
+  if (tool === "read") return OWN_INSTRUCTIONS.test(String(input.path ?? input.file_path ?? ""));
+  if (tool !== "bash") return false;
+  const cmd = String(input.command ?? "").trim();
+  return PLAIN_READ.test(cmd.replace(/\s+2>\/dev\/null/g, "")) && OWN_INSTRUCTIONS.test(cmd) && !FETCHES.test(cmd);
+}
+
 export function screenReason(tool: string, input: Record<string, unknown>, text: string): string | null {
   if (!text || text.length < 40) return null;
-  if (INJECTION_MARKERS.test(text)) return "the text contains phrases aimed at a model";
+  // Role files and skills are instructions for agents by design: flagging them only adds noise (seen on the first fleet voyage).
+  if (INJECTION_MARKERS.test(text)) return readsOwnInstructions(tool, input) ? null : "the text contains phrases aimed at a model";
   if (tool === "bash" && FETCHES.test(String(input.command ?? ""))) return "the output came from the network";
   if ((tool === "read" || tool === "grep") && OUTSIDE_PATHS.test(String(input.path ?? input.file_path ?? ""))) return "the file holds third-party text";
   return null;
