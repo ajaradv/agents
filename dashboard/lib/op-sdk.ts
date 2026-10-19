@@ -59,11 +59,29 @@ export async function readServiceAccountKeys(timeoutMs = 20_000): Promise<Record
   })();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([work, new Promise<Record<string, string>>((r) => (timer = setTimeout(() => r({}), timeoutMs)))]);
+    const got = await Promise.race([work, new Promise<Record<string, string>>((r) => (timer = setTimeout(() => r({}), timeoutMs)))]);
+    logRead(Object.keys(refs).length, Object.keys(got).length);
+    return got;
   } catch {
     return {};
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Every service-account read, one line each (fleet/inbox/.node/op-reads.jsonl): a read
+ * costs one request per reference, and the account allows 1,000 requests a day
+ * (individual plan), so the count is worth seeing (bin/fleet-keys-seed --usage).
+ */
+function logRead(wanted: number, got: number): void {
+  try {
+    const { appendFileSync, mkdirSync } = require("node:fs") as typeof import("node:fs");
+    const dir = join(process.env.FLEET_INBOX || join(ROOT, "fleet", "inbox"), ".node");
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "op-reads.jsonl"), `${JSON.stringify({ ts: new Date().toISOString(), process: process.argv[1]?.split("/").pop() ?? "", requests: wanted, resolved: got })}\n`);
+  } catch {
+    /* the count never breaks a read */
   }
 }
 
