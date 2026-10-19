@@ -1335,7 +1335,10 @@ body.chat-open { overflow: hidden; }
   clip-path: polygon(0 100%, 0 62%, 12.5% 62%, 12.5% 37%, 35% 37%, 35% 12%, 65% 12%, 65% 37%, 87.5% 37%, 87.5% 62%, 100% 62%, 100% 100%);
   filter: drop-shadow(1px 0 0 var(--ink)) drop-shadow(-1px 0 0 var(--ink)) drop-shadow(0 1px 0 var(--ink)) drop-shadow(0 -1px 0 var(--ink));
 }
-.weather-glyph.weather-clear { background: var(--sheet); opacity: 0.55; height: 6px; width: 12px; }
+.weather-glyph.weather-clear {
+  background: var(--sheet); height: 6px; width: 12px;
+  filter: drop-shadow(1px 0 0 var(--quiet)) drop-shadow(-1px 0 0 var(--quiet)) drop-shadow(0 1px 0 var(--quiet)) drop-shadow(0 -1px 0 var(--quiet));
+}
 .weather-glyph.weather-overcast { background: #8d9aa0; }
 .weather-glyph.weather-storm { background: #3a4650; margin-bottom: 4px; }
 .weather-glyph.weather-storm::after {
