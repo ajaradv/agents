@@ -13,6 +13,7 @@ import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
 import { listTasks, taskProgress, type VoyageTask, waitingOn } from "./voyage-tasks.ts";
 import { crewBudget, crewRoles, listVoyages, MODES, readyToSail, shipChecklist, spentToday, type CheckItem, type Voyage } from "./shipyard.ts";
+import { CONDITION_LABEL, conditionOf, voyageProgress, type Condition } from "./voyage-progress.ts";
 
 /**
  * Harbor (every ship) and ship deck (one ship) partials. Read-only: crew status
@@ -76,6 +77,16 @@ function firstmateCrews(ship: ShipRow): ChatTarget[] {
   return listChatTargets().workers.filter((w) => (w.project ?? "").toLowerCase() === ship.id.toLowerCase());
 }
 
+/** Someone is actively working: a crewmate's session is running, or a Firstmate worker is busy. */
+function shipRunning(cards: CrewCard[], fm: ChatTarget[]): boolean {
+  return cards.some((c) => c.status === "working") || fm.some((w) => /work|run|busy|active|spawn|build/i.test(w.state ?? ""));
+}
+
+/** True when a queued or paused order on this ship is waiting on the captain. */
+function orderNeedsCaptain(orders: Awaited<ReturnType<typeof listOrders>>, shipId: string): boolean {
+  return orders.some((o) => o.meta && (o.meta.status === "needs-captain" || o.meta.status === "queued") && o.meta.ship === shipId);
+}
+
 export function timeAgo(iso: string | null): string {
   return ago(iso);
 }
@@ -124,6 +135,7 @@ function shipState(ready: boolean, voyage: Voyage | null, cards: CrewCard[], fmC
 export async function harborHtml(): Promise<string> {
   const ships = await readShips();
   if (!ships.length) return `<p class="muted">No ships yet. Register one with bin/stamp-ship.</p>`;
+  const orders = await listOrders();
   const tiles = ships.map(async (ship) => {
     const events = recentShipEvents(ship.id, 200);
     const cards = crewCards(ship, events);
@@ -132,16 +144,28 @@ export async function harborHtml(): Promise<string> {
     const voyage = voyages.find((v) => v.status === "sailing") ?? null;
     const st = shipState(readyToSail(await shipChecklist(ship)), voyage, cards, fm);
     const waiting = cards.filter((c) => c.status === "waiting").length;
+    const needsYou = waiting > 0 || orderNeedsCaptain(orders, ship.id);
+    const { progress, condition } = voyageProgress(ship, voyage, { state: st.state, running: shipRunning(cards, fm), needsYou });
+    const conditionWord = CONDITION_LABEL[condition];
+    const pct = Math.round(progress * 100);
     const deck = [...cards.map((c) => c.target), ...fm].slice(0, 6);
-    return `<a class="d-card d-card-border bg-base-100 ship-tile is-${st.state}" href="/ships/${encodeURIComponent(ship.id)}" data-ship="${escapeHtml(ship.id)}">
-      <div class="ship-sprite" aria-hidden="true"><span class="ship-hull"></span><span class="ship-sail"></span><span class="ship-wake"></span></div>
+    const badge =
+      condition === "needs-you"
+        ? `<span class="d-badge d-badge-sm d-badge-error">${waiting ? `${waiting} need${waiting === 1 ? "s" : ""} you` : conditionWord}</span>`
+        : `<span class="d-badge d-badge-outline d-badge-sm">${conditionWord}</span>`;
+    const progressRow = voyage
+      ? `<div class="ship-progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${conditionWord}"><span class="ship-progress-bar" style="width:${pct}%"></span><span class="ship-condition cond-${condition}">${conditionWord}</span></div>`
+      : "";
+    return `<a class="d-card d-card-border bg-base-100 ship-tile is-${st.state} cond-${condition}" href="/ships/${encodeURIComponent(ship.id)}" data-ship="${escapeHtml(ship.id)}">
+      <div class="ship-sprite" aria-hidden="true"><span class="ship-hull"></span><span class="ship-mast"></span><span class="ship-sail"></span><span class="ship-flag"></span><span class="ship-wake"></span></div>
       <div class="stack-tight">
         <div class="between">
           <h3 class="ship-name">${escapeHtml(ship.id)}</h3>
-          ${waiting ? `<span class="d-badge d-badge-sm d-badge-error">${waiting} need${waiting === 1 ? "s" : ""} you</span>` : `<span class="d-badge d-badge-outline d-badge-sm">${st.label}</span>`}
+          ${badge}
         </div>
         <p class="muted ship-meta">${escapeHtml(ship.orchestrator === "firstmate" ? "Orchestrator: Firstmate" : `Orchestrator: ${ship.orchestrator}`)} · ${escapeHtml(ship.mode || "mode unset")}${ship.adws.length ? ` · ${ship.adws.length} ADWs` : ""}</p>
         ${voyage ? `<p class="ship-voyage">⚑ ${escapeHtml(voyage.goal.slice(0, 120))}</p>` : ""}
+        ${progressRow}
         <div class="ship-deck-faces">${deck.length ? deck.map((t) => portrait(t, 36)).join("") : `<span class="muted">No crew aboard</span>`}</div>
       </div>
     </a>`;
@@ -312,6 +336,10 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
   const budgets = Object.fromEntries(await Promise.all(ship.crew.map(async (r) => [r, await crewBudget(ship.id, r)] as const)));
   const labels = new Map(cards.map((c) => [c.target.id, c.target.label]));
   const maneuvers = recentManeuvers(ship.path);
+  const tasks = voyage ? listTasks(ship.id, voyage.file) : [];
+  const orders = await listOrders();
+  const needsYou = cards.some((c) => c.status === "waiting") || orderNeedsCaptain(orders, ship.id);
+  const condition = conditionOf({ tasks, maneuvers, events, state: st.state, running: shipRunning(cards, fm), needsYou });
   const cost7d = cards.reduce((n, c) => n + c.cost7d, 0);
   const factory = ship.adws.length > 0 || maneuvers.length > 0;
   const rows = collapseLog(events);
@@ -337,7 +365,7 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
       </div>
     </div>
 
-    ${ship.id === "fleet" ? await ordersPanelHtml() : voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels))}
+    ${ship.id === "fleet" ? await ordersPanelHtml() : voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels), tasks, condition)}
 
     <section class="stack">
       <h3>Crew</h3>
@@ -527,7 +555,7 @@ async function ordersPanelHtml(): Promise<string> {
 
 // ---------------------------------------------------------------- shipyard + voyage
 
-function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: boolean, cards: CrewCard[], ledger: { live: string; past: string }): string {
+function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: boolean, cards: CrewCard[], ledger: { live: string; past: string }, tasks: VoyageTask[], condition: Condition): string {
   const api = `/api/ships/${encodeURIComponent(ship.id)}`;
   const past = all.filter((v) => v.status === "docked").slice(0, 3);
   // Past voyages with their ledgers (metrics database); the plain list only when it has none.
@@ -541,9 +569,9 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
   if (voyage) {
     const to = cards.find((c) => c.target.id === voyage.to)?.target.label ?? voyage.to;
     return `<section class="voyage is-sailing stack">
-      <div class="between"><h3>Under sail</h3><span class="muted">since ${escapeHtml(new Date(voyage.started).toLocaleString())}</span></div>
+      <div class="between"><div class="row"><h3>Under sail</h3>${condition === "needs-you" ? `<span class="masthead-flag" aria-hidden="true"></span>` : ""}</div><span class="muted">since ${escapeHtml(new Date(voyage.started).toLocaleString())}</span></div>
       <p class="voyage-goal">${escapeHtml(voyage.goal)}</p>
-      ${tasksHtml(listTasks(ship.id, voyage.file), cards)}
+      ${tasksHtml(tasks, cards, condition)}
       ${ledger.live}
       <p class="muted">Goal sent to ${escapeHtml(to)} · record: <code>${escapeHtml(voyage.file.replace(/^.*\/fleet\/voyages\//, "vault fleet/voyages/"))}</code></p>
       <form class="row shipyard-form" data-api="${api}/dock">
@@ -650,12 +678,12 @@ function waitLabel(t: VoyageTask, tasks: VoyageTask[]): string {
   return waits.length ? `waiting on ${waits.map((n) => `#${n}`).join(", ")}` : t.assignee ? "open" : t.role ? `ready for the ${t.role}` : "ready to claim";
 }
 
-function tasksHtml(tasks: VoyageTask[], cards: CrewCard[]): string {
+function tasksHtml(tasks: VoyageTask[], cards: CrewCard[], condition: Condition): string {
   if (!tasks.length) return `<p class="muted">No tasks yet. A lead plans the voyage into tasks; without one, the crewmate works the goal directly.</p>`;
   const p = taskProgress(tasks);
   const pct = Math.round((p.done / p.total) * 100);
   const label = (id: string | null) => (id ? cards.find((c) => c.target.id === id)?.target.label ?? id : "unassigned");
-  return `<progress class="d-progress d-progress-primary w-full voyage-progress" value="${p.done}" max="${p.total}" aria-label="Tasks done" title="${pct}%"></progress>
+  return `<div class="voyage-progress-line"><progress class="d-progress d-progress-primary w-full voyage-progress" value="${p.done}" max="${p.total}" aria-label="Tasks done" title="${pct}%"></progress><span class="ship-condition cond-${condition}">${CONDITION_LABEL[condition]}</span></div>
     <p class="muted">${p.done} of ${p.total} tasks done${p.blocked ? ` · <span class="warn">${p.blocked} blocked</span>` : ""}</p>
     <ol class="voyage-tasks">${tasks
       .map(
