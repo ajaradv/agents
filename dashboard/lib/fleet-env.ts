@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { readServiceAccountKeys } from "./op-sdk.ts";
+import { readFleetKeys } from "./op-sdk.ts";
 import { ROOT } from "./paths.ts";
 
 const FLEET_ENV_PATH = join(ROOT, "fleet", "home", ".env");
@@ -119,9 +119,12 @@ export async function nodeKey(name: (typeof NODE_KEYS)[number]): Promise<string>
 
 let saCache: { at: number; keys: Record<string, string> } | null = null;
 
-/** Keys read with the 1Password service account (the SDK, lib/op-sdk.ts); cached 10 minutes. Empty when not set up. */
+/** Keys rarely change: one read per process every 6 hours keeps the service account well under its rate limit. */
+const SA_TTL_MS = 6 * 3_600_000;
+
+/** Keys read with the 1Password service account (the SDK, lib/op-sdk.ts); cached 6 hours. Empty when not set up. */
 export async function serviceAccountEnv(): Promise<Record<string, string>> {
-  if (saCache && Date.now() - saCache.at < 10 * 60_000) return { ...saCache.keys };
+  if (saCache && Date.now() - saCache.at < SA_TTL_MS) return { ...saCache.keys };
   // One read at a time: callers arriving together share it.
   saPending ??= readServiceAccount().finally(() => (saPending = null));
   return { ...(await saPending) };
@@ -132,15 +135,11 @@ let saPending: Promise<Record<string, string>> | null = null;
 async function readServiceAccount(): Promise<Record<string, string>> {
   // Tests never read real keys: only a test's own secrets command (FLEET_SECRETS_CMD).
   if (process.env.NODE_ENV === "test") return process.env.FLEET_SECRETS_CMD ? readSecretsCommand(process.env.FLEET_SECRETS_CMD) : {};
-  let keys: Record<string, string> = {};
-  try {
-    keys = await readServiceAccountKeys();
-  } catch {
-    /* kept below */
-  }
-  if (Object.keys(keys).length) saCache = { at: Date.now(), keys };
-  // A failed read keeps the last good keys rather than falling back to the mount.
-  return Object.keys(keys).length ? keys : { ...(saCache?.keys ?? {}) };
+  const r = await readFleetKeys().catch(() => ({ keys: {} as Record<string, string>, from: "none" as const, complete: false }));
+  if (r.complete) saCache = { at: Date.now(), keys: r.keys };
+  // 1Password refused all or part: keep the fullest set we have and try 1Password again in 10 minutes.
+  else if (Object.keys(r.keys).length >= Object.keys(saCache?.keys ?? {}).length) saCache = { at: Date.now() - SA_TTL_MS + 10 * 60_000, keys: { ...(saCache?.keys ?? {}), ...r.keys } };
+  return { ...(saCache?.keys ?? {}) };
 }
 
 async function readSecretsCommand(cmd: string): Promise<Record<string, string>> {
