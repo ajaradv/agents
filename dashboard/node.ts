@@ -443,7 +443,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|public|recall|vault-tasks)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
-  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm)(?:\/(\d+))?$/);
+  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm|look|crew-request|dock-request)(?:\/(\d+))?$/);
   if (crew) return crewApi(req, crew[1]!, crew[2]!, crew[3]);
 
   if (!path.startsWith("/v1/")) return new Response("not found", { status: 404 });
