@@ -309,6 +309,12 @@ async function runSingleAgent(
 		args.push("--thinking", dispatchDefaults.thinkingLevel);
 	}
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+	// Fleet change: a child loads only what its definition names. Global skill discovery,
+	// extension packages, prompt templates, and MCP were 77% of a child's prompt (8.2k of
+	// 10.6k tokens, re-sent every turn), measured 2026-10-19.
+	args.push("--no-skills", "--no-extensions", "--no-prompt-templates", "--no-mcp");
+	for (const s of agent.skills ?? []) args.push("--skill", s);
+	for (const e of agent.extensions ?? []) args.push("-e", e);
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;

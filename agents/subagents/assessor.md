@@ -1,6 +1,6 @@
 ---
 name: assessor
-description: An independent assessment in a fresh context (design review, detector or browser evidence, a second opinion). Give it a self-contained task with paths, URLs, and the report you want back. It reads and runs commands; it never edits files.
+description: An independent judgement in a fresh context (design review, a second opinion) on the caller's model. Give it a self-contained task with paths, URLs, the evidence sub-agent's results and screenshot paths to reuse, and the report you want back. It reads and runs commands; it never edits files. For gathering evidence (screenshots, detectors, measurements), use evidence, which is cheaper.
 tools: read, grep, find, ls, bash
 ---
 

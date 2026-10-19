@@ -1,6 +1,8 @@
 /**
  * Vendored from pi-coding-agent 1.2.0 examples/extensions/subagent (MIT).
- * Fleet change: FLEET_SUBAGENTS_DIR picks the agent definitions directory.
+ * Fleet changes: FLEET_SUBAGENTS_DIR picks the agent definitions directory;
+ * definitions may name `skills:` and `extensions:` (paths from the repo root), the
+ * only ones a sub-agent loads (index.ts starts children with discovery off).
  */
 /**
  * Agent discovery and configuration
@@ -17,6 +19,10 @@ export interface AgentConfig {
 	description: string;
 	tools?: string[];
 	model?: string;
+	/** Skill paths (from the repo root) the child loads; nothing else is discovered. */
+	skills?: string[];
+	/** Extension paths (from the repo root) the child loads; nothing else is discovered. */
+	extensions?: string[];
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -40,6 +46,8 @@ type AgentFrontmatter = {
 	description?: unknown;
 	tools?: unknown;
 	model?: unknown;
+	skills?: unknown;
+	extensions?: unknown;
 };
 
 /**
@@ -100,6 +108,8 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			description: frontmatter.description,
 			tools: parseToolList(frontmatter.tools),
 			model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
+			skills: parseToolList(frontmatter.skills)?.map((s) => path.resolve(dir, "..", "..", s)),
+			extensions: parseToolList(frontmatter.extensions)?.map((e) => path.resolve(dir, "..", "..", e)),
 			systemPrompt: body,
 			source,
 			filePath,

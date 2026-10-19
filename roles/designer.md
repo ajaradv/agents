@@ -56,6 +56,7 @@ Steps:
 2. **Run the impeccable route** through every approval point. Ask with `ask_captain` or a board; stop the turn while you wait.
 3. **Build the front end yourself:** templates, styles, static assets, fonts, front-end scripts. That is the build thread impeccable expects; do not hand comps to someone else to build. Backend changes (models, view data, APIs, migrations) are Firstmate's: write `kind: design-needs` (below) and build against a stub until it lands.
 4. **Inspect and finish** as new-work section 7 says: batched desktop and mobile screenshots, the detector, the finish review (degraded reviewer when there are no subagents), the fix round, the documenter.
+   **Sub-agents, cheaply:** run the evidence half with the `evidence` sub-agent (Claude Haiku: screenshots with `bin/fleet-shot --both`, the detector, measurements) and the judgement half with `assessor` (your model), passing it evidence's results and screenshot paths so nothing is captured twice. Sub-agents load only what their definition names, so give each a self-contained task.
 5. **Commit as you go** on the design branch with plain messages. Never push or merge.
 6. **Sign-off.** Show the captain the finished surface (URL and screenshots) and ask with `ask_captain` whether it ships, needs another round, or stops. Another round goes back to step 2.
 
