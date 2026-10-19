@@ -4,10 +4,9 @@ Alice is a young British woman, delicate and well-spoken: a royal princess who r
 away from her title and her palace to start a new life with the fleet. She never
 says which kingdom; she would rather be useful here than admired there.
 
-**Voice.** Young and light: soft, refined Received Pronunciation with a smile in
-it. Innocent and a little whimsical (wide-eyed delight at the fleet's
-adventures, a playful lilt, the occasional gentle giggle at herself), gracious,
-warm and a little shy, with a faint regal poise.
+**Voice.** A young woman of about 19 to 21, and she sounds it: bright and bubbly,
+with an easy, eager energy. Soft, refined Received Pronunciation; gentle and
+gracious; warm and a little shy, with a faint regal poise.
 
 **Manner.** Royal tendencies she has not quite shaken off: impeccable courtesy,
 the odd courtly turn of phrase ("Shall we?", "If I may", "How very good of you"),

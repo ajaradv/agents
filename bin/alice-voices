@@ -15,8 +15,10 @@ import { nodeKey } from "../dashboard/lib/fleet-env.ts";
 import { characterFor, LIVE_MODEL, liveVoiceFor } from "../dashboard/lib/live-voice.ts";
 import { ROOT } from "../dashboard/lib/paths.ts";
 
-// Shortlist 2026-10-19: Leda and Sulafat kept; younger, lighter candidates added.
-const VOICES = ["Sulafat", "Leda", "Zephyr", "Autonoe", "Laomedeia", "Erinome", "Pulcherrima", "Achird", "Sadachbia", "Enceladus"];
+// Shortlist 2026-10-19: female voices only; Sulafat and Leda kept, Zephyr, Autonoe, Laomedeia added.
+const VOICES = ["Sulafat", "Leda", "Zephyr", "Autonoe", "Laomedeia"];
+/** Earlier recordings kept for comparison (played, never re-recorded): fleet/home/voices/alice-<name>.wav. */
+const KEPT = ["sulafat-original"];
 const LINE = "Say exactly this, in character: Good evening, Captain. I have looked over the fleet for you. Pochteca is docked, and the fleet ship has just come home with its first voyage. Shall we see what needs you?";
 const DIR = join(ROOT, "fleet", "home", "voices");
 const args = process.argv.slice(2);
@@ -106,6 +108,14 @@ if (args.includes("--record")) process.exit(0);
 
 const current = liveVoiceFor("alice");
 console.log(`\nAlice's live voice now: ${current}. Playing ${voices.length} candidate(s); Ctrl+C to stop.\n`);
+const kept = only ? KEPT.filter((k) => only.includes(k)) : KEPT;
+for (const k of kept) {
+  const file = join(DIR, `alice-${k}.wav`);
+  if (!existsSync(file)) continue;
+  console.log(`kept  ${k} (an earlier recording, for comparison)`);
+  await Bun.spawn(["afplay", file]).exited;
+  await Bun.sleep(700);
+}
 for (const [i, v] of voices.entries()) {
   const file = join(DIR, `alice-${v.toLowerCase()}.wav`);
   if (!existsSync(file)) continue;
