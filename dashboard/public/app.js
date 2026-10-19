@@ -239,7 +239,7 @@ function dashboardApp() {
       this.$watch("chatGroup", () => this.syncUrl());
       // Charts drawn while hidden have no size: draw or resize them when their tab or leaf shows.
       this.$watch("healthTab", () => this.$nextTick(() => this.renderCharts()));
-      this.$watch("leaf", () => this.$nextTick(() => this.renderCharts()));
+      this.$watch("leaf", () => this.$nextTick(() => { this.renderCharts(); window.SeaChart?.ensureSize(); }));
       let resizeTimer = 0;
       window.addEventListener("resize", () => {
         clearTimeout(resizeTimer);
@@ -537,6 +537,7 @@ function dashboardApp() {
       if (id === "harbor") {
         this.shipSel = "";
         this.loadHarbor();
+        window.SeaChart?.refreshSoon();
       }
       this.closePalette();
       this.leaf = id;
@@ -572,6 +573,7 @@ function dashboardApp() {
       // The ship's log moved, or crew came and went: refresh what the harbor shows.
       const harborRefresh = (ship) => {
         if (this.leaf !== "harbor" || document.hidden) return;
+        window.SeaChart?.refreshSoon();
         if (!this.shipSel || !ship || ship === this.shipSel) this.refreshHarborSoon();
       };
       const view = document.getElementById("harbor-view");

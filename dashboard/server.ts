@@ -41,6 +41,7 @@ import { loadAgents } from "./lib/agents.ts";
 import { speakable, speechParts, sttAvailable, synthesize, transcribe, ttsState, voiceFor } from "./lib/voice.ts";
 import { onShipLogWrite } from "./lib/ship-log.ts";
 import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
+import { harborChartJson } from "./lib/harbor-chart.ts";
 import { metricsDashboardHtml, parsePeriod } from "./lib/metrics-view.ts";
 import { dockVoyage, findShip, openVoyage, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
 import { applyProposal, dismissProposal, hasHelmsman, helmDigest } from "./lib/helm.ts";
@@ -456,6 +457,11 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
 
     if (path === "/api/agents" && req.method === "GET") {
       return Response.json(await agentsStatusJson());
+    }
+
+    // The sea chart (lib/harbor-chart.ts): berths, islands, routes, and ship positions.
+    if (path === "/api/harbor/chart" && req.method === "GET") {
+      return Response.json(await harborChartJson());
     }
 
     if (path === "/api/chat-targets" && req.method === "GET") {
@@ -996,7 +1002,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
 /** Which page code is on disk (the files' change times): an open tab compares it and reloads when it changes. */
 function pageBuild(): string {
   let parts = "";
-  for (const f of ["index.html", "app.js", "md.js", "live-voice.js", "pcm-capture.js", "sfx.js", "pixel.css", "ui.css"]) {
+  for (const f of ["index.html", "app.js", "md.js", "live-voice.js", "pcm-capture.js", "sfx.js", "harbor-chart.js", "pixel.css", "ui.css"]) {
     try {
       parts += statSync(join(publicDir, f)).mtimeMs.toFixed(0);
     } catch {

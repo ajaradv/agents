@@ -69,6 +69,7 @@
     <section id="leaf-harbor" class="leaf" role="tabpanel" aria-labelledby="tab-harbor"
              :class="{ 'is-open': leaf === 'harbor', 'is-hinge': hinge === 'harbor' }">
       <h2 x-text="shipSel ? 'Ship' : 'Harbor'">Harbor</h2>
+      <div id="sea-chart" class="sea-chart" x-show="!shipSel" x-cloak></div>
       <div id="harbor-view" @click="harborClick($event)" @submit="harborSubmit($event)"></div>
     </section>
 
@@ -350,5 +351,6 @@
   <script src="/live-voice.js"></script>
   <script src="/sfx.js"></script>
   <script src="/app.js"></script>
+  <script type="module" src="/harbor-chart.js"></script>
 </body>
 </html>
