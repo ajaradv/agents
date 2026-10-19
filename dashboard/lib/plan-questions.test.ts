@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,8 +59,12 @@ describe("plan questions", () => {
   });
 });
 
+// bin/plan-ship-gate.ts is a local, untracked script on the captain's machine; clean checkouts
+// (crew worktrees, other hosts) do not have it, so the test runs only where it exists.
+const GATE = join(import.meta.dir, "..", "..", "bin", "plan-ship-gate.ts");
+
 describe("plan ship gate", () => {
-  test("refuses a draft with an open question and allows it after An", async () => {
+  test.skipIf(!existsSync(GATE))("refuses a draft with an open question and allows it after An", async () => {
     const root = await mkdtemp(join(tmpdir(), "ship-gate-"));
     const vault = join(root, "vault");
     const home = join(root, "home");
