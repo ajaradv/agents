@@ -1264,8 +1264,8 @@ body.chat-open { overflow: hidden; }
 
 /* blocked: anchor dropped, yellow pennant */
 .ship-tile.cond-blocked .ship-wake { opacity: 0; animation: none; }
-.ship-tile.cond-blocked .ship-hull::after {
-  content: ""; position: absolute; right: 8%; top: 100%; width: 0.7rem; height: 1rem; z-index: 3;
+.ship-tile.cond-blocked .ship-sprite::before {
+  content: ""; position: absolute; right: 14%; bottom: 0.2rem; width: 0.7rem; height: 1.3rem; z-index: 3;
   background:
     linear-gradient(var(--ink) 0 0) 50% 0 / 2px 100% no-repeat,
     linear-gradient(var(--ink) 0 0) 50% 25% / 100% 2px no-repeat,
