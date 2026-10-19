@@ -74,7 +74,12 @@ async function git(cwd: string, args: string[], timeoutMs = 60_000): Promise<{ o
  */
 async function defaultBase(cwd: string, configured?: string): Promise<string | null> {
   if (configured) {
-    for (const ref of [`origin/${configured}`, configured]) if ((await git(cwd, ["rev-parse", "--verify", "--quiet", ref])).ok) return ref;
+    const local = (await git(cwd, ["rev-parse", "--verify", "--quiet", configured])).ok;
+    const remote = (await git(cwd, ["rev-parse", "--verify", "--quiet", `origin/${configured}`])).ok;
+    // The captain's local branch when it is ahead of origin (work not pushed yet), else origin's.
+    if (local && remote && (await git(cwd, ["merge-base", "--is-ancestor", `origin/${configured}`, configured])).ok) return configured;
+    if (remote) return `origin/${configured}`;
+    if (local) return configured;
   }
   const remote = await git(cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
   if (remote.ok && remote.out) return remote.out;
