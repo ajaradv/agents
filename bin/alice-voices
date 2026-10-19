@@ -15,24 +15,12 @@ import { nodeKey } from "../dashboard/lib/fleet-env.ts";
 import { characterFor, LIVE_MODEL, liveVoiceFor } from "../dashboard/lib/live-voice.ts";
 import { ROOT } from "../dashboard/lib/paths.ts";
 
-// Finalist (2026-10-19): sulafat-original (kept). Candidates now explore two styles the
-// captain likes, described by their qualities (no imitation of real people): each replaces
-// the refined-accent line of agents/alice/character.md for the recording.
+// Chosen (2026-10-19): warm-sulafat, now Alice's voice (live_voice: Sulafat and the warm
+// description in agents/alice/character.md). Add entries here to try new candidates.
 const VOICES = ["Sulafat"];
-const WARM = "For this recording, set aside the Received Pronunciation. Her voice: warm, soft and slightly husky, with a natural, modern English accent (relaxed, not posh), expressive and kind, with an easy smile in it; youthful, early to mid twenties.";
-const LONDON = "For this recording, set aside the Received Pronunciation. Her voice: bright, sweet and light, with a casual London accent (dropped t's, relaxed vowels), conversational, breezy and a little cheeky; early twenties.";
-const VARIANTS: Record<string, { voice: string; extra: string }> = {
-  "warm-sulafat": { voice: "Sulafat", extra: WARM },
-  "warm-achernar": { voice: "Achernar", extra: WARM },
-  "warm-despina": { voice: "Despina", extra: WARM },
-  "warm-leda": { voice: "Leda", extra: WARM },
-  "london-leda": { voice: "Leda", extra: LONDON },
-  "london-zephyr": { voice: "Zephyr", extra: LONDON },
-  "london-laomedeia": { voice: "Laomedeia", extra: LONDON },
-  "london-autonoe": { voice: "Autonoe", extra: LONDON },
-};
+const VARIANTS: Record<string, { voice: string; extra: string }> = {};
 /** Earlier recordings kept for comparison (played, never re-recorded): fleet/home/voices/alice-<name>.wav. */
-const KEPT = ["sulafat-original"];
+const KEPT = ["warm-sulafat", "sulafat-original"];
 const LINE = "Say exactly this, in character: Good evening, Captain. I have looked over the fleet for you. Pochteca is docked, and the fleet ship has just come home with its first voyage. Shall we see what needs you?";
 const DIR = join(ROOT, "fleet", "home", "voices");
 const args = process.argv.slice(2);
@@ -126,7 +114,7 @@ const kept = only ? KEPT.filter((k) => only.includes(k)) : KEPT;
 for (const k of kept) {
   const file = join(DIR, `alice-${k}.wav`);
   if (!existsSync(file)) continue;
-  console.log(`kept  ${k} (an earlier recording, for comparison)`);
+  console.log(`kept  ${k}${k === "warm-sulafat" ? " (Alice's voice)" : " (earlier finalist)"}`);
   await Bun.spawn(["afplay", file]).exited;
   await Bun.sleep(700);
 }
