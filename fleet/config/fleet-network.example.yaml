@@ -1,0 +1,32 @@
+# fleet-network.example.yaml: copy to fleet/home/fleet-network.yaml (machine-local) and edit.
+# bin/fleet-net lists, checks, and installs the fleet on these machines. `local` (this
+# machine) always exists. Tokens and keys never live here and never travel: `up` copies
+# fleet/home/.env.op (1Password references only); store the service account token on
+# each device with bin/fleet-op-token --store.
+#
+# Kinds
+#   ssh      a Mac (launchd) or Linux box (systemd) reachable with passwordless ssh,
+#            usually by its Tailscale name
+#   exe-dev  an exe.dev VM: ssh to <vm>.exe.xyz (create the VM first in exe.dev)
+#
+# Roles (informational for now): gateway runs the node, Alice, routines, and push;
+# crews runs crew voyages.
+
+defaults:
+  code_dir: ~/Workspace/agents
+  branch: fleet-reliability
+
+devices:
+  # The 2016 MacBook Pro as the always-on gateway (vault: fleet/plans/ops/old-macbook-gateway-setup).
+  old-macbook:
+    name: Old MacBook Pro
+    kind: ssh
+    ssh: fleet@old-macbook-pro
+    roles: [gateway, crews]
+
+  # An exe.dev VM (later).
+  # exe-1:
+  #   name: exe.dev VM
+  #   kind: exe-dev
+  #   vm: fleet-1
+  #   roles: [crews]

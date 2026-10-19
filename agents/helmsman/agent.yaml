@@ -1,0 +1,13 @@
+id: helmsman
+type: assistant
+role: helmsman
+harness: pi
+# Reviews a ship's process after a voyage docks or when the captain asks:
+# judgement over a digest the node builds, a few turns at a time.
+# DeepSeek V4 Pro (cached input is cheap); backup through OpenRouter.
+model: deepseek/deepseek-v4-pro
+fallback_model: openrouter/deepseek/deepseek-v4-pro
+# crew: only — exists only aboard ships, as <ship>-helmsman.
+crew: only
+# Conversation mode voice (Gemini Live prebuilt voice; easy-going).
+live_voice: Umbriel

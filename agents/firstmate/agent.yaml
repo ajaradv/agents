@@ -24,3 +24,5 @@ env:
   FLEET_STOW_BEFORE_COMPACT: 1
   FLEET_COMPACT_FOCUS: "Keep every open task and its state, captain holds and their questions, workers in flight with their task ids and branches, promised replies, and the captain's latest instructions verbatim."
 cwd: fleet/home
+# Conversation mode voice (Gemini Live prebuilt voice; informative; matches am_michael).
+live_voice: Charon

@@ -4,3 +4,26 @@ orchestrator: firstmate
 crew: []
 factory: null
 mode: no-mistakes
+isolation: vm
+checks:
+  pytest: just pytest
+  lint: just lint
+  frontend: docker compose -f docker-compose.local.yml run --rm --no-deps node sh -c "npm ci && npm run build"
+gates:
+  task:
+    - pytest
+  dock:
+    - frontend
+    - pytest
+maneuvers:
+  verify:
+    checks: [lint, pytest, frontend]
+    by: [lead, scout, designer]
+
+# Routines this ship runs on its own (lib/routines.ts; Health > Diagnostics > Routines).
+routines:
+  helm-review:
+    title: Pochteca helmsman reviews the ship
+    every: weekly fri 16:30
+    job: helm-review
+    enabled: false

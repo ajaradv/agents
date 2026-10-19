@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { agentKeyEnv } from "./fleet-env.ts";
 import { spawnTimed } from "./proc.ts";
 import { ROOT } from "./paths.ts";
 
@@ -44,7 +45,8 @@ export async function resolveRoute(text: string): Promise<RouteResult> {
     timeoutMs: 15_000,
     stdin: text,
     cwd: ROOT,
-    env: process.env,
+    // The Jev key from the service account, so the script never reads the 1Password mount.
+    env: { ...process.env, TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY || (await agentKeyEnv()).TYPESAFE_API_KEY || "" },
   });
   if (res.timedOut) return { status: "error", probabilities: [], reason: "route resolver timed out" };
   if (res.exitCode !== 0) return { status: "error", probabilities: [], reason: res.stderr.trim().slice(0, 200) };

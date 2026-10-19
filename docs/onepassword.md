@@ -54,9 +54,37 @@ Override path: `OP_ENV_FILE=/path/to/.env.op just alice-op`.
 
 ### C. Developer Environments mount (desktop app + MCP)
 
-If you use 1Password **Environments** (Labs in the desktop app), you can mount secrets at **`fleet/home/.env`** as a FIFO. Then **`just firstmate`** / **`just alice`** may be enough — no `*-op` recipes. This is separate from `op run --environment=`, which standard CLI 2.x does not support.
+If you use 1Password **Environments** (Labs in the desktop app), you can mount secrets at **`fleet/home/.env`** as a FIFO. Then **`just firstmate`** / **`just alice`** may be enough. (The old `*-op` recipes are aliases for the plain ones now.) This is separate from `op run --environment=`, which standard CLI 2.x does not support.
 
 Do not read mounted `.env` paths into chat; use 1Password’s variable list tools.
+
+### D. Service account (set up on this Mac; works while 1Password is locked)
+
+The fleet's agents and node read keys with a 1Password **service account**:
+read-only, scoped to the `Fleet` vault, no app unlock and no prompts.
+Once `fleet/home/.env.op` exists it is the **only** key path: the node, the
+dashboard, `bin/launch`, the router, and `bin/agent-portrait` never read the
+`.env` mount (C), because each read of the mount asks the 1Password app (a
+prompt). Set `FLEET_ENV_MOUNT=1` to allow the mount as a fallback again.
+
+Keys are read with 1Password's JavaScript SDK (`@1password/sdk`, in
+`dashboard/lib/op-sdk.ts`), not the `op` CLI: `op` started from the node or the
+dashboard (launchd services) stalled before its first log line and never
+answered (2026-10-18). `bin/fleet-secrets` runs the same SDK module.
+
+1. Create the service account (1password.com → Developer → Service Accounts):
+   read-only access to vault **Fleet** only.
+2. Store its token in the login Keychain: `bin/fleet-op-token --store` (paste;
+   nothing is shown; it checks the token with 1Password before saving). Do not
+   use `security add-generic-password -w`: its prompt cuts input at 128
+   characters, and the token is longer.
+3. List each key's vault reference in **`fleet/home/.env.op`** (gitignored; see
+   `fleet/config/env.op.example`).
+4. Check: `bin/fleet-op-token` (token works, vaults it sees). `bin/fleet-secrets`
+   resolves the references; it only writes into a pipe, never to a terminal.
+
+To revoke: delete the service account in 1Password, then move
+`fleet/home/.env.op` aside so the fleet uses the `.env` mount. To rotate: create a new token and run `bin/fleet-op-token --store`.
 
 ## tmux / Herdr workers
 

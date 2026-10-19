@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ROOT } from "./paths.ts";
 import type { ApiLaneUsage } from "./api-lane-usage.ts";
-import { huggingFaceKeyPresent, loadFleetDotenv, envKeyPresent } from "./fleet-env.ts";
+import { agentKeyEnv, huggingFaceKeyPresent, envKeyPresent, nodeKey } from "./fleet-env.ts";
 
 function escapeHtml(s: string): string {
   return s
@@ -38,6 +38,14 @@ const LANE_META: Record<
   openrouter: {
     label: "OpenRouter",
     keyEnv: "OPENROUTER_API_KEY",
+  },
+  "gemini-free": {
+    label: "Gemini (free)",
+    keyEnv: "GEMINI_FREE_API_KEY",
+  },
+  google: {
+    label: "Gemini (paid)",
+    keyEnv: "GEMINI_API_KEY",
   },
 };
 
@@ -80,7 +88,8 @@ export async function readConfiguredApiLanes(
   quotaProviderIds: Set<string>,
   usageByProvider: Record<string, ApiLaneUsage> = {},
 ): Promise<ApiLane[]> {
-  const dotenv = await loadFleetDotenv();
+  // The service account first, then the .env mount: the same keys the agents get.
+  const dotenv = await agentKeyEnv();
   let dispatchProviders = new Set<string>();
   try {
     const raw = await readFile(join(ROOT, "fleet", "config", "crew-dispatch.json"), "utf8");
@@ -90,15 +99,17 @@ export async function readConfiguredApiLanes(
   }
 
   const lanes: ApiLane[] = [];
-  for (const provider of ["deepseek", "huggingface", "openrouter"] as const) {
+  const freeGemini = Boolean(await nodeKey("GEMINI_FREE_API_KEY"));
+  for (const provider of ["deepseek", "huggingface", "openrouter", "gemini-free", "google"] as const) {
     if (quotaProviderIds.has(provider)) continue;
     const meta = LANE_META[provider]!;
     const inDispatch = dispatchProviders.has(provider);
+    // Google AI Studio shows as soon as its key is set: tracked for its free tier before any agent uses it.
     const inCatalog =
-      provider === "openrouter" ? inDispatch : await providerInPiCatalog(provider);
+      provider === "openrouter" ? inDispatch : provider === "google" ? envKeyPresent(meta.keyEnv, dotenv) : provider === "gemini-free" ? freeGemini : await providerInPiCatalog(provider);
     if (!inDispatch && !inCatalog) continue;
     const keySet =
-      provider === "huggingface" ? huggingFaceKeyPresent(dotenv) : envKeyPresent(meta.keyEnv, dotenv);
+      provider === "huggingface" ? huggingFaceKeyPresent(dotenv) : provider === "gemini-free" ? freeGemini : envKeyPresent(meta.keyEnv, dotenv);
     const usage = usageByProvider[provider];
     const note =
       provider === "huggingface"
@@ -123,14 +134,14 @@ export async function readConfiguredApiLanes(
 export function apiLaneCardHtml(lane: ApiLane): string {
   const [on, off] = ["key set", "key not set"];
   const keyBadge = lane.keySet
-    ? `<span class="detent detent-ok">${on}</span>`
-    : `<span class="detent detent-warn">${off}</span>`;
+    ? `<span class="d-badge d-badge-sm d-badge-success d-badge-soft">${on}</span>`
+    : `<span class="d-badge d-badge-sm d-badge-warning d-badge-soft">${off}</span>`;
   const usage = lane.usage;
   const headline = usage?.ok && usage.headline ? `<p>${escapeHtml(usage.headline)}</p>` : "";
   const detail = usage?.ok && usage.detail ? `<p class="muted">${escapeHtml(usage.detail)}</p>` : "";
   const stale = usage?.stale ? `<p class="warn">Usage may be stale</p>` : "";
   const note = lane.note ? `<p class="muted">${escapeHtml(lane.note)}</p>` : "";
-  return `<article class="sheet">
+  return `<article class="d-card d-card-border bg-base-100 sheet">
       <div class="between">
         <h3>${escapeHtml(lane.label)}</h3>
         ${keyBadge}

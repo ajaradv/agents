@@ -1,0 +1,138 @@
+#!/usr/bin/env bun
+// fleet-shot - screenshot a page at desktop and/or phone size with headless
+// Chrome: a hard timeout, a throwaway profile, and nothing left running. For
+// any agent checking UI work (then bin/fleet-look or the crew `look` tool asks
+// a vision model about the image). macOS and Linux; CHROME_PATH to override.
+//
+//   bin/fleet-shot <url> [--mobile|--both] [--height N] [--wait ms] [--out dir]
+//
+// Output is TOON (docs/tool-standards.md): the image paths, sizes, and timing.
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { encode } from "@toon-format/toon";
+
+const HELP = `command: fleet-shot
+summary: Screenshot a page at desktop and/or phone size with headless Chrome (hard timeout, nothing left running)
+usage: bin/fleet-shot <url> [--mobile|--both] [--height N] [--wait ms] [--out dir]
+flags[6]{flag,default,description}:
+  --mobile,,phone size only (390 wide)
+  --both,,desktop (1440 wide) and phone
+  --height,1000,viewport height in pixels (taller captures more of a long page)
+  --wait,4000,milliseconds for the page's scripts to run before the shot
+  --out,$TMPDIR/fleet-shots,folder for the PNGs
+  --help,,show this help
+examples[3]:
+  bin/fleet-shot http://127.0.0.1:8797/harbor
+  bin/fleet-shot http://127.0.0.1:8797/ships/fleet --both --height 1600
+  bin/fleet-shot http://localhost:5173 --mobile
+help[1]: bin/fleet-shot <url> --both, then bin/fleet-look <paths> "<question>"`;
+
+const args = process.argv.slice(2);
+const out = (o: Record<string, unknown>) => console.log(encode(o));
+function fail(error: string, suggestion: string, code = 2): never {
+  out({ error, suggestion });
+  process.exit(code);
+}
+if (args[0] === "--version" || args[0] === "-v" || args[0] === "-V") {
+  console.log("1.0.0");
+  process.exit(0);
+}
+if (!args.length || args.includes("--help") || args[0] === "-h") {
+  console.log(HELP);
+  process.exit(0);
+}
+const KNOWN = ["--mobile", "--both", "--height", "--wait", "--out"];
+for (const a of args) if (a.startsWith("--") && !KNOWN.includes(a)) fail(`unknown flag ${a}`, `valid flags: ${KNOWN.join(", ")}, --help`);
+const value = (f: string) => {
+  const i = args.indexOf(f);
+  return i >= 0 ? args[i + 1] : undefined;
+};
+const url = args.find((a, i) => !a.startsWith("--") && !KNOWN.includes(args[i - 1] ?? ""));
+if (!url || !/^(https?:\/\/|file:\/\/)/.test(url)) fail("give a page URL (http, https, or file)", "bin/fleet-shot http://127.0.0.1:8797/harbor");
+const height = Math.min(8000, Math.max(300, Number(value("--height") ?? 1000) || 1000));
+const wait = Math.min(30_000, Math.max(0, Number(value("--wait") ?? 4000) || 0));
+const dir = value("--out") ?? join(process.env.TMPDIR ?? tmpdir(), "fleet-shots");
+mkdirSync(dir, { recursive: true });
+
+function chrome(): string | null {
+  const candidates = [
+    process.env.CHROME_PATH ?? "",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+  ];
+  return candidates.find((c) => c && existsSync(c)) ?? null;
+}
+const bin = chrome();
+if (!bin) fail("no Chrome or Chromium found", "install Google Chrome, or set CHROME_PATH");
+
+const views = args.includes("--both") ? ["desktop", "mobile"] : args.includes("--mobile") ? ["mobile"] : ["desktop"];
+const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "");
+const shots: { viewport: string; path: string; kb: number; ms: number }[] = [];
+
+/**
+ * Drive Chrome over the DevTools protocol: open, wait a fixed time, capture.
+ * Chrome's own --screenshot waits for the page to go quiet, which never happens
+ * on a page with a live event stream (the dashboard): it hung until killed.
+ */
+async function capture(width: number, mobile: boolean, path: string): Promise<string | null> {
+  const profile = mkdtempSync(join(tmpdir(), "fleet-shot-profile-"));
+  const proc = Bun.spawn([bin!, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdout: "ignore", stderr: "ignore" });
+  const deadline = Date.now() + wait + 40_000;
+  try {
+    let port = "";
+    while (!port && Date.now() < deadline) {
+      try {
+        port = readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0]!.trim();
+      } catch {
+        await Bun.sleep(100);
+      }
+    }
+    if (!port) return "Chrome did not start its DevTools port";
+    const target = (await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" })).json()) as { webSocketDebuggerUrl: string };
+    const ws = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((ok, no) => ((ws.onopen = ok), (ws.onerror = no)));
+    let id = 0;
+    const waiting = new Map<number, (r: any) => void>();
+    let loaded: () => void = () => {};
+    const loadedP = new Promise<void>((r) => (loaded = r));
+    ws.onmessage = (e) => {
+      const m = JSON.parse(String(e.data));
+      if (m.id && waiting.has(m.id)) waiting.get(m.id)!(m);
+      if (m.method === "Page.loadEventFired") loaded();
+    };
+    const send = (method: string, params: Record<string, unknown> = {}) => new Promise<any>((r) => { waiting.set(++id, r); ws.send(JSON.stringify({ id, method, params })); });
+    await send("Page.enable");
+    await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: mobile ? 2 : 1, mobile });
+    if (mobile) await send("Emulation.setUserAgentOverride", { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1" });
+    const nav = await send("Page.navigate", { url });
+    if (nav.result?.errorText) return `the page did not load: ${nav.result.errorText}`;
+    await Promise.race([loadedP, Bun.sleep(20_000)]);
+    await Bun.sleep(wait);
+    const shot = await Promise.race([send("Page.captureScreenshot", { format: "png" }), Bun.sleep(20_000).then(() => null)]);
+    ws.close();
+    if (!shot?.result?.data) return "the capture timed out";
+    await Bun.write(path, Buffer.from(shot.result.data, "base64"));
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  } finally {
+    proc.kill("SIGKILL");
+    await proc.exited.catch(() => {});
+    rmSync(profile, { recursive: true, force: true });
+  }
+}
+
+for (const view of views) {
+  const width = view === "mobile" ? 390 : 1440;
+  const path = join(dir, `shot-${stamp}-${view}.png`);
+  const t0 = Date.now();
+  const error = await capture(width, view === "mobile", path);
+  if (error || !existsSync(path)) fail(`the ${view} shot failed: ${error ?? "no image"}`, "check the URL loads (curl -sI it), then try again with a longer --wait", 1);
+  shots.push({ viewport: `${view} ${width}x${height}`, path, kb: Math.round(statSync(path).size / 1024), ms: Date.now() - t0 });
+}
+out({ result: `${shots.length} screenshot(s) of ${url}`, shots, help: [`bin/fleet-look ${shots[0]!.path} "<what to check>"`, "crew: the look tool with these paths"] });
+process.exit(0);

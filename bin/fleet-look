@@ -1,0 +1,54 @@
+#!/usr/bin/env bun
+// fleet-look - ask a vision model about screenshots (crew eyes). Officers and
+// Claude Code run this; crewmates use their `look` tool (the node holds keys).
+//
+//   bin/fleet-look <image> [<image> ...] "<question>"
+//
+// Model: Claude Haiku 5.5 through OpenRouter (FLEET_LOOK_MODEL). Output is TOON.
+import { tmpdir } from "node:os";
+import { encode } from "@toon-format/toon";
+import { checkImages, lookAt } from "../dashboard/lib/look.ts";
+import { ROOT } from "../dashboard/lib/paths.ts";
+
+const HELP = `command: fleet-look
+summary: Ask a vision model a question about up to 4 screenshots (PNG, JPEG, WebP)
+usage: bin/fleet-look <image> [<image> ...] "<question>"
+flags[1]{flag,description}:
+  --help,show this help
+examples[2]:
+  bin/fleet-look /tmp/fleet-shots/shot-1-desktop.png "Does the fleet tile show a progress bar and the word Becalmed?"
+  bin/fleet-look a.png b.png "Compare the two: what changed in the header?"
+help[1]: bin/fleet-shot <url> --both (makes the screenshots)`;
+
+const args = process.argv.slice(2);
+const out = (o: Record<string, unknown>) => console.log(encode(o));
+if (args[0] === "--version" || args[0] === "-v" || args[0] === "-V") {
+  console.log("1.0.0");
+  process.exit(0);
+}
+if (!args.length || args.includes("--help") || args[0] === "-h") {
+  console.log(HELP);
+  process.exit(0);
+}
+for (const a of args) if (a.startsWith("--")) {
+  out({ error: `unknown flag ${a}`, suggestion: "valid flags: --help" });
+  process.exit(2);
+}
+const question = args.at(-1)!;
+const images = args.slice(0, -1);
+if (!images.length || question.length < 5) {
+  out({ error: "give one or more images, then the question", suggestion: 'bin/fleet-look shot.png "Is the header readable?"' });
+  process.exit(2);
+}
+const checked = checkImages(images, [ROOT, process.env.TMPDIR ?? tmpdir(), "/tmp", "/private/tmp", `${process.env.HOME}/.treehouse`]);
+if (!checked.ok) {
+  out({ error: checked.message, suggestion: "screenshots from bin/fleet-shot land in $TMPDIR/fleet-shots" });
+  process.exit(2);
+}
+const r = await lookAt(checked.files, question);
+if (!r.ok) {
+  out({ error: `the look failed: ${r.error}`, suggestion: "check the OpenRouter key (bin/fleet-op-token) and try again" });
+  process.exit(1);
+}
+out({ answer: r.answer, model: r.model, cost: `$${r.cost.toFixed(5)}`, ms: r.ms, help: ['bin/fleet-shot <url> --both, then bin/fleet-look <paths> "<question>"'] });
+process.exit(0);

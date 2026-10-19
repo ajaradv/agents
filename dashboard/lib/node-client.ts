@@ -191,6 +191,13 @@ export async function newSession(agentId: string): Promise<{ ok: boolean; messag
   return (await r.json().catch(() => ({ ok: false, message: "bad reply from the fleet node" }))) as { ok: boolean; message: string };
 }
 
+/** The captain's Allow or Deny on a call the tool gate held (lib/tool-gate.ts). */
+export async function decideGate(id: string, allow: boolean): Promise<{ ok: boolean; message: string }> {
+  const r = await call("/v1/gate", { id, decision: allow ? "allow" : "deny" });
+  if (!r) return { ok: false, message: OFFLINE };
+  return (await r.json().catch(() => ({ ok: false, message: "bad reply from the fleet node" }))) as { ok: boolean; message: string };
+}
+
 /** The captain's Go or No on a held fleet action; the node runs it and tells the officer. */
 export async function decideGo(id: string, go: boolean): Promise<{ ok: boolean; message: string }> {
   const r = await call("/v1/go", { id, decision: go ? "go" : "no" });

@@ -10,6 +10,10 @@ harness: pi
 model: openrouter/anthropic/claude-sonnet-5.5
 fallback_model: deepseek/deepseek-flash
 workspace: ships
+# Aboard a ship with `isolation: vm`: the browser image (R4e: Chromium, fonts,
+# and the `shot` command for desktop and mobile screenshots inside the VM).
+# Build it once with bin/fleet-vm-image browser; until then, the plain image.
+vm_image: browser
 # Live session in the dashboard's agent host (pi --mode rpc), shared with the
 # TUI (Start TUI on the dashboard, or just designer). turn_timeout only applies
 # if runtime is switched back to headless.
@@ -19,6 +23,7 @@ turn_timeout: 1800
 # Motion and 3D skills (vendor/), Designer only: GSAP (official), LottieFiles
 # motion-design (craft: timing, easing, choreography), Three.js and R3F.
 skill_paths:
+  - skills/git-conventions
   - vendor/gsap-skills/skills/gsap-core
   - vendor/gsap-skills/skills/gsap-timeline
   - vendor/gsap-skills/skills/gsap-scrolltrigger
@@ -30,6 +35,13 @@ skill_paths:
   - vendor/motion-design-skill/skills/motion-design
   - vendor/three-agent-skills/skills/three-best-practices
   - vendor/three-agent-skills/skills/r3f-best-practices
+# Isolated sub-agents (extensions/subagent.ts, agents/subagents/): the
+# impeccable critique runs its design review and detector evidence as two
+# independent assessments; without a sub-agent tool it ran "DEGRADED:
+# single-context". Sub-agents inherit this model; their spend counts toward
+# the daily budget.
+extensions:
+  - subagent
 extra_prompts:
   - prompts/system/sr_opus_5_system_prompt.md
 authority:
@@ -47,3 +59,5 @@ authority:
     - spawn
     - push
     - backend-code
+# Conversation mode voice (Gemini Live prebuilt voice; breezy; matches af_heart).
+live_voice: Aoede

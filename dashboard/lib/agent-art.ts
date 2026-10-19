@@ -11,6 +11,8 @@ const AGENT_ART: Record<string, string> = {
   // Crew roles reuse the crew pool's named portraits.
   scout: "/art/crew/lookout.png",
   lead: "/art/crew/bosun.png",
+  helmsman: "/art/helmsman.png",
+  builder: "/art/builder.png",
 };
 
 export const CAPTAIN_ART = "/art/captain.png";

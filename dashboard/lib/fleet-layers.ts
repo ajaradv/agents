@@ -1,4 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
+import { parseManeuvers, type ManeuverDecl } from "./maneuvers.ts";
+import { baseDir, readShipConfig } from "./ship-config.ts";
 import { join } from "node:path";
 import { parse as yamlParse } from "yaml";
 import { aliceVault, ROOT } from "./paths.ts";
@@ -17,7 +19,20 @@ export type ShipRow = {
   /** Roles deployed aboard as `<ship>-<role>` crewmates (bin/launch resolve_crewmate). */
   crew: string[];
   crewModels: Record<string, string>;
+  /** "vm": crewmates' built-in tools run in a Gondolin micro-VM (extensions/gondolin); "host" otherwise. */
+  isolation: "vm" | "host";
+  /** Hosts a VM may reach (HTTP/HTTPS); the default list when the ship names none. */
+  vmAllow: string[];
+  /** Commands crewmates may run on the host by name (run_check), e.g. { pytest: "just pytest" }. */
+  checks: Record<string, string>;
+  /** Checks that must pass on the latest commit: before a task is done (task) and before docking (dock). */
+  gates: { task: string[]; dock: string[] };
+  /** Declared maneuvers: what each runs, who launches it, what it needs (lib/maneuvers). */
+  maneuvers: ManeuverDecl[];
 };
+
+/** Package registries and GitHub (read over HTTPS): what a crewmate's VM reaches unless the ship says otherwise. */
+export const DEFAULT_VM_ALLOW = ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "crates.io", "static.crates.io", "index.crates.io", "github.com", "codeload.github.com", "objects.githubusercontent.com", "raw.githubusercontent.com"];
 
 /** One vault note under `{ALICE_VAULT}/fleet/initiatives/`. */
 export type InitiativeRow = {
@@ -49,7 +64,11 @@ export async function listShipAdws(shipPath: string): Promise<string[]> {
 }
 
 export function parseShipYaml(text: string, fallbackId: string): Omit<ShipRow, "adws"> {
-  const y = (yamlParse(text) ?? {}) as Record<string, unknown>;
+  return parseShipConfig((yamlParse(text) ?? {}) as Record<string, unknown>, fallbackId);
+}
+
+/** A ship row from its config (the merged view of lib/ship-config, or a parsed file). */
+export function parseShipConfig(y: Record<string, unknown>, fallbackId: string): Omit<ShipRow, "adws"> {
   const factory = y.factory as { skill?: string; adws?: unknown } | null | undefined;
   return {
     id: String(y.id ?? fallbackId),
@@ -62,10 +81,23 @@ export function parseShipYaml(text: string, fallbackId: string): Omit<ShipRow, "
     crewModels: Object.fromEntries(
       Object.entries((y.crew_models as Record<string, unknown> | null) ?? {}).map(([k, v]) => [k, String(v)]),
     ),
+    isolation: y.isolation === "vm" ? "vm" : "host",
+    vmAllow: y.vm_allow === undefined ? DEFAULT_VM_ALLOW : strList(y.vm_allow).map((h) => h.toLowerCase()),
+    checks: Object.fromEntries(
+      Object.entries((y.checks as Record<string, unknown> | null) ?? {})
+        .filter(([k, v]) => /^[a-z][a-z0-9_-]{0,30}$/.test(k) && typeof v === "string" && v.trim())
+        .map(([k, v]) => [k, String(v).trim()]),
+    ),
+    gates: {
+      task: strList((y.gates as Record<string, unknown> | null)?.task),
+      dock: strList((y.gates as Record<string, unknown> | null)?.dock),
+    },
+    maneuvers: parseManeuvers(y.maneuvers),
   };
 }
 
-export async function readShips(dir = join(ROOT, "fleet", "ships")): Promise<ShipRow[]> {
+/** Every ship, as the merged view (base plus overlay, lib/ship-config) sees it. */
+export async function readShips(dir = baseDir()): Promise<ShipRow[]> {
   let names: string[];
   try {
     names = (await readdir(dir)).filter((n) => n.endsWith(".yaml"));
@@ -75,7 +107,9 @@ export async function readShips(dir = join(ROOT, "fleet", "ships")): Promise<Shi
   const rows: ShipRow[] = [];
   for (const name of names) {
     try {
-      const base = parseShipYaml(await readFile(join(dir, name), "utf8"), name.replace(/\.yaml$/, ""));
+      const id = name.replace(/\.yaml$/, "");
+      const merged = dir === baseDir() ? readShipConfig(id) : null;
+      const base = merged ? parseShipConfig(merged, id) : parseShipYaml(await readFile(join(dir, name), "utf8"), id);
       rows.push({ ...base, adws: base.path ? await listShipAdws(base.path) : [] });
     } catch {
       continue;

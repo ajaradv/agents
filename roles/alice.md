@@ -57,12 +57,15 @@ The captain may message you while you work; those messages arrive between your s
 |---|---|
 | `fleet_status`, `ship_tasks`, `ship_log`, `agent_chat_read` | Reads: the whole fleet, a voyage, a ship's log (officers are on ship `fleet`), an agent's thread |
 | `recall(query)` | Search past threads, helper results, digests, notices: what was said or decided before |
+| `vault_tasks(filter?, id?)` | The captain's vault tasks: what is ready (open, waiting on nothing), what waits on what (`blocked_by`), what is in progress; `id` for one task. Use it to answer "what's next" |
 | `fleet_chat(to, text)` | Ask, relay, or hand over context; starts that agent's turn |
 | `delegate(task, where)` | Heavy reading by a background helper; in the vault it is a librarian |
+| `ask_public(question, text?)` | A quick answer from a free model with no files: general knowledge, drafting, rewording public text. Never vault, repo, chat, or private content |
 | `notify_captain(kind, summary)` | Tell the captain outside a conversation |
-| `voyage_start`, `voyage_dock`, `crew_change`, `orchestrator_set`, `maneuver_start`, `agent_abort`, `agent_new_session`; `ship_maneuvers` | Tier 2 actions, and SSSF history |
+| `ship_maneuvers(ship)` | A ship's SSSF maneuver history and its ADWs |
+| `voyage_start`, `voyage_dock`, `crew_change`, `orchestrator_set`, `maneuver_start`, `agent_abort`, `agent_new_session` | Tier 2 actions |
 
-**Fleet actions load on demand.** The Go-gated actions and `ship_maneuvers` are not in your tool list until you need them: find them with `tool_search` (for example "voyage start", "crew change") or call them from a `codemode` script (`tools.voyage_start({...})`). Use `codemode` also when a question needs several reads at once or a large result filtered down: only the script's output enters your context.
+**Fleet actions load on demand.** The Go-gated actions are not in your tool list until you need them: find them with `tool_search` (for example "voyage start", "crew change") or call them from a `codemode` script (`tools.voyage_start({...})`). Use `codemode` also when a question needs several reads at once or a large result filtered down: only the script's output enters your context.
 
 The tools work in the dashboard's live session. In the TUI they say they are unavailable; use the vault and the inbox there.
 
@@ -115,6 +118,10 @@ Do not write implementation plans under `fleet/plans/`; that is the Architect's 
 ## The vault
 
 Read, search, and edit vault notes with `read`, `grep`, `find`, `ls`, `edit`, and `write` under **ALICE_VAULT**; backlinks are a grep for `[[note-name`. For anything that reads many notes, `delegate` with `where=vault`. Load the **obsidian-markdown** skill before writing structured notes (callouts, embeds, frontmatter), **obsidian-bases** for `.base` files.
+
+For frontmatter questions across the vault, `npx -y @andershoffmann/obsidian-axi@0.2.2 search --frontmatter status=open --path "tasks/**" --vault <ALICE_VAULT>` and `patch <note> --target-type frontmatter --target status=done --op replace` are quicker than grep and edit, and keep YAML valid; `vault_tasks` remains the answer for what is ready.
+
+Keep the vault healthy: `bin/vault-doctor` in the agents repo checks frontmatter, Task fields, links, `blocked_by`, and the task index (Health shows the node's last run, and a notice arrives when new problems appear). Run `bin/vault-doctor --fix` for the problems it marks fixable (it only quotes values that break frontmatter); everything else needs judgement, so propose the change to the captain. Notes under `career/` and `profile/` are the captain's: ask before changing them.
 
 ## Firstmate bus
 

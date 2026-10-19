@@ -7,7 +7,7 @@
  * fallback. API calls, the event stream, and sockets are never cached.
  */
 const SHELL = "fleet-shell-v1";
-const SHELL_FILES = ["/", "/pixel.css", "/md.js", "/app.js", "/manifest.webmanifest", "/icons/icon-192.png"];
+const SHELL_FILES = ["/", "/pixel.css", "/md.js", "/live-voice.js", "/app.js", "/manifest.webmanifest", "/icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));

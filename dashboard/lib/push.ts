@@ -45,7 +45,7 @@ export function vapidKeys(): Vapid {
     writeFileSync(path, JSON.stringify(vapid) + "\n", { mode: 0o600 });
     chmodSync(path, 0o600);
   }
-  webpush.setVapidDetails(process.env.FLEET_PUSH_CONTACT ?? "mailto:captain@fleet.local", vapid.publicKey, vapid.privateKey);
+  webpush.setVapidDetails(process.env.FLEET_PUSH_CONTACT ?? "https://github.com/ajaradv/agents", vapid.publicKey, vapid.privateKey);
   return vapid;
 }
 
@@ -81,6 +81,10 @@ export function messageFor(item: NeedItem): PushMessage {
       return { title: `${who(item)} asks`, body: (item.questions[0]?.question ?? item.text).slice(0, 180), tag: item.id, url };
     case "go":
       return { title: `Go? (${who(item)})`, body: item.summary.slice(0, 180), tag: item.id, url };
+    case "helm":
+      return { title: `Helm proposal (${item.ship})`, body: item.what.slice(0, 180), tag: item.id, url };
+    case "gate":
+      return { title: `Tool call held (${who(item)})`, body: item.summary.slice(0, 180), tag: item.id, url };
     case "notice": {
       const k = { done: "Done", blocked: "Blocked", decision: "Decision needed", milestone: "Milestone", info: "Note", digest: "Digest" }[item.noticeKind] ?? "Notice";
       return { title: `${k}: ${item.from}`, body: item.summary.slice(0, 180), tag: item.id, url };

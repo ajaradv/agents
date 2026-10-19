@@ -1,0 +1,60 @@
+# Routines: recurring work the fleet runs on its own (vault task fleet-routines).
+# The node reads this file every minute; edits take effect on the next check.
+#
+#   id        lowercase-with-dashes, unique
+#   title     what the captain sees on Health > Diagnostics
+#   every     "every 30m" | "every 6h" | "every 2d" | "daily 08:30" | "weekly mon 09:00" (local time)
+#   agent     an agent id: it gets `prompt` as a message and a turn, and reports with notify_captain
+#   job       or a built-in node job: vault-doctor, free-models, due-tasks, codegraph-sync, helm-review (needs `ship`)
+#   enabled   false to keep a routine declared but off (default true)
+#   watch     what the routine reads: ships, ship:<id>, vault:<folder>; when none of it changed since
+#             the last run, the run is skipped (helm reviews watch their own ship by default)
+#
+# A ship's own routines (its helm review, a nightly check sweep) live under
+# `routines:` in fleet/ships/<ship>.yaml or its overlay; see docs/ship-config.md.
+
+routines:
+  # Node jobs (these were hard-coded timers before).
+  - id: vault-doctor
+    title: Vault doctor (new formatting problems become a notice)
+    every: every 6h
+    job: vault-doctor
+
+  - id: free-models
+    title: Free model registry refresh
+    every: every 6h
+    job: free-models
+
+  - id: codegraph-sync
+    title: Code graphs kept current (ship repos with a CodeGraph index)
+    every: every 1h
+    job: codegraph-sync
+
+  - id: due-tasks
+    title: Due vault tasks (a notice the day one comes due)
+    every: every 3h
+    job: due-tasks
+
+  # Agent routines.
+  - id: weekly-fleet-report
+    title: Weekly fleet report for the captain
+    every: weekly mon 09:00
+    agent: alice
+    watch: [ships]
+    prompt: |
+      Write the captain's weekly fleet report for the last 7 days: spend by
+      agent and model, voyages docked, Jev calls and cost, tool gate decisions
+      (and anything held or stopped), recurring tool failures, vault tasks done,
+      and what comes due this week. Use your fleet tools; numbers, not guesses.
+      End with at most three things worth the captain's attention.
+
+  - id: vault-inbox-triage
+    title: Vault inbox triage
+    every: daily 08:00
+    agent: alice
+    watch: ["vault:inbox"]
+    prompt: |
+      Triage the vault inbox: file each new note where it belongs (task, plan,
+      research, reference), fix its frontmatter, and link it from the right
+      index. Report what you filed and anything that needs the captain.
+    enabled: false

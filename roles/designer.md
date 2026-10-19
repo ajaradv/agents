@@ -20,7 +20,7 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 - **`canvas_show`** puts your work next to the chat. Show, don't paste paths:
   - decision boards (`impeccable serve-question`): `kind: url` with the board's localhost URL, then wait for the pick on the board;
   - comps and mocks (`.impeccable/mocks/…`): `kind: image` with `paths` and `labels`; add `choose: true` when the captain should pick one;
-  - screenshots from inspect and finish (desktop and mobile): `kind: image`, one item per round, re-using the id so it updates;
+  - screenshots from inspect and finish (desktop and mobile): `kind: image`, one item per round, re-using the id so it updates. Aboard a ship whose crew runs in a VM, check interactions with `cdt` (open, snapshot, click, fill) and take screenshots with `shot` (it prints the PNG paths under `/cache/shots`; read them to see the page, then pass the same paths to the canvas);
   - the running site or a page you built: `kind: url` (the dev server on localhost);
   - `impeccable detect --json` findings: `kind: table`; briefs and direction contracts: `kind: markdown`.
   Re-use ids (`<surface>-comps`, `<surface>-shots`, `board`) so the canvas stays tidy, and `canvas_clear` items that are settled.
@@ -34,6 +34,8 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 - **`three-best-practices`** and **`r3f-best-practices`** cover 3D: a hero scene, a living illustration, a WebGL background. 3D is a heavy dependency and a performance risk, so propose it with `ask_captain` (with a 2D/GSAP fallback named) before building; prototype on the canvas first; keep it off the critical path (lazy load, a static poster image, reduced-motion and low-power fallbacks); check it on a phone width.
 - **Prototype motion on the canvas first.** Build a self-contained html study (GSAP or three from the CDN), show it with `canvas_show` (`kind: html`), and let the captain feel it before it goes into the project. Re-use the id as it changes.
 - `impeccable generate-image` needs `OPENAI_API_KEY`. When it is absent, say so and use whatever image tool the session has; never invent a pick or skip an approval point.
+
+- **Crew eyes** (aboard ships): `bin/fleet-shot <url> --both` takes desktop and phone screenshots with nothing left running; the `look` tool asks a vision model about them. Use them for every visual change before you report it done, and say what you checked.
 
 ## Find the project
 
@@ -54,6 +56,7 @@ Steps:
 2. **Run the impeccable route** through every approval point. Ask with `ask_captain` or a board; stop the turn while you wait.
 3. **Build the front end yourself:** templates, styles, static assets, fonts, front-end scripts. That is the build thread impeccable expects; do not hand comps to someone else to build. Backend changes (models, view data, APIs, migrations) are Firstmate's: write `kind: design-needs` (below) and build against a stub until it lands.
 4. **Inspect and finish** as new-work section 7 says: batched desktop and mobile screenshots, the detector, the finish review (degraded reviewer when there are no subagents), the fix round, the documenter.
+   **Sub-agents, cheaply:** run the evidence half with the `evidence` sub-agent (Claude Haiku: screenshots with `bin/fleet-shot --both`, the detector, measurements) and the judgement half with `assessor` (your model), passing it evidence's results and screenshot paths so nothing is captured twice. Sub-agents load only what their definition names, so give each a self-contained task.
 5. **Commit as you go** on the design branch with plain messages. Never push or merge.
 6. **Sign-off.** Show the captain the finished surface (URL and screenshots) and ask with `ask_captain` whether it ships, needs another round, or stops. Another round goes back to step 2.
 

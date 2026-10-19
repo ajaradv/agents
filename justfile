@@ -29,35 +29,51 @@ alice:
 firstmate:
     cd "{{root}}" && bin/launch firstmate
 
-# 1Password CLI: op run --env-file with op:// references (see fleet/config/env.op.example)
-# Requires: op signin, fleet/home/.env.op copied from env.op.example
-alice-op:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    root="{{root}}"
-    op_env="${OP_ENV_FILE:-$root/fleet/home/.env.op}"
-    if [[ ! -f "$op_env" ]]; then
-      echo "missing $op_env — copy fleet/config/env.op.example to fleet/home/.env.op and set op:// paths" >&2
-      exit 1
-    fi
-    cd "$root" && op run --env-file="$op_env" -- bin/launch alice
+# Kept for old habits: bin/launch reads keys from the 1Password service account now.
+alice-op: alice
 
-firstmate-op:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    root="{{root}}"
-    op_env="${OP_ENV_FILE:-$root/fleet/home/.env.op}"
-    if [[ ! -f "$op_env" ]]; then
-      echo "missing $op_env — copy fleet/config/env.op.example to fleet/home/.env.op and set op:// paths" >&2
-      exit 1
-    fi
-    cd "$root" && op run --env-file="$op_env" -- bin/launch firstmate
+# Kept for old habits: bin/launch reads keys from the 1Password service account now.
+firstmate-op: firstmate
 
 architect:
     cd "{{root}}" && bin/launch architect
 
 dashboard:
     cd "{{root}}" && bun run dashboard/server.ts
+
+# Tailwind utilities and daisyUI components for the dashboard: dashboard/ui/ui.css -> dashboard/public/ui.css.
+# Run after adding Tailwind or daisyUI (d-) classes to the dashboard's markup.
+css:
+    cd "{{root}}" && bun run build:css
+
+# Strict TypeScript over the dashboard, node, and the extensions the fleet loads (tsconfig.json).
+typecheck:
+    cd "{{root}}" && node_modules/.bin/tsc -p .
+
+# Every script agents run, checked against the AXI principles (docs/tool-standards.md). Add new ones here.
+axi-check-scripts:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cd "{{root}}"
+    fails=0
+    for c in bin/stamp-ship bin/new-agent bin/order "bun bin/plan-execution.ts" bin/agent-portrait bin/vault-doctor bin/phone-check bin/fleet-op-token bin/fleet-axi bin/fleet-net bin/fleet-shot bin/fleet-look; do
+      line="$(npx -y axi-axi@0.1.0 validate "$c" --strict 2>&1 | grep '^summary')"
+      printf '%-28s %s\n' "$c" "$line"
+      case "$line" in *" 0 fail, 0 warn"*) ;; *) fails=$((fails + 1)) ;; esac
+    done
+    [ "$fails" -eq 0 ] || { echo "$fails script(s) fall short of the standard"; exit 1; }
+
+# Is this Mac ready for phone access to Herdr (Tailscale, SSH keys only, Herdr)? Read-only.
+phone-check:
+    cd "{{root}}" && bin/phone-check
+
+# Check a CLI agents run against the AXI principles (docs/tool-standards.md), e.g. just axi-check "bin/stamp-ship".
+axi-check cmd:
+    cd "{{root}}" && npx -y axi-axi@0.1.0 validate "{{cmd}}" --strict
+
+# The dashboard's tests (they include the typecheck and the tool standard checks).
+test:
+    cd "{{root}}/dashboard" && bun test
 
 # Background services (launchd): node and dashboard start at login and restart
 # if they die. Stop a dashboard running in a terminal before installing.
@@ -82,16 +98,8 @@ node-restart:
     #!/usr/bin/env bash
     pid=$(lsof -tiTCP:"${FLEET_NODE_PORT:-8786}" -sTCP:LISTEN) && kill "$pid" && echo "stopped fleet node $pid; the dashboard starts a new one" || echo "no fleet node running"
 
-architect-op:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    root="{{root}}"
-    op_env="${OP_ENV_FILE:-$root/fleet/home/.env.op}"
-    if [[ ! -f "$op_env" ]]; then
-      echo "missing $op_env — copy fleet/config/env.op.example to fleet/home/.env.op and set op:// paths" >&2
-      exit 1
-    fi
-    cd "$root" && op run --env-file="$op_env" -- bin/launch architect
+# Kept for old habits: bin/launch reads keys from the 1Password service account now.
+architect-op: architect
 
 shipwright:
     cd "{{root}}" && bin/launch shipwright

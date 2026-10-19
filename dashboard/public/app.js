@@ -6,6 +6,15 @@ const ACK_LINES = {
   alice: ["Aye, Captain.", "One sec.", "On it.", "Right away, Captain.", "Let me look.", "Aye aye."],
   default: ["On it.", "One moment.", "Got it.", "Looking now."],
 };
+/** Non-verbal acknowledgements (public/sfx.js), on rotation with the spoken ones: about one send in three. */
+const SFX_SETS = {
+  alice: ["papers", "page"],
+  architect: ["page", "quill"],
+  designer: ["quill", "page"],
+  default: ["papers"],
+};
+/** How the captain talks in the drawer (per device): typing only, tap to talk, or a live conversation. */
+const VOICE_MODES = ["type", "talk", "live"];
 const CHAT_KEY = "fleet.chatId";
 
 function readChatId() {
@@ -17,6 +26,13 @@ function readChatId() {
 }
 
 const LEAVES = ["needs", "harbor", "health", "agents"];
+/** Health's sub-tabs; each has its own URL (/health/metrics). */
+const HEALTH_TABS = [
+  { id: "status", label: "Status" },
+  { id: "usage", label: "Usage" },
+  { id: "metrics", label: "Metrics" },
+  { id: "diagnostics", label: "Diagnostics" },
+];
 
 /** Float32 chunks at `rate` → 16 kHz mono 16-bit WAV (what the transcriber wants). */
 function encodeWav16k(chunks, rate) {
@@ -86,6 +102,14 @@ function dashboardApp() {
     /** Voice: "idle" | "listening" | "transcribing"; replies are spoken when voiceReplies is on. */
     voiceState: "idle",
     voiceReplies: false,
+    /** Conversation mode (public/live-voice.js): "off" | "connecting" | "listening" | "speaking"; agents with a live voice. */
+    liveState: "off",
+    /** The voice mode picker (VOICE_MODES); "talk" is tap to talk, sent on a pause. */
+    voiceMode: "talk",
+    /** Talk mode: the mic reopens after each spoken reply (hands-free). */
+    handsFree: false,
+    /** Show agents' thinking: narration between tool calls and the live "writing" text (per device, off by default). */
+    showThinking: false,
     voiceSpeaking: false,
     voiceNote: "",
     /** The reply being spoken as it streams: {tid, raw, next (chars spoken), muted (barged in)}. */
@@ -177,10 +201,17 @@ function dashboardApp() {
     init() {
       try {
         this.voiceReplies = localStorage.getItem("fleet.voiceReplies") === "1";
+        const mode = localStorage.getItem("fleet.voiceMode");
+        if (VOICE_MODES.includes(mode) && mode !== "live") this.voiceMode = mode;
+        this.handsFree = localStorage.getItem("fleet.handsFree") === "1";
+        this.showThinking = localStorage.getItem("fleet.showThinking") === "1";
       } catch {
         /* private window */
       }
       this.voiceSince = Date.now();
+      // Hands-free: when a reply has been spoken and the agent's turn is over, listen again.
+      this.$watch("voiceSpeaking", (v) => !v && this.handsFreeNext());
+      this.$watch("chatThinking", (v) => !v && this.handsFreeNext());
       const wideQuery = window.matchMedia("(min-width: 1200px)");
       this.wide = wideQuery.matches;
       wideQuery.addEventListener("change", (e) => (this.wide = e.matches));
@@ -193,6 +224,7 @@ function dashboardApp() {
       // The first tap anywhere unlocks audio playback on phones (see unlockAudio).
       const unlock = () => {
         this.unlockAudio();
+        window.FleetSfx?.unlock();
         if (this.audioUnlocked) ["click", "touchend"].forEach((t) => document.removeEventListener(t, unlock, true));
       };
       ["click", "touchend"].forEach((t) => document.addEventListener(t, unlock, true));
@@ -205,11 +237,20 @@ function dashboardApp() {
       this.$watch("chatOpen", () => this.syncUrl());
       this.$watch("chatId", () => this.syncUrl());
       this.$watch("chatGroup", () => this.syncUrl());
+      // Charts drawn while hidden have no size: draw or resize them when their tab or leaf shows.
+      this.$watch("healthTab", () => this.$nextTick(() => this.renderCharts()));
+      this.$watch("leaf", () => this.$nextTick(() => { this.renderCharts(); window.SeaChart?.ensureSize(); }));
+      let resizeTimer = 0;
+      window.addEventListener("resize", () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => this.renderCharts(), 150);
+      });
       window.addEventListener("popstate", () => this.applyUrl());
       // htmx 4 names it htmx:after:settle. Alpine binds swapped-in content itself (its mutation
       // observer), so this only restores deck state: open folds and new log rows.
       document.body.addEventListener("htmx:after:settle", (ev) => {
         const elt = ev.detail?.elt || ev.target;
+        if (elt && elt.querySelector && elt.querySelector(".echart[data-option]")) this.renderCharts(elt);
         const view = document.getElementById("harbor-view");
         if (view && this.harborOpenFolds && this.harborOpenFolds.length && (elt === view || view.contains(elt))) {
           for (const sum of view.querySelectorAll("details > summary")) if (this.harborOpenFolds.includes(this.harborFoldKey(sum))) sum.parentElement.open = true;
@@ -238,6 +279,9 @@ function dashboardApp() {
       }
       if (ev.altKey && ev.code === "KeyV" && this.chatOpen && !this.chatGroup) {
         ev.preventDefault();
+        // In Live the conversation is already listening; from Type the shortcut switches to Talk.
+        if (this.voiceMode === "live") return;
+        if (this.voiceMode === "type") this.setVoiceMode("talk");
         this.toggleListening();
         return;
       }
@@ -297,7 +341,12 @@ function dashboardApp() {
 
     /** /health, /agents pick the section; ?chat=<id> or ?group=<id> opens the drawer. */
     applyUrl() {
-      const leaf = location.pathname.replace(/^\/+|\/+$/g, "");
+      let leaf = location.pathname.replace(/^\/+|\/+$/g, "");
+      const sub = leaf.match(/^health\/([a-z]+)$/);
+      if (sub && HEALTH_TABS.some((t) => t.id === sub[1])) {
+        this.healthTab = sub[1];
+        leaf = "health";
+      }
       const ship = leaf.match(/^ships\/([a-z][a-z0-9_-]{0,63})$/);
       this.shipSel = ship ? ship[1] : "";
       // /fleet was folded into Health (Firstmate status and the project registry).
@@ -314,8 +363,69 @@ function dashboardApp() {
 
     leafUrl() {
       const q = !this.chatOpen ? "" : this.chatGroup ? `?group=${encodeURIComponent(this.chatGroup.id)}` : this.chatId ? `?chat=${encodeURIComponent(this.chatId)}` : "";
-      const base = this.leaf === "harbor" && this.shipSel ? `/ships/${encodeURIComponent(this.shipSel)}` : `/${this.leaf}`;
+      const base =
+        this.leaf === "harbor" && this.shipSel
+          ? `/ships/${encodeURIComponent(this.shipSel)}`
+          : this.leaf === "health" && this.healthTab !== "status"
+            ? `/health/${this.healthTab}`
+            : `/${this.leaf}`;
       return `${base}${q}`;
+    },
+
+    /**
+     * ECharts (public/vendor, loaded on first use): every `.echart` element carries
+     * its option as JSON in data-option (lib/metrics-view.ts). Hidden ones wait
+     * until shown; a swap that replaced the element's canvas gets a fresh chart.
+     */
+    async renderCharts(root = document) {
+      // Only charts on screen: a hidden tab's charts wait (and ECharts is not even loaded for them).
+      const els = [...root.querySelectorAll(".echart[data-option]")].filter((el) => el.offsetWidth > 0);
+      if (!els.length) return;
+      if (!window.echarts) {
+        this.echartsLoading ||= new Promise((resolve, reject) => {
+          const tag = document.createElement("script");
+          tag.src = "/vendor/echarts-6.1.0.min.js";
+          tag.onload = resolve;
+          tag.onerror = reject;
+          document.head.appendChild(tag);
+        });
+        try {
+          await this.echartsLoading;
+        } catch {
+          this.echartsLoading = null;
+          return;
+        }
+      }
+      for (const el of els) {
+        let chart = window.echarts.getInstanceByDom(el);
+        if (chart && !el.querySelector("canvas")) {
+          chart.dispose();
+          chart = null;
+        }
+        if (!chart) {
+          chart = window.echarts.init(el, null, { renderer: "canvas" });
+          el.dataset.drawn = "";
+        }
+        if (el.dataset.drawn !== el.dataset.option) {
+          try {
+            chart.setOption(JSON.parse(el.dataset.option), true);
+            el.dataset.drawn = el.dataset.option;
+          } catch {
+            /* a bad option: leave the box empty */
+          }
+        }
+        chart.resize();
+      }
+    },
+
+    healthTabs: HEALTH_TABS,
+    healthTab: "status",
+
+    /** Switch Health's sub-tab; the URL follows (/health/metrics), so it can be bookmarked. */
+    setHealthTab(id) {
+      if (!HEALTH_TABS.some((t) => t.id === id)) return;
+      this.healthTab = id;
+      this.syncUrl(true);
     },
 
     /** Opening or switching a chat replaces the URL; changing section pushes a history entry. */
@@ -427,6 +537,7 @@ function dashboardApp() {
       if (id === "harbor") {
         this.shipSel = "";
         this.loadHarbor();
+        window.SeaChart?.refreshSoon();
       }
       this.closePalette();
       this.leaf = id;
@@ -462,6 +573,7 @@ function dashboardApp() {
       // The ship's log moved, or crew came and went: refresh what the harbor shows.
       const harborRefresh = (ship) => {
         if (this.leaf !== "harbor" || document.hidden) return;
+        window.SeaChart?.refreshSoon();
         if (!this.shipSel || !ship || ship === this.shipSel) this.refreshHarborSoon();
       };
       const view = document.getElementById("harbor-view");
@@ -526,6 +638,7 @@ function dashboardApp() {
         const [r, rg] = await Promise.all([fetch("/api/chat-targets"), fetch("/api/groups")]);
         const j = await r.json();
         this.rail = { agents: j.agents || [], workers: j.workers || [] };
+        this.refreshFaces();
         this.groups = (await rg.json()).groups || [];
         if (this.chatGroup) this.chatGroup = this.groups.find((g) => g.id === this.chatGroup.id) || null;
         const cur = this.findTarget(this.chatId);
@@ -572,6 +685,15 @@ function dashboardApp() {
     needsBusy: false,
     needsAgain: false,
 
+    /** New page code on disk: reload, unless the captain is typing (then on the next check). */
+    checkBuild(build) {
+      if (!build) return;
+      this.pageBuild ??= build;
+      if (build === this.pageBuild) return;
+      const typing = (this.chatDraft || "").trim() || [...document.querySelectorAll("textarea, input[type=text]")].some((el) => el.value.trim());
+      if (!typing) location.reload();
+    },
+
     async refreshNeeds() {
       // One fetch at a time; a change during it triggers one more.
       if (this.needsBusy) {
@@ -582,7 +704,9 @@ function dashboardApp() {
       try {
         const [r, q] = await Promise.all([fetch("/api/needs-you"), fetch("/api/quiet")]);
         const prevNotices = new Set(this.needs.filter((i) => i.kind === "notice").map((i) => i.id));
-        this.needs = (await r.json()).items || [];
+        const body = await r.json();
+        this.needs = body.items || [];
+        this.checkBuild(body.build);
         this.quiet = await q.json().catch(() => this.quiet);
         this.renderNeeds();
         // New interrupting notices are spoken when voice is on (once the first load has set the baseline).
@@ -617,17 +741,22 @@ function dashboardApp() {
 
     needCard(item) {
       const card = document.createElement("article");
-      card.className = `need is-${item.kind}`;
+      card.className = `d-card d-card-border bg-base-100 need is-${item.kind}`;
       card.dataset.id = item.id;
-      const t = item.agentId ? this.findTarget(item.agentId) || { id: item.agentId, label: item.label, art: item.art, ship: item.ship } : { id: "firstmate", label: "Firstmate", art: (this.findTarget("firstmate") || {}).art };
+      const helmsman = item.kind === "helm" ? `${item.ship}-helmsman` : "";
+      const t = item.agentId
+        ? this.findTarget(item.agentId) || { id: item.agentId, label: item.label, art: item.art, ship: item.ship }
+        : helmsman
+          ? this.findTarget(helmsman) || { id: helmsman, label: "Helmsman", art: null, ship: item.ship }
+          : { id: "firstmate", label: "Firstmate", art: (this.findTarget("firstmate") || {}).art };
       const face = this.faceHtml(t);
       const when = item.ts ? `<time class="muted need-when" datetime="${escapeHtml(item.ts)}">${escapeHtml(agoText(item.ts))}</time>` : "";
-      const openChat = item.agentId ? `<button type="button" class="btn" data-open>Open chat</button>` : "";
+      const openChat = item.agentId ? `<button type="button" class="d-btn d-btn-sm" data-open>Open chat</button>` : "";
       if (item.kind === "question") {
         card.innerHTML = `${face}<div class="need-body question-block">
           <div class="need-head"><h3>${escapeHtml(item.label)} asks${item.live ? "" : " (its turn has ended; your answer goes as a message)"}</h3>${when}</div>
           ${this.questionsHtml(item)}
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-send>Send answer</button>${item.live ? '<button type="button" class="btn" data-skip>Skip</button>' : '<button type="button" class="btn" data-dismiss>Dismiss</button>'}${openChat}<span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-send>Send answer</button>${item.live ? '<button type="button" class="d-btn d-btn-sm" data-skip>Skip</button>' : '<button type="button" class="d-btn d-btn-sm" data-dismiss>Dismiss</button>'}${openChat}<span class="muted" data-note></span></div>
         </div>`;
         this.wireQuestion(card, item.agentId, item.live ? item.dialog : null, (text) => this.postCaptain(item.agentId, text, card));
       } else if (item.kind === "notice") {
@@ -637,9 +766,9 @@ function dashboardApp() {
         card.innerHTML = `${this.faceHtml(who)}<div class="need-body">
           <div class="need-head"><h3>${escapeHtml(title)}</h3>${when}</div>
           ${item.noticeKind === "digest" ? "" : `<p class="need-reason">${escapeHtml(item.summary)}</p>`}
-          ${item.detail ? `<details class="fold" ${item.noticeKind === "digest" ? "open" : ""}><summary>${item.noticeKind === "digest" ? "The digest" : "More"}</summary><div class="md">${renderMarkdown(item.detail)}</div></details>` : ""}
+          ${item.detail ? `<details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100" ${item.noticeKind === "digest" ? "open" : ""}><summary class="d-collapse-title">${item.noticeKind === "digest" ? "The digest" : "More"}</summary><div class="d-collapse-content"><div class="md">${renderMarkdown(item.detail)}</div></div></details>` : ""}
           ${item.ref ? `<p class="muted">${escapeHtml(item.ref)}</p>` : ""}
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-ack>Got it</button>${item.from !== "fleet" ? '<button type="button" class="btn" data-open-notice>Open chat</button>' : ""}<span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-ack>Got it</button>${item.from !== "fleet" ? '<button type="button" class="d-btn d-btn-sm" data-open-notice>Open chat</button>' : ""}<span class="muted" data-note></span></div>
         </div>`;
         card.querySelector("[data-ack]").addEventListener("click", async () => {
           card.querySelectorAll("button").forEach((b) => (b.disabled = true));
@@ -654,9 +783,60 @@ function dashboardApp() {
         card.innerHTML = `${face}<div class="need-body">
           <div class="need-head"><h3>${escapeHtml(item.label)} wants to act on the fleet</h3>${when}</div>
           <p class="need-reason">${escapeHtml(item.summary)}</p>
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-go="go">Go</button><button type="button" class="btn" data-go="no">No</button>${openChat}<span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-go="go">Go</button><button type="button" class="d-btn d-btn-sm" data-go="no">No</button>${openChat}<span class="muted" data-note></span></div>
         </div>`;
         card.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => this.answerGo(item.goId, b.dataset.go, card)));
+      } else if (item.kind === "helm") {
+        card.classList.add("is-question");
+        const api = `/api/ships/${encodeURIComponent(item.ship)}/helm/${encodeURIComponent(item.proposalId)}`;
+        card.innerHTML = `${face}<div class="need-body">
+          <div class="need-head"><h3>${escapeHtml(item.ship)}'s helmsman proposes a change</h3>${when}</div>
+          <p class="need-reason"><code>${escapeHtml(item.what)}</code></p>
+          <p class="muted">${escapeHtml(item.why)}</p>
+          <div class="row question-actions">${item.note ? "" : `<button type="button" class="d-btn d-btn-neutral d-btn-sm" data-helm="apply">Apply</button>`}<button type="button" class="d-btn d-btn-sm" data-helm="dismiss">${item.note ? "Read" : "Dismiss"}</button><a class="d-btn d-btn-sm" href="/ships/${encodeURIComponent(item.ship)}">Open the deck</a><span class="muted" data-note></span></div>
+        </div>`;
+        card.querySelectorAll("[data-helm]").forEach((b) =>
+          b.addEventListener("click", async () => {
+            const note = card.querySelector("[data-note]");
+            card.querySelectorAll("[data-helm]").forEach((x) => (x.disabled = true));
+            try {
+              const r = await fetch(`${api}/${b.dataset.helm}`, { method: "POST" });
+              const j = await r.json();
+              if (note) note.textContent = j.message || "";
+              if (r.ok) card.classList.add("is-done");
+              else card.querySelectorAll("[data-helm]").forEach((x) => (x.disabled = false));
+            } catch {
+              if (note) note.textContent = "The dashboard did not answer.";
+              card.querySelectorAll("[data-helm]").forEach((x) => (x.disabled = false));
+            }
+            this.refreshNeeds();
+          }),
+        );
+      } else if (item.kind === "gate") {
+        card.classList.add("is-question");
+        card.innerHTML = `${face}<div class="need-body">
+          <div class="need-head"><h3>${escapeHtml(item.label)}: a tool call held for review</h3>${when}</div>
+          <p class="need-reason"><code>${escapeHtml(item.summary)}</code></p>
+          <p class="muted">${escapeHtml(item.why)} · ${escapeHtml(item.jev)}</p>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-gate="allow">Allow once</button><button type="button" class="d-btn d-btn-sm" data-gate="deny">Deny</button>${openChat}<span class="muted" data-note></span></div>
+        </div>`;
+        card.querySelectorAll("[data-gate]").forEach((b) =>
+          b.addEventListener("click", async () => {
+            const note = card.querySelector("[data-note]");
+            card.querySelectorAll("[data-gate]").forEach((x) => (x.disabled = true));
+            try {
+              const r = await fetch(`/api/gate/${encodeURIComponent(item.gateId)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision: b.dataset.gate }) });
+              const j = await r.json();
+              if (note) note.textContent = j.message || "";
+              if (r.ok) card.classList.add("is-done");
+              else card.querySelectorAll("[data-gate]").forEach((x) => (x.disabled = false));
+            } catch {
+              if (note) note.textContent = "The dashboard did not answer.";
+              card.querySelectorAll("[data-gate]").forEach((x) => (x.disabled = false));
+            }
+            this.refreshNeeds();
+          }),
+        );
       } else if (item.kind === "order") {
         const alice = this.findTarget("alice") || { id: "alice", label: "Alice", art: null };
         const oface = alice.art ? `<img class="avatar" src="${alice.art}" alt="" width="48" height="48" />` : face;
@@ -665,23 +845,31 @@ function dashboardApp() {
           <div class="need-head"><h3>${paused ? "Order paused" : "Order waiting for your Go"}: “${escapeHtml(item.title)}”</h3><span class="muted need-when">by ${escapeHtml(item.by)}</span></div>
           ${paused && item.reason ? `<p class="need-reason warn">${escapeHtml(item.reason)}</p>` : ""}
           <ol class="order-steps">${item.steps.map((s, i) => `<li${paused && item.resume && i + 1 < item.resume ? ' class="is-done"' : ""}>${escapeHtml(s)}</li>`).join("")}</ol>
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-order="${paused ? "retry" : "go"}">${paused ? `Retry from step ${item.resume || 1}` : "Go"}</button><button type="button" class="btn" data-order="cancel">Cancel</button><span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-order="${paused ? "retry" : "go"}">${paused ? `Retry from step ${item.resume || 1}` : "Go"}</button><button type="button" class="d-btn d-btn-sm" data-order="cancel">Cancel</button><span class="muted" data-note></span></div>
         </div>`;
         card.querySelectorAll("[data-order]").forEach((b) => b.addEventListener("click", () => this.orderAction(item.slug, b.dataset.order, card)));
       } else if (item.kind === "hold") {
         card.innerHTML = `${face}<div class="need-body">
-          <div class="need-head"><h3>Firstmate holds “${escapeHtml(item.title)}”</h3><span class="detent detent-hot">before it ships</span></div>
+          <div class="need-head"><h3>Firstmate holds “${escapeHtml(item.title)}”</h3><span class="d-badge d-badge-sm d-badge-error">before it ships</span></div>
           ${item.reason ? `<p class="need-reason">${escapeHtml(item.reason)}</p>` : ""}
-          <textarea class="field" maxlength="8000" aria-label="Your decision on ${escapeHtml(item.title)}" placeholder="Your decision"></textarea>
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-hold>Record answer</button><span class="muted" data-note></span></div>
+          <textarea class="d-textarea" maxlength="8000" aria-label="Your decision on ${escapeHtml(item.title)}" placeholder="Your decision"></textarea>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-hold>Record answer</button><span class="muted" data-note></span></div>
         </div>`;
         card.querySelector("[data-hold]").addEventListener("click", () => this.answerHold(item.taskId, card));
+      } else if (item.kind !== "failed") {
+        // A kind this page does not know yet (it predates the server): say so instead of guessing.
+        card.innerHTML = `<div class="need-body">
+          <div class="need-head"><h3>Something new needs you</h3>${when}</div>
+          <p class="need-reason">This page is older than the dashboard. Reload to see it.</p>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-reload>Reload</button></div>
+        </div>`;
+        card.querySelector("[data-reload]").addEventListener("click", () => location.reload());
       } else {
         card.innerHTML = `${face}<div class="need-body">
           <div class="need-head"><h3>Your message to ${escapeHtml(item.label)} did not go through</h3>${when}</div>
           <blockquote class="need-sent">${escapeHtml(item.sentText)}</blockquote>
           <div class="need-error">${errorHtml(item.error)}</div>
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-resend>Send again</button>${openChat}<button type="button" class="btn" data-dismiss>Dismiss</button><span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-resend>Send again</button>${openChat}<button type="button" class="d-btn d-btn-sm" data-dismiss>Dismiss</button><span class="muted" data-note></span></div>
         </div>`;
         card.querySelector("[data-resend]").addEventListener("click", () => this.postCaptain(item.agentId, item.sentText, card));
       }
@@ -817,6 +1005,36 @@ function dashboardApp() {
       return [g.lead].concat(g.members.filter((m) => m !== g.lead)).slice(0, 3).map((id) => this.findTarget(id)).filter(Boolean);
     },
 
+    /**
+     * A chat bubble's face: the portrait when the rail knows it; a symbol for the fleet's own
+     * senders (helm, sssf, gate); otherwise initials marked with data-face, so refreshFaces can
+     * swap in the portrait when the rail loads after the history replayed.
+     */
+    bubbleFace(t) {
+      const id = (t && t.id) || "";
+      const known = this.findTarget(id);
+      const art = (known && known.art) || (t && t.art);
+      if (art) return `<img class="avatar" src="${art}" alt="" width="48" height="48" />`;
+      const glyph = { helm: "⚓", sssf: "⚙️", gate: "🛡️", go: "✅", vault: "📚", "vault-doctor": "📚" }[id];
+      if (glyph) return `<span class="avatar portrait-initials is-system" title="${escapeHtml(id)}">${glyph}</span>`;
+      return `<span class="avatar portrait-initials" data-face="${escapeHtml(id)}">${escapeHtml(this.initials(known || t))}</span>`;
+    },
+
+    /** Swap initials in chat bubbles for portraits the rail has now (history can replay before the rail loads). */
+    refreshFaces() {
+      document.querySelectorAll(".bubble-row .portrait-initials[data-face]").forEach((el) => {
+        const t = this.findTarget(el.dataset.face);
+        if (!t || !t.art) return;
+        const img = document.createElement("img");
+        img.className = "avatar";
+        img.src = t.art;
+        img.alt = "";
+        img.width = 48;
+        img.height = 48;
+        el.replaceWith(img);
+      });
+    },
+
     initials(t) {
       const words = String((t && (t.label || t.id)) || "?").replace(/[^A-Za-z0-9 ]+/g, " ").trim().split(/\s+/);
       return ((words[0] || "?")[0] + (words[1] ? words[1][0] : (words[0] || "")[1] || "")).toUpperCase();
@@ -844,6 +1062,7 @@ function dashboardApp() {
 
     openChat(id) {
       this.closePalette();
+      if (id !== this.chatId) this.stopLive();
       const switching = id !== this.chatId || this.chatGroup || !this.chatWs;
       this.chatGroup = null;
       this.chatId = id;
@@ -952,6 +1171,136 @@ function dashboardApp() {
 
     closeChat() {
       this.chatOpen = false;
+      this.stopLive();
+    },
+
+    // ------------------------------------------------------------ conversation mode (V1)
+
+    /** Start or stop talking live with the agent (Gemini Live on the free account; agents with a live_voice). */
+    toggleLive() {
+      if (this.liveState !== "off") return this.stopLive();
+      const t = this.current();
+      if (this.chatGroup || !t.liveVoice || !window.LiveVoice) return;
+      if (this.voiceState === "listening") this.stopListening(false);
+      this.stopSpeaking?.();
+      this.liveRows = { captain: null, agent: null, last: "" };
+      const name = t.label || this.chatId;
+      this.voiceNote = `Connecting to ${name}'s voice… (headphones help: the mic can hear the reply otherwise)`;
+      this.live = new window.LiveVoice({
+        agent: this.chatId,
+        onState: (st) => {
+          const was = this.liveState;
+          this.liveState = st;
+          if (st === "listening" && was === "connecting") window.FleetSfx?.play("chime");
+          if (st === "listening") this.voiceNote = `Live with ${name}: talk any time, and talk over to interrupt. Tap End to stop.`;
+          if (st === "off" && this.voiceNote.startsWith("Live with")) this.voiceNote = "";
+        },
+        onEvent: (e) => this.liveEvent(e),
+      });
+      this.live.start();
+    },
+
+    stopLive() {
+      this.live?.stop();
+      this.live = null;
+      this.liveState = "off";
+      // Ending a conversation (End, another chat, closing the drawer) goes back to tap to talk.
+      if (this.voiceMode === "live") this.voiceMode = "talk";
+    },
+
+    // ------------------------------------------------------------ voice modes (V4)
+
+    /** Pick how to talk: type, talk (tap to talk), or live. Picking live starts the conversation (the click is the gesture the mic needs). */
+    setVoiceMode(mode) {
+      if (!VOICE_MODES.includes(mode)) return;
+      if (mode === "live" && !this.current().liveVoice) {
+        this.voiceNote = `${this.current().label || "This agent"} has no live voice yet (agent.yaml live_voice).`;
+        return;
+      }
+      if (mode !== "live") this.stopLive();
+      if (mode !== "talk" && this.voiceState === "listening") this.stopListening(false);
+      this.voiceMode = mode;
+      this.voiceNote = mode === "talk" && this.handsFree ? "Hands-free: tap the mic once; it listens again after each reply." : "";
+      try {
+        if (mode !== "live") localStorage.setItem("fleet.voiceMode", mode);
+      } catch {
+        /* private window */
+      }
+      if (mode === "live" && this.liveState === "off") this.toggleLive();
+    },
+
+    toggleHandsFree() {
+      this.handsFree = !this.handsFree;
+      this.handsFreeArmed = false;
+      this.voiceNote = this.handsFree ? "Hands-free: tap the mic once; it listens again after each reply." : "";
+      if (this.handsFree && !this.voiceReplies) this.toggleVoiceReplies();
+      try {
+        localStorage.setItem("fleet.handsFree", this.handsFree ? "1" : "0");
+      } catch {
+        /* private window */
+      }
+    },
+
+    /** Hands-free: once the reply to a spoken message has been said and the turn is over, open the mic again. */
+    handsFreeNext() {
+      const ready = () =>
+        this.handsFree && this.handsFreeArmed && this.voiceMode === "talk" && this.chatOpen && !this.chatGroup &&
+        this.voiceState === "idle" && !this.voiceSpeaking && !this.chatThinking && this.liveState === "off";
+      if (!ready()) return;
+      clearTimeout(this.handsFreeTimer);
+      // Settle first: the saved reply can land a moment after the turn ends, and then it is spoken.
+      this.handsFreeTimer = setTimeout(async () => {
+        if (!ready()) return;
+        this.handsFreeArmed = false;
+        await window.FleetSfx?.play("chime");
+        if (ready() || (this.handsFree && this.voiceState === "idle")) this.startListening({ auto: true });
+      }, 900);
+    },
+
+    /** Live transcripts as bubbles in the drawer (not saved to the chat thread; the voice log keeps them). */
+    liveEvent(e) {
+      if (e.type === "error") {
+        this.voiceNote = e.message;
+        return;
+      }
+      if (e.type === "turn") {
+        this.liveRows = { captain: null, agent: null, last: "" };
+        return;
+      }
+      if (e.type === "action") {
+        // The live action log: each lookup Alice makes while she talks.
+        const log = this.$refs.chatLog;
+        if (!log) return;
+        const row = document.createElement("div");
+        row.className = "bubble-row is-system is-live is-action";
+        // Acting by voice (V3): a held action says so (live-dj's policy verdict in the action log).
+        const mark = e.verdict === "blocked" ? "✋ held:" : e.verdict === "allowed" ? "✓" : "⚙";
+        row.innerHTML = `<div class="bubble"><p>${mark} ${escapeHtml(this.current().label || "Alice")} ${escapeHtml(e.summary)}</p></div>`;
+        log.appendChild(row);
+        log.scrollTop = log.scrollHeight;
+        this.liveRows.agent = null; // her answer after a lookup starts a new bubble
+        return;
+      }
+      if (e.type !== "transcript") return;
+      const log = this.$refs.chatLog;
+      if (!log) return;
+      const role = e.role === "captain" ? "captain" : "agent";
+      const rows = this.liveRows;
+      // A new speaker starts a new bubble for them.
+      if (rows.last && rows.last !== role) rows[role] = null;
+      rows.last = role;
+      if (!rows[role]) {
+        const row = document.createElement("div");
+        const t = this.current();
+        row.className = role === "captain" ? "d-chat d-chat-end bubble-row is-captain is-live" : "d-chat d-chat-start bubble-row is-agent is-live";
+        row.innerHTML = role === "captain"
+          ? `<img class="avatar" src="/art/captain.png" alt="" width="48" height="48" /><div class="d-chat-bubble bubble"><span class="bubble-name">You · live</span><p></p></div>`
+          : `${this.faceHtml(t)}<div class="d-chat-bubble bubble"><span class="bubble-name">${escapeHtml(t.label || "Alice")} · live</span><p></p></div>`;
+        log.appendChild(row);
+        rows[role] = row;
+      }
+      rows[role].querySelector("p").textContent += e.text;
+      log.scrollTop = log.scrollHeight;
     },
 
     connectThreads(ids) {
@@ -1003,6 +1352,29 @@ function dashboardApp() {
       };
     },
 
+    /**
+     * Lines saved before steps were marked: an agent line followed by another
+     * line from the same agent, with nothing from anyone else between, was
+     * narration on the way to its answer.
+     */
+    markEarlierStep(row) {
+      let prev = row.previousElementSibling;
+      while (prev && (prev.classList.contains("is-system") || prev.classList.contains("is-streaming"))) prev = prev.previousElementSibling;
+      if (!prev || prev.dataset.kind !== "chat" || prev.dataset.role !== row.dataset.role || prev.dataset.thread !== row.dataset.thread || prev.classList.contains("is-step")) return;
+      prev.classList.add("is-step");
+      const name = prev.querySelector(".bubble-name");
+      if (name && !name.textContent.endsWith(" · thinking")) name.textContent += " · thinking";
+    },
+
+    toggleThinking() {
+      this.showThinking = !this.showThinking;
+      try {
+        localStorage.setItem("fleet.showThinking", this.showThinking ? "1" : "0");
+      } catch {
+        /* private window */
+      }
+    },
+
     appendChatLine(m, threadId) {
       const log = this.$refs.chatLog;
       if (!log) return;
@@ -1034,57 +1406,53 @@ function dashboardApp() {
         }
       } else if (m.kind === "question" && m.go) {
         // A fleet action held by the server until the captain says Go (lib/go-gate.ts).
-        row.className = "bubble-row is-agent is-question is-go";
-        const face = t.art
-          ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
-          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
+        row.className = "d-chat d-chat-start bubble-row is-agent is-question is-go";
+        const face = this.bubbleFace(t);
         const summary = (m.questions && m.questions[0] && m.questions[0].question) || m.text;
-        row.innerHTML = `${face}<div class="bubble question-block">
+        row.innerHTML = `${face}<div class="d-chat-bubble bubble question-block">
           <span class="bubble-name">${escapeHtml(t.label || m.role)} wants to act on the fleet</span>
           <p class="go-summary">${escapeHtml(summary)}</p>
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-go="go">Go</button><button type="button" class="btn" data-go="no">No</button><span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-go="go">Go</button><button type="button" class="d-btn d-btn-sm" data-go="no">No</button><span class="muted" data-note></span></div>
         </div>`;
         row.dataset.go = m.go.id;
         row.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => this.answerGo(m.go.id, b.dataset.go, row)));
       } else if (m.kind === "question" && Array.isArray(m.questions) && m.questions.length) {
-        row.className = "bubble-row is-agent is-question";
-        const face = t.art
-          ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
-          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
-        row.innerHTML = `${face}<div class="bubble question-block">
+        row.className = "d-chat d-chat-start bubble-row is-agent is-question";
+        const face = this.bubbleFace(t);
+        row.innerHTML = `${face}<div class="d-chat-bubble bubble question-block">
           <span class="bubble-name">${escapeHtml(t.label || m.role)} asks</span>
           ${this.questionsHtml(m)}
-          <div class="row question-actions"><button type="button" class="btn btn-ink" data-send>${m.dialog ? "Send answer" : "Send answers"}</button>${m.dialog ? '<button type="button" class="btn" data-skip>Skip</button>' : ""}<span class="muted" data-note></span></div>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-send>${m.dialog ? "Send answer" : "Send answers"}</button>${m.dialog ? '<button type="button" class="d-btn d-btn-sm" data-skip>Skip</button>' : ""}<span class="muted" data-note></span></div>
         </div>`;
         if (m.dialog) row.dataset.dialog = m.dialog.id;
         this.wireQuestion(row, tid, m.dialog);
       } else if (m.kind === "answer") {
-        row.className = "bubble-row is-captain is-answer";
-        row.innerHTML = `<div class="bubble"><span class="bubble-name">You answered</span><p>${escapeHtml(m.text)}</p></div>`;
+        row.className = "d-chat d-chat-end bubble-row is-captain is-answer";
+        row.innerHTML = `<div class="d-chat-bubble bubble"><span class="bubble-name">You answered</span><p>${escapeHtml(m.text)}</p></div>`;
         if (m.ref) this.markDialogAnswered(log, tid, m.ref, m.text);
       } else if (m.kind === "crew") {
         // A crewmate wrote to this agent (lead ↔ crew); show who, not the thread's agent.
         const from = this.findTarget(m.role) || { id: m.role, label: m.role, art: null };
-        row.className = "bubble-row is-agent is-crew";
-        const face = from.art
-          ? `<img class="avatar" src="${from.art}" alt="" width="48" height="48" />`
-          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(from))}</span>`;
-        row.innerHTML = `${face}<div class="bubble"><span class="bubble-name">${escapeHtml(from.label)} → ${escapeHtml(t.label || tid)}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
+        row.className = "d-chat d-chat-start bubble-row is-agent is-crew";
+        const face = this.bubbleFace(from);
+        row.innerHTML = `${face}<div class="d-chat-bubble bubble"><span class="bubble-name">${escapeHtml(from.label)} → ${escapeHtml(t.label || tid)}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
       } else if (m.role === "system" || m.role === "dashboard") {
         row.className = "bubble-row is-system";
         row.innerHTML = `<div class="bubble"><p>${escapeHtml(m.text)}</p></div>`;
       } else {
         const mine = m.role === "captain";
-        row.className = `bubble-row is-${mine ? "captain" : "agent"}`;
+        row.className = `d-chat ${mine ? "d-chat-end" : "d-chat-start"} bubble-row is-${mine ? "captain" : "agent"}`;
         if (m.ts) row.dataset.ts = m.ts;
         row.dataset.thread = tid;
         const face = mine ? "/art/captain.png" : t.art;
         const to = this.chatGroup ? ` → ${t.label}` : "";
         const name = mine ? "You" + to : t.label || m.role;
-        const avatar = face
-          ? `<img class="avatar" src="${face}" alt="" width="48" height="48" />`
-          : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
-        row.innerHTML = `${avatar}<div class="bubble"><span class="bubble-name">${escapeHtml(name)}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
+        const avatar = mine ? `<img class="avatar" src="${face}" alt="" width="48" height="48" />` : this.bubbleFace(t);
+        row.innerHTML = `${avatar}<div class="d-chat-bubble bubble"><span class="bubble-name">${escapeHtml(name)}${!mine && m.step ? " · thinking" : ""}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
+        if (!mine) {
+          row.dataset.role = m.role;
+          if (m.step) row.classList.add("is-step");
+        }
       }
       if (m.ts) row.dataset.at = m.ts;
       if (settled) row.classList.add("is-sent-settle");
@@ -1095,6 +1463,7 @@ function dashboardApp() {
       const later = m.ts ? [...log.querySelectorAll(".bubble-row[data-at]")].find((n) => n.dataset.at > m.ts) : null;
       if (later) log.insertBefore(row, later);
       else log.appendChild(row);
+      if (kind === "chat" && row.dataset.role) this.markEarlierStep(row);
       while (log.childElementCount > LOG_MAX) log.removeChild(log.firstChild);
       if (!later) log.scrollTop = log.scrollHeight;
     },
@@ -1108,13 +1477,13 @@ function dashboardApp() {
             .filter((o) => !/^Other \(type an answer\)$/.test(o))
             .map(
               (o) =>
-                `<button type="button" class="chip" data-q="${qi}" data-opt="${escapeHtml(o)}" aria-pressed="false">${escapeHtml(o)}${o === q.recommended && !/recommended\)?$/i.test(o) ? ' <span class="detent">recommended</span>' : ""}</button>`,
+                `<button type="button" class="chip" data-q="${qi}" data-opt="${escapeHtml(o)}" aria-pressed="false">${escapeHtml(o)}${o === q.recommended && !/recommended\)?$/i.test(o) ? ' <span class="d-badge d-badge-outline d-badge-sm">recommended</span>' : ""}</button>`,
             )
             .join("");
           return `<fieldset class="question" data-qi="${qi}">
             <legend>${escapeHtml(q.question)}</legend>
             <div class="row-wrap">${opts}</div>
-            <input class="field" data-other="${qi}" placeholder="${opts ? "Or type another answer" : "Your answer"}" aria-label="${escapeHtml(q.question)}" />
+            <input class="d-input d-input-sm" data-other="${qi}" placeholder="${opts ? "Or type another answer" : "Your answer"}" aria-label="${escapeHtml(q.question)}" />
           </fieldset>`;
         })
         .join("");
@@ -1217,12 +1586,12 @@ function dashboardApp() {
         if (!row) {
           const t = this.findTarget(tid) || { id: tid, label: tid, art: null };
           row = document.createElement("div");
-          row.className = "bubble-row is-agent is-streaming";
+          row.className = "d-chat d-chat-start bubble-row is-agent is-streaming";
           row.dataset.thread = tid;
           const face = t.art
             ? `<img class="avatar" src="${t.art}" alt="" width="48" height="48" />`
             : `<span class="avatar portrait-initials">${escapeHtml(this.initials(t))}</span>`;
-          row.innerHTML = `${face}<div class="bubble"><span class="bubble-name">${escapeHtml(t.label || tid)} · writing</span><div class="md"></div></div>`;
+          row.innerHTML = `${face}<div class="d-chat-bubble bubble"><span class="bubble-name">${escapeHtml(t.label || tid)} · writing</span><div class="md"></div></div>`;
           log.appendChild(row);
           this.chatEmpty = false;
         }
@@ -1351,7 +1720,7 @@ function dashboardApp() {
       else if (this.voiceState === "idle") this.startListening();
     },
 
-    async startListening() {
+    async startListening(opts = {}) {
       // Barge-in: the captain talks over the agent. Stop now, and drop the rest of the reply that was being spoken.
       this.stopSpeaking();
       if (this.liveSpeech) this.liveSpeech.muted = true;
@@ -1366,6 +1735,7 @@ function dashboardApp() {
         // End of speech: once the captain has spoken, about 1.3 s of quiet sends it (unless the mic is being held).
         let heard = false;
         let lastLoud = Date.now();
+        const opened = Date.now();
         node.onaudioprocess = (e) => {
           const d = e.inputBuffer.getChannelData(0);
           chunks.push(new Float32Array(d));
@@ -1376,13 +1746,17 @@ function dashboardApp() {
             lastLoud = Date.now();
           } else if (heard && !this.micHolding && Date.now() - lastLoud > 1300 && this.rec && this.rec.node === node) {
             this.stopListening(true);
+          } else if (opts.auto && !heard && Date.now() - opened > 9000 && this.rec && this.rec.node === node) {
+            // Hands-free reopened the mic and the captain said nothing: stop quietly until the next tap.
+            this.stopListening(false);
+            this.voiceNote = "Hands-free is waiting: tap the mic to talk.";
           }
         };
         src.connect(node);
         node.connect(ctx.destination);
         this.rec = { stream, ctx, src, node, chunks, started: Date.now() };
         this.voiceState = "listening";
-        if (!this.voiceNote) this.voiceNote = "Listening… release to send.";
+        if (!this.voiceNote || opts.auto) this.voiceNote = opts.auto ? "Listening (hands-free)… speak, or stay quiet to pause." : "Listening… release to send.";
         // Talking to an agent means wanting to hear it back.
         if (!this.voiceReplies) this.toggleVoiceReplies();
         this.recTimer = setTimeout(() => this.stopListening(true), 60_000);
@@ -1432,11 +1806,13 @@ function dashboardApp() {
           this.voiceNote = "Didn't catch that.";
         } else if (this.voiceAnswer(text)) {
           this.voiceNote = `Answered by voice: “${text}”`;
+          this.handsFreeArmed = this.handsFree;
           this.playAck(this.chatId);
         } else {
           this.voiceNote = "";
           this.chatDraft = text;
           this.sendChat();
+          this.handsFreeArmed = this.handsFree;
           this.playAck(this.chatGroup ? this.groupTo : this.chatId);
         }
       } catch (e) {
@@ -1488,7 +1864,7 @@ function dashboardApp() {
       let pick =
         chips.find((c) => norm(c.dataset.opt) === said) ||
         (ord in ORD ? chips[ORD[ord]] : undefined) ||
-        (/^(the )?recommended( one)?$/.test(said) ? chips.find((c) => c.querySelector(".detent") || /recommended/i.test(c.dataset.opt)) : undefined) ||
+        (/^(the )?recommended( one)?$/.test(said) ? chips.find((c) => c.querySelector(".detent, .d-badge") || /recommended/i.test(c.dataset.opt)) : undefined) ||
         (YES.test(said) ? chips.find((c) => norm(c.dataset.opt) === "yes") : undefined) ||
         (NO.test(said) ? chips.find((c) => norm(c.dataset.opt) === "no") : undefined);
       // A unique option that starts with what was said ("tailwind" for "Tailwind and daisyUI").
@@ -1520,9 +1896,17 @@ function dashboardApp() {
       }
     },
 
-    /** A quick spoken acknowledgement, only when it is ready to play instantly (never delays anything). */
+    /** A quick acknowledgement, only when it is ready to play instantly (never delays anything): spoken, or now and then a sound. */
     playAck(agent) {
       if (!this.voiceReplies || !agent) return;
+      const sounds = SFX_SETS[agent] || SFX_SETS[(this.findTarget(agent) || {}).agentRole] || SFX_SETS.default;
+      if (window.FleetSfx && Math.random() < 1 / 3) {
+        const pick = sounds.filter((s) => s !== this.lastAck);
+        const sound = pick[Math.floor(Math.random() * pick.length)] || sounds[0];
+        this.lastAck = sound;
+        this.ackDone = window.FleetSfx.play(sound);
+        return;
+      }
       const lines = ACK_LINES[agent] || ACK_LINES.default;
       const ready = lines.filter((l) => this.ackCache && this.ackCache.get(`${agent}|${l}`) && l !== this.lastAck);
       if (!ready.length) return void this.preloadAcks(agent);
@@ -1552,6 +1936,8 @@ function dashboardApp() {
      * voice starts within a sentence instead of after the whole message.
      */
     speakStream(tid, text) {
+      // With thinking hidden the live text may be narration: speak the saved answer instead (maybeSpeak).
+      if (!this.showThinking) return;
       if (!this.voiceReplies || this.chatGroup || tid !== this.chatId || !text) return;
       const ls = this.liveSpeech;
       if (!ls || ls.tid !== tid || !text.startsWith(ls.raw.slice(0, ls.next))) {
@@ -1584,6 +1970,7 @@ function dashboardApp() {
     /** Speak an agent's chat line when voice replies are on and it arrived live. */
     maybeSpeak(m, threadId) {
       if (!this.voiceReplies || this.chatGroup || threadId !== this.chatId) return;
+      if (m.step) return; // thinking is never read aloud
       if (m.role === "captain" || m.role === "system" || m.role === "dashboard" || (m.kind !== "chat" && m.kind !== "question")) return;
       if (!m.ts || Date.parse(m.ts) < this.voiceSince) return;
       // Questions are read whole (the captain answers them); replies give the gist (spokenLimit).
@@ -1777,10 +2164,10 @@ function dashboardApp() {
       if (!log || (this.chatGroup ? !this.chatGroup.members.includes(to) : to !== this.chatId)) return;
       this.chatEmpty = false;
       const row = document.createElement("div");
-      row.className = "bubble-row is-captain is-sending";
+      row.className = "d-chat d-chat-end bubble-row is-captain is-sending";
       row.dataset.request = requestId;
       row.dataset.thread = to;
-      row.innerHTML = `<img class="avatar" src="/art/captain.png" alt="" width="48" height="48" /><div class="bubble"><span class="bubble-name">You</span><div class="md">${renderMarkdown(text)}</div></div>`;
+      row.innerHTML = `<img class="avatar" src="/art/captain.png" alt="" width="48" height="48" /><div class="d-chat-bubble bubble"><span class="bubble-name">You</span><div class="md">${renderMarkdown(text)}</div></div>`;
       log.appendChild(row);
       log.scrollTop = log.scrollHeight;
       // No echo in 12s: say so, with Retry (the same id, so it can never send twice).

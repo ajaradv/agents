@@ -29,6 +29,10 @@ export type ChatTarget = {
   persistentSession?: boolean;
   /** Ship crewmates: the ship they serve aboard. */
   ship?: string;
+  /** Conversation mode: the agent's Gemini Live voice (agent.yaml live_voice); unset means no live talk. */
+  liveVoice?: string;
+  /** The role template (crewmates: their role; officers: their id). */
+  agentRole?: string;
   /** Officers: daily spend cap in USD (agent.yaml daily_budget_usd), checked against the fleet ship log. */
   dailyBudgetUsd?: number;
   /** Set when the last launch used fallback_model instead of `model` (bin/launch model-running.json). */
@@ -99,6 +103,8 @@ async function refreshAgents(): Promise<void> {
       runtime: a.runtime,
       persistentSession: a.persistentSession || undefined,
       ship: a.ship,
+      liveVoice: a.liveVoice || undefined,
+      agentRole: a.role,
       dailyBudgetUsd: a.ship ? undefined : a.dailyBudgetUsd || undefined,
       ...backups.get(a.id),
     }));

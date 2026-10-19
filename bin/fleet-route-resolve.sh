@@ -84,7 +84,9 @@ env_get() { # last KEY=value line in a dotenv file, quotes stripped, never echoe
     END { gsub(/^[ \t"'"'"']+|[ \t"'"'"']+$/, "", v); printf "%s", v }' "$2"
 }
 if ! $DRY; then
-  [ -n "$KEY" ] || KEY=$(env_get TYPESAFE_API_KEY "$FM_HOME/.env")
+  # The service account; a plain .env file only (a 1Password mount pipe would prompt the captain).
+  [ -n "$KEY" ] || KEY=$("$ROOT/bin/fleet-secrets" 2>/dev/null | awk -F= '$1 == "TYPESAFE_API_KEY" { print substr($0, index($0, "=") + 1) }')
+  [ -n "$KEY" ] || { [ -f "$FM_HOME/.env" ] && KEY=$(env_get TYPESAFE_API_KEY "$FM_HOME/.env"); }
   if [ -z "$KEY" ]; then
     echo "route-resolve: off (TYPESAFE_API_KEY absent from the environment and $FM_HOME/.env)" >&2
     exit 0
@@ -132,9 +134,9 @@ REQUEST=$(jq -n --rawfile msg "$TMP/msg" --arg model "$TS_MODEL" \
     questions: {
       route: {
         type: "choice",
-        instructions: "The captain wrote `message` on the fleet dashboard. Which ONE recipient should own it? Prefer a single agent when one agent'"'"'s job covers it, a group when it needs that group'"'"'s members working together, and firstmate when it is project or ship work that needs triage, planning, or crews. Pick `ask` when nothing clearly fits.",
+        instructions: "The captain wrote `message` on the fleet dashboard. Which ONE recipient should own it? Prefer a single agent when one agent'"'"'s job covers it, a group when it needs that group'"'"'s members working together, and firstmate when it is project or ship work that needs triage, planning, or crews. Fleet commands and fleet questions belong to the omni agent (alice) even when they name a ship or describe the work: setting sail on a ship (\"<ship>, set sail: <goal>\" starts a voyage; the ship'"'"'s crew does the work), docking, crew or budget changes, stopping an agent, and questions about what a ship or the fleet is doing. Pick `ask` when nothing clearly fits.",
         criteria: ($ac + $gc + {
-          firstmate: "Send to Firstmate: work on a project or ship that needs triage, a plan, or crews (features, bugfixes, refactors, research tasks), or questions about Firstmate'"'"'s own tasks already in flight. Not fleet commands (set sail or dock a voyage, change a crew, stop an agent), which go to the omni agent even when they name a ship.",
+          firstmate: "Send to Firstmate: work on a project or ship that needs triage, a plan, or crews (features, bugfixes, refactors, research tasks) and is not phrased as a fleet command, or questions about Firstmate'"'"'s own tasks already in flight. Not fleet commands (set sail or dock a voyage, even with a goal; change a crew; stop an agent) and not questions about what a ship is doing: those go to the omni agent.",
           ask: "No option clearly fits, or the message is ambiguous; ask the captain."
         })
       }

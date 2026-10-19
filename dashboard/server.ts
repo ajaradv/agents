@@ -1,4 +1,6 @@
 import { join } from "node:path";
+import type { ServerWebSocket } from "bun";
+import { statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import {
   startAgentTui,
@@ -10,6 +12,7 @@ import { agentsSidebarHtml } from "./lib/partials.ts";
 import { agentsStatusJson } from "./lib/agents-api.ts";
 import {
   appendCaptainChat,
+  appendChatLine,
   appendChatError,
   findSentLine,
   readCaptainChat,
@@ -18,9 +21,18 @@ import {
 import { metricsStripHtml } from "./lib/bus.ts";
 import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fleet-snapshot.ts";
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
+import { toolFailuresHtml } from "./lib/tool-failures.ts";
+import { routinesHtml } from "./lib/routines.ts";
+import { LiveSession } from "./lib/live-voice.ts";
+import { vaultDoctorHtml } from "./lib/vault-doctor.ts";
+import { toolGateHtml } from "./lib/tool-gate.ts";
+import { jevHtml } from "./lib/compaction-advisor.ts";
+import { jevSpend } from "./lib/jev.ts";
+import { escapeHtml } from "./lib/quota.ts";
+import { describeGates, runGates } from "./lib/gates.ts";
 import { addSubscription, pushNewNeeds, removeSubscription, sendToAll, subscriptions, validSub, vapidKeys } from "./lib/push.ts";
-import { ackNotice, quietState, snooze, wake } from "./lib/notify.ts";
-import { approveOrder, cancelOrder, checkOrderBody, createOrder, retryOrder } from "./lib/order-note.ts";
+import { ackNotice, notifyCaptain, quietState, snooze, wake } from "./lib/notify.ts";
+import { approveOrder, cancelOrder, checkOrderBody, createOrder, deleteOrder, editOrder, retryOrder } from "./lib/order-note.ts";
 import { answerCaptainHold } from "./lib/hold-answer.ts";
 import { deleteGroup, readGroups, saveGroup, type GroupInput } from "./lib/groups.ts";
 import { groupAdwSectionHtml, groupsPanelHtml } from "./lib/group-partials.ts";
@@ -29,7 +41,11 @@ import { loadAgents } from "./lib/agents.ts";
 import { speakable, speechParts, sttAvailable, synthesize, transcribe, ttsState, voiceFor } from "./lib/voice.ts";
 import { onShipLogWrite } from "./lib/ship-log.ts";
 import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
-import { dockVoyage, findShip, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
+import { harborChartJson } from "./lib/harbor-chart.ts";
+import { metricsDashboardHtml, parsePeriod } from "./lib/metrics-view.ts";
+import { dockVoyage, findShip, openVoyage, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
+import { applyProposal, dismissProposal, hasHelmsman, helmDigest } from "./lib/helm.ts";
+import { ledgerMarkdown, voyageId, voyageLedger } from "./lib/metrics.ts";
 import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas, withFrameChecks } from "./lib/canvas.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import type { HostEvent } from "./lib/agent-host.ts";
@@ -42,6 +58,7 @@ import {
   hostRunning,
   hostWaiting,
   decideGo,
+  decideGate,
   kickNodeOrders,
   newSession,
   refreshNodeTargets,
@@ -54,8 +71,8 @@ import { HOST, PORT, ROOT } from "./lib/paths.ts";
 import { requestRefusal } from "./lib/request-guard.ts";
 import { dashLog } from "./lib/log.ts";
 
-type WsData = { agentId: string };
-const chatSockets = new Map<string, Set<WebSocket>>();
+type WsData = { agentId: string; liveAgent?: string; live?: LiveSession };
+const chatSockets = new Map<string, Set<ServerWebSocket<WsData>>>();
 const sseEncoder = new TextEncoder();
 type SseController = ReadableStreamDefaultController<Uint8Array>;
 const sseClients = new Set<SseController>();
@@ -75,6 +92,7 @@ function chatPayload(line: ChatLine) {
     ...(line.dialog ? { dialog: line.dialog } : {}),
     ...(line.go ? { go: line.go } : {}),
     ...(line.requestId ? { requestId: line.requestId } : {}),
+    ...(line.step ? { step: true } : {}),
   };
 }
 
@@ -92,8 +110,12 @@ function broadcastChatEvent(agentId: string, ev: HostEvent) {
   }
 }
 
+/** Live voice sessions (conversation mode): each agent's chat replies are relayed to its talks (V3; any agent in V4). */
+const liveSessions = new Set<LiveSession>();
+
 function broadcastChat(agentId: string, line: ChatLine) {
   needsChanged();
+  if (line.from === agentId && line.kind === "chat" && !line.step && line.text.trim()) for (const s of liveSessions) if (s.agent === agentId) s.relay(line.text);
   const set = chatSockets.get(agentId);
   if (!set) return;
   const payload = JSON.stringify(chatPayload(line));
@@ -225,7 +247,7 @@ process.on("uncaughtException", (err) => {
 
 const publicDir = join(import.meta.dir, "public");
 
-const server = Bun.serve({
+const server = Bun.serve<WsData>({
   hostname: HOST,
   port: PORT,
   async fetch(req, server) {
@@ -243,10 +265,39 @@ const server = Bun.serve({
   },
   websocket: {
     open(ws) {
-      const data = ws.data as WsData;
-      if (data.agentId === "voice") {
-        ws.send(JSON.stringify({ error: "not configured", hint: "Gemini Live voice later" }));
-        ws.close();
+      const data = ws.data;
+      if (data.agentId === "voice" && data.liveAgent) {
+        // Conversation mode (lib/live-voice.ts): this socket bridges to one Gemini Live session with one agent.
+        const agent = data.liveAgent;
+        const t = chatTarget(agent)!;
+        data.live = new LiveSession(
+          { audio: (pcm) => ws.send(pcm), event: (e) => ws.send(JSON.stringify(e)), close: () => ws.close() },
+          {
+            agent,
+            role: t.agentRole,
+            label: t.label,
+            description: t.description,
+            voice: t.liveVoice,
+            // V3: hand-offs to the agent's full self, what needs the captain, and the Go (behind lib/live-voice.ts's policy door).
+            actions: {
+              sendToAgent: async (text) => void (await captainSend(agent, text)),
+              needsYou: async () =>
+                (await collectNeedsYou({ waiting: hostWaiting, holds: currentHolds() })).map((i) => ({
+                  id: i.id,
+                  kind: i.kind,
+                  ...(i.kind === "go" ? { goId: i.goId } : {}),
+                  summary: "summary" in i ? String(i.summary) : "what" in i ? String(i.what) : "title" in i ? String(i.title) : i.kind,
+                })),
+              decideGo: async (goId, go) => {
+                const r = await decideGo(goId, go);
+                needsChanged();
+                return r;
+              },
+            },
+          },
+        );
+        liveSessions.add(data.live);
+        void data.live.start();
         return;
       }
       if (!chatSockets.has(data.agentId)) {
@@ -260,7 +311,12 @@ const server = Bun.serve({
       }).catch((e) => console.error("[dashboard] ws history:", e));
     },
     message(ws, message) {
-      const data = ws.data as WsData;
+      const data = ws.data;
+      if (data.live) {
+        if (typeof message === "string") data.live.control(message);
+        else data.live.audio(new Uint8Array(message));
+        return;
+      }
       const { text, requestId } = parseWsSend(message.toString());
       captainSend(data.agentId, text, requestId)
         .catch(() => {
@@ -268,7 +324,9 @@ const server = Bun.serve({
         });
     },
     close(ws) {
-      const data = ws.data as WsData;
+      const data = ws.data;
+      if (data.live) liveSessions.delete(data.live);
+      data.live?.close();
       chatSockets.get(data.agentId)?.delete(ws);
     },
   },
@@ -303,6 +361,17 @@ async function captainSend(agentId: string, text: string, requestId?: string): P
 }
 
 /** Give a saved captain line to the node; if it cannot take it, say so in the thread. */
+/** Send the ship's helmsman a Helm review (after a dock, or when the captain asks). */
+async function sendHelmReview(shipId: string, reason: string, ledger = ""): Promise<{ ok: boolean; message: string }> {
+  const ship = await findShip(shipId);
+  if (!ship || !hasHelmsman(ship)) return { ok: false, message: `${shipId} has no helmsman aboard. Bring one aboard in the shipyard.` };
+  const to = `${shipId}-helmsman`;
+  const line = await appendChatLine(to, { ts: new Date().toISOString(), from: "helm", kind: "crew", text: helmDigest(ship, reason, ledger).slice(0, 8000) });
+  broadcastChat(to, line);
+  await handToNode(to, line);
+  return { ok: true, message: `Helm review sent to ${to}. Proposals appear on the deck.` };
+}
+
 async function handToNode(agentId: string, line: ChatLine): Promise<void> {
   const error = await submitCaptainLine(agentId, line);
   if (error) broadcastChat(agentId, await appendChatError(agentId, error, line.ts));
@@ -336,8 +405,11 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return new Response("upgrade failed", { status: 500 });
     }
 
-    if (path === "/ws/voice/alice") {
-      if (server.upgrade(req, { data: { agentId: "voice" } as WsData })) {
+    if (path.startsWith("/ws/voice/")) {
+      // Any agent with a live voice (agent.yaml live_voice; crewmates take their role's).
+      const agentId = path.split("/").pop() ?? "";
+      if (!chatAllowed(agentId) || !chatTarget(agentId)?.liveVoice) return new Response("no live voice for this agent", { status: 404 });
+      if (server.upgrade(req, { data: { agentId: "voice", liveAgent: agentId } as WsData })) {
         return undefined as unknown as Response;
       }
       return new Response("upgrade failed", { status: 500 });
@@ -387,6 +459,11 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return Response.json(await agentsStatusJson());
     }
 
+    // The sea chart (lib/harbor-chart.ts): berths, islands, routes, and ship positions.
+    if (path === "/api/harbor/chart" && req.method === "GET") {
+      return Response.json(await harborChartJson());
+    }
+
     if (path === "/api/chat-targets" && req.method === "GET") {
       const { agents, workers } = listChatTargets();
       // waiting: blocked on the captain (open dialog, or a question as its newest line).
@@ -424,7 +501,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     }
 
     if (path === "/api/needs-you" && req.method === "GET") {
-      return Response.json({ items: await collectNeedsYou({ waiting: hostWaiting, holds: currentHolds() }) });
+      return Response.json({ items: await collectNeedsYou({ waiting: hostWaiting, holds: currentHolds() }), build: pageBuild() });
     }
 
     // Quiet hours: Snooze holds interruptions; Wake ends it and compiles what was held into a digest.
@@ -454,6 +531,14 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return Response.json({ ok }, { status: ok ? 200 : 400 });
     }
 
+    const gateAnswer = path.match(/^\/api\/gate\/(gate-[a-z0-9-]{6,40})$/);
+    if (gateAnswer && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { decision?: string };
+      const res = await decideGate(gateAnswer[1]!, b.decision === "allow");
+      needsChanged();
+      return Response.json(res, { status: res.ok ? 200 : 409 });
+    }
+
     const goAnswer = path.match(/^\/api\/go\/([a-z0-9-]{6,40})$/);
     if (goAnswer && req.method === "POST") {
       const b = (await req.json().catch(() => ({}))) as { decision?: string };
@@ -477,10 +562,16 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return Response.json({ ok: true, message: `Submitted ${r.slug}; Alice starts it when she is free.` });
     }
 
-    const orderAction = path.match(/^\/api\/orders\/(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]{0,63})\/(go|cancel|retry)$/);
+    const orderAction = path.match(/^\/api\/orders\/(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]{0,63})\/(go|cancel|retry|edit|delete)$/);
     if (orderAction && req.method === "POST") {
       const [, slug, action] = orderAction as unknown as [string, string, string];
-      const res = action === "go" ? await approveOrder(slug) : action === "retry" ? await retryOrder(slug) : await cancelOrder(slug);
+      const b = action === "edit" ? ((await req.json().catch(() => ({}))) as { title?: string; body?: string }) : {};
+      const res =
+        action === "go" ? await approveOrder(slug)
+        : action === "retry" ? await retryOrder(slug)
+        : action === "edit" ? await editOrder(slug, String(b.title ?? ""), String(b.body ?? ""))
+        : action === "delete" ? await deleteOrder(slug)
+        : await cancelOrder(slug);
       if (res.ok) {
         await kickNodeOrders();
         sseBroadcast("ship", "fleet");
@@ -497,6 +588,26 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return new Response(await usagePartialHtml(), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
+    }
+
+    if (path === "/partials/jev" && req.method === "GET") {
+      return new Response(jevHtml(escapeHtml, jevSpend(7)), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+    if (path === "/partials/tool-gate" && req.method === "GET") {
+      return new Response(toolGateHtml(escapeHtml), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+    if (path === "/partials/routines" && req.method === "GET") {
+      return new Response(routinesHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+    if (path === "/partials/vault-doctor" && req.method === "GET") {
+      return new Response(vaultDoctorHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+    if (path === "/partials/tool-failures" && req.method === "GET") {
+      return new Response(toolFailuresHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+
+    if (path === "/partials/fleet-metrics" && req.method === "GET") {
+      return new Response(metricsDashboardHtml(parsePeriod(url.searchParams.get("days"))), { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
 
     if (path === "/partials/metrics" && req.method === "GET") {
@@ -693,7 +804,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       const voice = voiceFor(agentId, meta?.role, meta?.voice);
       try {
         const wav = await synthesize(parts[part]!, voice);
-        return new Response(wav, { headers: { "Content-Type": "audio/wav", "X-Parts": String(parts.length), "X-Voice": voice, "Cache-Control": "no-store" } });
+        return new Response(new Uint8Array(wav), { headers: { "Content-Type": "audio/wav", "X-Parts": String(parts.length), "X-Voice": voice, "Cache-Control": "no-store" } });
       } catch (e) {
         // The page falls back to the browser's own (robotic) voice on a 503: log why.
         void dashLog("voice", `tts failed for ${agentId} (${voice}): ${e instanceof Error ? e.message : String(e)}`);
@@ -712,8 +823,31 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
         mode: String(b.mode ?? ""),
         factory: b.factory === true || b.factory === "on",
         firstmate: String(b.firstmate ?? ""),
+        template: String(b.template ?? ""),
       });
       if (res.ok) sseBroadcast("ship", String(b.id));
+      return Response.json(res, { status: res.ok ? 200 : 400 });
+    }
+
+    // Run gates (lib/gates.ts): the dock gates (or task gates) that are not green, in the background;
+    // the result arrives as a notice (done or blocked).
+    const gatesRun = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/gates$/);
+    if (gatesRun && req.method === "POST") {
+      const ship = await findShip(gatesRun[1]!);
+      const b = (await req.json().catch(() => ({}))) as { stage?: string };
+      const stage = b.stage === "task" ? "task" : "dock";
+      if (!ship || !ship.gates[stage].length) return Response.json({ ok: false, message: `${gatesRun[1]} has no ${stage} gates.` }, { status: 400 });
+      void runGates(ship, stage, "captain").then(({ report, failures }) =>
+        notifyCaptain({ from: "helm", kind: report.green ? "done" : "blocked", summary: `${ship.id}: ${describeGates(report)}`, detail: failures.slice(0, 3000), ref: ship.id }),
+      );
+      return Response.json({ ok: true, message: `Running ${ship.id}'s ${stage} gates (${ship.gates[stage].join(", ")}); you get a notice when they finish.` });
+    }
+
+    const helmAction = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/helm(?:\/([0-9a-f]{6})\/(apply|dismiss)|\/review)$/);
+    if (helmAction && req.method === "POST") {
+      const [, shipId, id, act] = helmAction as unknown as [string, string, string | undefined, string | undefined];
+      const res = id ? (act === "apply" ? await applyProposal(shipId, id) : await dismissProposal(shipId, id)) : await sendHelmReview(shipId, "the captain asked for a review");
+      sseBroadcast("ship", shipId);
       return Response.json(res, { status: res.ok ? 200 : 400 });
     }
 
@@ -758,7 +892,14 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
           }
         }
       } else {
+        const sailing = await openVoyage(shipId);
         res = await dockVoyage(shipId, String(b.summary ?? ""));
+        // After a dock, the helmsman (when aboard) reviews the ship's process with the voyage's ledger.
+        if (res.ok && sailing) {
+          const ship = await findShip(shipId);
+          const ledger = voyageLedger(voyageId(sailing.file));
+          if (ship && hasHelmsman(ship)) void sendHelmReview(shipId, `the voyage "${sailing.goal.slice(0, 160)}" docked`, ledger ? ledgerMarkdown(ledger) : "").catch((e) => console.error("[helm]", e));
+        }
       }
       sseBroadcast("ship", shipId);
       return Response.json(res, { status: res.ok ? 200 : 400 });
@@ -838,10 +979,10 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     }
 
     // Section routes (/needs, /health, /fleet, /agents) are the same page; app.js reads the path.
-    if (path === "/" || path === "/index.html" || /^\/(harbor|health|fleet|agents|needs)\/?$/.test(path) || /^\/ships\/[a-z][a-z0-9_-]{0,63}\/?$/.test(path)) {
+    if (path === "/" || path === "/index.html" || /^\/(harbor|health|fleet|agents|needs)\/?$/.test(path) || /^\/health\/(status|usage|metrics|diagnostics)\/?$/.test(path) || /^\/ships\/[a-z][a-z0-9_-]{0,63}\/?$/.test(path)) {
       const html = await readFile(join(publicDir, "index.html"), "utf8");
       return new Response(html, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" },
       });
     }
 
@@ -849,12 +990,26 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     const file = Bun.file(filePath);
     if (await file.exists()) {
       // Vendored libraries carry their version in the file name: cache them for good.
+      // The page's own files change with every deploy: always revalidate.
       return path.startsWith("/vendor/")
         ? new Response(file, { headers: { "Cache-Control": "public, max-age=31536000, immutable" } })
-        : new Response(file);
+        : new Response(file, { headers: { "Cache-Control": "no-cache" } });
     }
 
     return new Response("not found", { status: 404 });
+}
+
+/** Which page code is on disk (the files' change times): an open tab compares it and reloads when it changes. */
+function pageBuild(): string {
+  let parts = "";
+  for (const f of ["index.html", "app.js", "md.js", "live-voice.js", "pcm-capture.js", "sfx.js", "harbor-chart.js", "pixel.css", "ui.css"]) {
+    try {
+      parts += statSync(join(publicDir, f)).mtimeMs.toFixed(0);
+    } catch {
+      /* missing file */
+    }
+  }
+  return Bun.hash(parts).toString(36);
 }
 
 console.error(`dashboard http://${HOST}:${PORT} (repo ${ROOT})`);

@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   appendAgentChat,
@@ -11,6 +11,10 @@ import {
 import { chatTarget } from "./chat-targets.ts";
 import { agentKeyEnv } from "./fleet-env.ts";
 import { dashLog } from "./log.ts";
+import { notifyCaptain } from "./notify.ts";
+import { recordToolFailure } from "./tool-failures.ts";
+import { voyageWorktree } from "./voyage-worktree.ts";
+import { toolFailed } from "../../extensions/cache-watch.ts";
 import { fleetInboxRoot, NODE_PORT, ROOT } from "./paths.ts";
 
 /**
@@ -41,7 +45,7 @@ export type HostEvent =
 export type HostHooks = {
   line: (agentId: string, line: ChatLine) => void;
   event: (agentId: string, ev: HostEvent) => void;
-  settled: (agentId: string, outcome: { ok: boolean; ms: number; error?: string; cost: number; tokens: number; cacheRead?: number; prompt?: number }) => void;
+  settled: (agentId: string, outcome: { ok: boolean; ms: number; error?: string; cost: number; tokens: number; cacheRead?: number; prompt?: number; model?: string }) => void;
 };
 
 const IDLE_MS = 20 * 60_000;
@@ -59,16 +63,38 @@ const AUTH_ERROR = /\b401\b|unauthori[sz]ed|invalid (api )?key|authentication fa
  * The agent's model cannot work today (out of credits, key rejected): record it
  * so bin/launch starts the next session on fallback_model until midnight.
  */
-async function recordModelFailure(agentId: string, reason: string): Promise<void> {
+/**
+ * Mark today's primary model as failed for this agent, so bin/launch starts it
+ * on fallback_model until tomorrow. True only for the first failure today (the
+ * caller continues the work once; a second failure means the backup failed too).
+ */
+async function recordModelFailure(agentId: string, reason: string): Promise<boolean> {
   const model = chatTarget(agentId)?.model;
-  if (!model) return;
+  if (!model) return false;
   const day = new Date().toLocaleDateString("sv"); // YYYY-MM-DD, local, like Python's date.today()
+  const path = join(fleetInboxRoot(), agentId, "model-fallback.json");
+  try {
+    const prev = JSON.parse(await readFile(path, "utf8")) as { day?: string; model?: string };
+    if (prev.day === day && prev.model === model) return false;
+  } catch {
+    /* no marker yet */
+  }
   try {
     await mkdir(join(fleetInboxRoot(), agentId), { recursive: true });
-    await writeFile(join(fleetInboxRoot(), agentId, "model-fallback.json"), JSON.stringify({ day, model, reason: reason.slice(0, 300) }) + "\n", "utf8");
+    await writeFile(path, JSON.stringify({ day, model, reason: reason.slice(0, 300) }) + "\n", "utf8");
+    return true;
   } catch {
-    /* the launcher just tries the primary again */
+    return false; /* the launcher just tries the primary again */
   }
+}
+
+/** Why a turn's provider error should move the agent to its backup model, or null. */
+export function fallbackReason(error: string): "billing" | "auth" | "stream" | null {
+  if (BILLING_ERROR.test(error)) return "billing";
+  if (AUTH_ERROR.test(error)) return "auth";
+  // Only reached once the in-place retries are used up.
+  if (STREAM_DROPPED.test(error)) return "stream";
+  return null;
 }
 
 type Dialog = { method: string; lineTs: string; timer?: ReturnType<typeof setTimeout> };
@@ -87,6 +113,12 @@ type AgentProc = {
   stderrTail: string;
   lastCaptainTs: string | null;
   turnError: string | null;
+  /** Running tool calls' short summaries, by call id (for the failure log). */
+  toolArgs: Map<string, string>;
+  /** provider/model of the latest reply. */
+  model: string;
+  /** The voyage worktree this crewmate started in ("" for the repo or a non-crewmate). */
+  worktree: string;
   /** Continues sent for the current captain line after a dropped stream. */
   streamRetries: number;
   /** This turn's billed cost and tokens, summed from Pi's assistant message usage. */
@@ -163,6 +195,15 @@ function assistantText(message: unknown): string {
     .map((b: { text?: string }) => b.text ?? "")
     .join("\n\n")
     .trim();
+}
+
+/** Dollars a tool's own model calls cost: pi's result usage, or the subagent extension's per-task usage. */
+export function toolSpend(result: unknown): number {
+  const r = result as { usage?: { cost?: { total?: number } | number }; details?: { results?: { usage?: { cost?: number } }[] } } | undefined;
+  const own = r?.usage?.cost;
+  const fromUsage = typeof own === "number" ? own : (own?.total ?? 0);
+  if (fromUsage > 0) return fromUsage;
+  return (r?.details?.results ?? []).reduce((sum, x) => sum + (Number(x?.usage?.cost) || 0), 0);
 }
 
 function flushStream(p: AgentProc): void {
@@ -262,13 +303,36 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       p.streamText = "";
       hooks.event(p.id, { kind: "stream", text: "" });
       if (msg.stopReason === "error" && msg.errorMessage) p.turnError = msg.errorMessage;
+      const m = rec.message as { provider?: string; model?: string };
+      if (m.model) p.model = m.provider ? `${m.provider}/${m.model}` : m.model;
       const text = assistantText(msg);
-      if (text) hooks.line(p.id, await appendAgentChat(p.id, p.id, text));
+      // Text in a message that ends in a tool call is narration on the way (a step), not the answer.
+      if (text) hooks.line(p.id, await appendAgentChat(p.id, p.id, text, { step: msg.stopReason === "toolUse" }));
       return;
     }
-    case "tool_execution_start":
-      hooks.event(p.id, { kind: "activity", text: toolSummary(String(rec.toolName ?? "tool"), rec.args) });
+    case "tool_execution_end": {
+      // Tools that run models of their own (sub-agents) report what they spent; it is part of this turn.
+      p.turnCost += toolSpend(rec.result);
+      const id = String(rec.toolCallId ?? "");
+      const args = p.toolArgs.get(id) ?? "";
+      p.toolArgs.delete(id);
+      const content = ((rec.result as { content?: { type: string; text?: string }[] } | undefined)?.content ?? []).filter((c) => c && typeof c.type === "string");
+      if (toolFailed(Boolean(rec.isError), content)) {
+        const error = content.filter((c) => c.type === "text").map((c) => c.text ?? "").join(" ");
+        try {
+          recordToolFailure({ agent: p.id, tool: String(rec.toolName ?? "tool"), args, error, model: p.model });
+        } catch (e) {
+          void dashLog("agent-host", `tool failure not recorded: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       return;
+    }
+    case "tool_execution_start": {
+      const summary = toolSummary(String(rec.toolName ?? "tool"), rec.args);
+      if (rec.toolCallId) p.toolArgs.set(String(rec.toolCallId), summary);
+      hooks.event(p.id, { kind: "activity", text: summary });
+      return;
+    }
     case "auto_retry_start":
       hooks.event(p.id, { kind: "notice", text: `Retrying: ${String(rec.errorMessage ?? "provider error")}`, level: "warning" });
       return;
@@ -281,6 +345,14 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       hooks.event(p.id, { kind: "running", running: false });
       hooks.event(p.id, { kind: "activity", text: "" });
       const ms = Date.now() - p.startedAt;
+      // Every turn that ended on a provider error goes in the failure log, retried or not.
+      if (p.turnError) {
+        try {
+          recordToolFailure({ agent: p.id, tool: "turn", error: p.turnError, model: p.model });
+        } catch {
+          /* the log is best effort */
+        }
+      }
       if (p.turnError && STREAM_DROPPED.test(p.turnError) && p.streamRetries < STREAM_RETRIES) {
         // The work so far is in the session; ask the agent to carry on from there.
         p.streamRetries += 1;
@@ -297,17 +369,41 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       }
       if (p.turnError && p.lastCaptainTs) {
         hooks.line(p.id, await appendChatError(p.id, p.turnError, p.lastCaptainTs));
-        hooks.settled(p.id, { ok: false, ms, error: p.turnError, cost: p.turnCost, tokens: p.turnTokens, cacheRead: p.turnCacheRead, prompt: p.turnPrompt });
-        if (BILLING_ERROR.test(p.turnError) || AUTH_ERROR.test(p.turnError)) {
-          // Out of credits or key rejected: the next message relaunches through
-          // bin/launch, which reads this marker and uses fallback_model today.
-          void dashLog("agent-host", `${p.id} hit a billing or auth error; stopped so the next message relaunches on its fallback model`);
-          void recordModelFailure(p.id, p.turnError);
-          hooks.event(p.id, { kind: "notice", text: "Its model is out of credits or refused the key; the next message starts it on its backup model.", level: "warning" });
-          setTimeout(() => void stopHost(p.id), 0);
+        hooks.settled(p.id, { ok: false, ms, error: p.turnError, cost: p.turnCost, tokens: p.turnTokens, cacheRead: p.turnCacheRead, prompt: p.turnPrompt, model: p.model });
+        const why = fallbackReason(p.turnError);
+        if (why) {
+          // Out of credits, key rejected, or the stream kept dropping after the retries:
+          // stop, mark the primary failed for today (bin/launch then uses fallback_model),
+          // and, the first time today, carry on with the work on the backup at once.
+          const error = p.turnError;
+          const first = await recordModelFailure(p.id, error);
+          const what = why === "stream" ? "kept dropping its connection to the model" : why === "billing" ? "ran out of credits or quota" : "had its key refused";
+          void dashLog("agent-host", `${p.id} ${what}; moving to its fallback model${first ? " and continuing" : " (already failed today: stopping)"}`);
+          hooks.event(p.id, {
+            kind: "notice",
+            text: first ? `It ${what}; continuing on its backup model.` : `It ${what} on its backup model too; it stops here. Send a message to try again.`,
+            level: "warning",
+          });
+          if (first) {
+            try {
+              notifyCaptain({ from: p.id, kind: "info", summary: `${p.id} ${what} and moved to its backup model for today.`, detail: error.slice(0, 300), ref: "Health, tool failures" });
+            } catch {
+              /* the notice is best effort */
+            }
+          }
+          setTimeout(async () => {
+            await stopHost(p.id);
+            if (!first) return;
+            await submitToHost(p.id, {
+              ts: new Date().toISOString(),
+              from: "router",
+              kind: "chat",
+              text: `Your last turn ended on a provider error (${error.slice(0, 160)}). You are now on your backup model. Continue exactly where you left off; do not redo finished steps.`,
+            });
+          }, 0);
         }
       } else {
-        hooks.settled(p.id, { ok: true, ms, cost: p.turnCost, tokens: p.turnTokens, cacheRead: p.turnCacheRead, prompt: p.turnPrompt });
+        hooks.settled(p.id, { ok: true, ms, cost: p.turnCost, tokens: p.turnTokens, cacheRead: p.turnCacheRead, prompt: p.turnPrompt, model: p.model });
       }
       return;
     }
@@ -389,6 +485,9 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
     stderrTail: "",
     lastCaptainTs: null,
     turnError: null,
+    toolArgs: new Map(),
+    model: "",
+    worktree: worktreeFor(agentId),
     streamRetries: 0,
     turnCost: 0,
     turnTokens: 0,
@@ -407,21 +506,46 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
     p.pending.clear();
     await dashLog("agent-host", `exit ${agentId} code=${code}`);
     const expected = code === 0 || code === 143 || code === null;
+    // A dock returns the voyage worktree, and treehouse ends the processes inside it: that is
+    // the voyage ending, not a crash (the lead that asked for the dock was mid-turn).
+    if (code === 143 && p.running && p.worktree) {
+      await Bun.sleep(1500); // the dock removes the worktree record right after the return
+      if (worktreeFor(agentId) !== p.worktree) {
+        hooks.event(agentId, { kind: "running", running: false });
+        hooks.event(agentId, { kind: "stream", text: "" });
+        hooks.event(agentId, { kind: "notice", text: "The voyage docked; this crewmate's turn ended with it.", level: "info" });
+        hooks.settled(agentId, { ok: true, ms: Date.now() - p.startedAt, cost: 0, tokens: 0 });
+        return;
+      }
+    }
     if (p.running || !expected) {
       const why = (p.stderrTail.trim().split("\n").filter(Boolean).slice(-3).join(" ") || `exit ${code}`).slice(0, 500);
       const reason = `${agentId} stopped${p.running ? " mid-task" : ""}: ${why}`;
       hooks.event(agentId, { kind: "running", running: false });
       hooks.event(agentId, { kind: "stream", text: "" });
       if (p.lastCaptainTs) hooks.line(agentId, await appendChatError(agentId, reason, p.lastCaptainTs));
-      hooks.settled(agentId, { ok: false, ms: p.running ? Date.now() - p.startedAt : 0, error: reason });
+      hooks.settled(agentId, { ok: false, ms: p.running ? Date.now() - p.startedAt : 0, error: reason, cost: 0, tokens: 0 });
     }
   });
   return p;
 }
 
+/** The open voyage's worktree for a crewmate's ship, or "" (bin/launch starts crewmates there). */
+function worktreeFor(agentId: string): string {
+  const ship = chatTarget(agentId)?.ship;
+  return ship ? (voyageWorktree(ship)?.path ?? "") : "";
+}
+
 /** Hand a captain line to the agent's live session (starting it when needed). */
 export async function submitToHost(agentId: string, line: ChatLine): Promise<void> {
   let p = procs.get(agentId);
+  // A voyage started or docked since this crewmate launched: restart it in the right folder
+  // (between turns only; the session carries over).
+  if (p && !p.running && p.worktree !== worktreeFor(agentId)) {
+    void dashLog("agent-host", `${agentId} working folder changed (voyage worktree); restarting`);
+    await stopHost(agentId);
+    p = undefined;
+  }
   if (!p) {
     const keys = await agentKeyEnv();
     p = procs.get(agentId) ?? start(agentId, keys);

@@ -42,7 +42,14 @@ export function logCrewLine(agentId: string, line: ChatLine): void {
   logShipEvent(ship, line.from === "captain" ? "captain" : agentId, kind, line.text, Object.keys(payload).length ? payload : null, { ts: line.ts });
 }
 
+const toolListeners: ((agentId: string, summary: string) => void)[] = [];
+/** Every agent's tool starts (officers too, whose tools are not in a ship log): the order watcher tags Alice's. */
+export function onAgentTool(fn: (agentId: string, summary: string) => void): void {
+  toolListeners.push(fn);
+}
+
 export function logCrewEvent(agentId: string, ev: HostEvent): void {
+  if (ev.kind === "activity" && ev.text) for (const fn of toolListeners) fn(agentId, ev.text);
   const ship = shipOf(agentId);
   if (!ship) return;
   if (ev.kind === "activity" && ev.text) logShipEvent(ship, agentId, "tool", ev.text);

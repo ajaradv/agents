@@ -94,9 +94,29 @@ Register the remote clone path in the Firstmate home that owns that work, or run
 3. Phone: **WARP** + Termius/Prompt, or `cloudflared access ssh`.
 4. On laptop: `herdr --session default` or attach to `fm-remote` locally.
 
-### Alternative: Tailscale
+### Tailscale (set up on this Mac)
 
-Tailscale on laptop + phone → SSH to MagicDNS → local Herdr client.
+Tailscale on laptop and phone, SSH to the Mac's MagicDNS name, then the local
+Herdr client. Nothing is published on the internet: only devices signed in to
+the captain's tailnet reach the Mac. Tailscale's own SSH server does not run in
+the macOS app, so this uses macOS Remote Login, locked to keys only.
+
+`just phone-check` (read-only) shows which steps are done and what to do next.
+Order matters: keys-only first, so Remote Login never opens with passwords.
+
+1. **Keys only**: `sudo cp fleet/config/sshd-phone.conf /etc/ssh/sshd_config.d/050-fleet-phone.conf`
+   (no passwords, no root, only `avega`; it sorts before macOS's own file, so it wins).
+2. **Phone key**: in an SSH app on the phone (Termius, or Blink Shell, which also
+   does mosh for flaky mobile links), generate an ed25519 key and add its public
+   key to `~/.ssh/authorized_keys` on the Mac.
+3. **Remote Login**: System Settings > General > Sharing > Remote Login, allowed
+   for `avega` only (or `sudo systemsetup -setremotelogin on`).
+4. **Connect**: host `alexanders-macbook-pro` (MagicDNS; full name in
+   `just phone-check`), user `avega`, then run `herdr` to attach the persistent
+   session, the same panes as on the Mac. `herdr session list` shows the others
+   (`herdr session attach fleet`).
+
+To turn it off: Remote Login off in System Settings (the key and config can stay).
 
 Firstmate **voice** (Nova Sonic) is a separate path: laptop client → SSH → `fm-voice-relay.py` on desktop ([voice-relay.md](../vendor/firstmate/docs/voice-relay.md)). It speaks to **Firstmate**, not Alice.
 

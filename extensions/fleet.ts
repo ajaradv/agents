@@ -23,7 +23,7 @@ function text(t: string) {
   return { content: [{ type: "text" as const, text: t }], details: {} };
 }
 
-async function call(method: "GET" | "POST", what: string, params: Record<string, string | number | undefined> = {}, body?: Record<string, unknown>): Promise<string> {
+async function call(method: "GET" | "POST", what: string, params: Record<string, string | number | undefined> = {}, body?: Record<string, unknown>, timeoutMs = 30_000): Promise<string> {
   if (!base || !token) return "Fleet tools work only in the dashboard's live session (this looks like the TUI). Ask the captain, or read the vault and the inbox instead.";
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, String(v));
@@ -32,10 +32,12 @@ async function call(method: "GET" | "POST", what: string, params: Record<string,
       method,
       headers: { "Content-Type": "application/json", "x-fleet-crew-token": token },
       ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const j = (await res.json()) as Record<string, unknown>;
-    return method === "GET" ? JSON.stringify(j, null, 1) : String(j.message ?? (res.ok ? "done" : "failed"));
+    // Read tools come back already shaped for an agent (dashboard/lib/tool-out.ts).
+    if (method === "GET") return typeof j.text === "string" ? j.text : JSON.stringify(j, null, 1);
+    return String(j.message ?? (res.ok ? "done" : "failed"));
   } catch (e) {
     return `The fleet node did not answer (${e instanceof Error ? e.message : String(e)}). Tell the captain.`;
   }
@@ -48,7 +50,7 @@ async function call(method: "GET" | "POST", what: string, params: Record<string,
  * `tools: [+codemode, +tool_search]`); for others they stay ordinary tools.
  */
 const LAZY = process.env.FLEET_LAZY_TOOLS === "1";
-const RARE = LAZY ? ({ exposure: "codemode", namespace: { name: "fleet_actions", description: "Fleet actions that change state (each waits for the captain's Go outside an order) and maneuver history" } } as const) : {};
+const RARE = LAZY ? ({ exposure: "codemode", namespace: { name: "fleet_actions", description: "Fleet actions that change state (each waits for the captain's Go outside an order)" } } as const) : {};
 
 /** Every fleet tool can be a step of a running order. */
 const OrderArgs = {
@@ -79,10 +81,11 @@ export default function (pi: ExtensionAPI) {
       ship: Type.String({ description: "Ship id, e.g. kinwork, or fleet for officers" }),
       limit: Type.Optional(Type.Number({ description: "Rows, default 20, max 200" })),
       kind: Type.Optional(Type.String({ description: "chat-in, chat-out, question, answer, tool, turn-end, notice, task, maneuver" })),
+      full: Type.Optional(Type.Boolean({ description: "Long text uncut" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("GET", "log", { ship: p.ship, limit: p.limit, kind: p.kind, order: p.order, step: p.step }));
+      return text(await call("GET", "log", { ship: p.ship, limit: p.limit, kind: p.kind, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
     },
   });
 
@@ -98,7 +101,6 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "ship_maneuvers",
-    ...RARE,
     label: "Ship maneuvers",
     description: "A ship's recent SSSF maneuvers (ADW runs): status, phases, errors, cost; plus the ADWs it has.",
     parameters: Type.Object({ ship: Type.String(), ...OrderArgs }),
@@ -114,10 +116,25 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       agent: Type.String({ description: "Agent id, e.g. kinwork-designer, architect, firstmate" }),
       n: Type.Optional(Type.Number({ description: "Lines, default 8, max 60 (long lines are shortened)" })),
+      full: Type.Optional(Type.Boolean({ description: "Long text uncut" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("GET", "chat", { agent: p.agent, n: p.n, order: p.order, step: p.step }));
+      return text(await call("GET", "chat", { agent: p.agent, n: p.n, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_tasks",
+    label: "Vault tasks",
+    description: "The captain's vault tasks (tasks/ notes): what is ready to work on (open, waiting on nothing), what waits on what (blocked_by in a note's frontmatter), what is in progress, sorted by priority then age. Notes it cannot read are listed. id=<note name> gives one task's detail.",
+    parameters: Type.Object({
+      filter: Type.Optional(StringEnum(["ready", "open", "in-progress", "blocked", "done", "all"] as const)),
+      id: Type.Optional(Type.String({ description: "A task's note name, e.g. fleet-tool-standards" })),
+      ...OrderArgs,
+    }),
+    async execute(_id, p) {
+      return text(await call("GET", "vault-tasks", { filter: p.filter, id: p.id, order: p.order, step: p.step }));
     },
   });
 
@@ -128,10 +145,11 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       query: Type.String({ description: "Words to find; \"quoted phrase\" for exact" }),
       limit: Type.Optional(Type.Number({ description: "Hits, default 8, max 20" })),
+      full: Type.Optional(Type.Boolean({ description: "Long text uncut" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("GET", "recall", { query: p.query, limit: p.limit, order: p.order, step: p.step }));
+      return text(await call("GET", "recall", { query: p.query, limit: p.limit, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
     },
   });
 
@@ -161,6 +179,20 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, p) {
       return text(await call("POST", "delegate", {}, { task: p.task, where: p.where ?? "vault" }));
+    },
+  });
+
+  pi.registerTool({
+    name: "ask_public",
+    label: "Ask the public helper",
+    description:
+      "Ask a quick question of a free model with no tools and no file access: general knowledge, drafting or rewording, summarising text you paste in. Answers in this call. Only public or general text: free models may train on what they get, so never include vault notes, repo code, chats, names, or secrets (the node refuses text that looks private). Use delegate for anything that needs the vault or a repo.",
+    parameters: Type.Object({
+      question: Type.String({ description: "The question or instruction, self-contained" }),
+      text: Type.Optional(Type.String({ description: "Public text the question is about (optional)" })),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "public", {}, { question: p.question, text: p.text ?? "" }, 120_000));
     },
   });
 
@@ -247,8 +279,8 @@ export default function (pi: ExtensionAPI) {
     name: "maneuver_start",
     ...RARE,
     label: "Launch a maneuver",
-    description: "Launch an SSSF maneuver (ADW) on a ship under sail, through its lead. The prompt is the full brief: intent, files, what done means." + GO,
-    parameters: Type.Object({ ship: Type.String(), adw: Type.String({ description: "One of the ship's ADWs (ship_maneuvers lists them)" }), prompt: Type.String(), ...OrderArgs }),
+    description: "Launch one of a ship's maneuvers (a checks chain or an SSSF ADW) on a ship under sail, through its lead. For an ADW the prompt is the full brief: intent, files, what done means." + GO,
+    parameters: Type.Object({ ship: Type.String(), adw: Type.String({ description: "The maneuver's name, or an ADW (ship_maneuvers lists them)" }), prompt: Type.String(), ...OrderArgs }),
     async execute(_id, p) {
       return text(await action("maneuver_start", { ship: p.ship, adw: p.adw, prompt: p.prompt }, p));
     },

@@ -21,6 +21,7 @@ import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { guestToHost } from "./gondolin/policy.ts";
 
 const MAX_FILE = 15 * 1024 * 1024;
 const MAX_DIR = 50 * 1024 * 1024;
@@ -54,7 +55,12 @@ function slug(id: string): string {
 }
 
 function abs(p: string, cwd: string): string {
-  return isAbsolute(p) ? p : resolve(cwd, p);
+  if (!isAbsolute(p)) return resolve(cwd, p);
+  // A crewmate in a VM names guest paths (/workspace, /cache/shots, ...); the canvas runs on the host.
+  if (process.env.FLEET_VM === "1") {
+    return guestToHost(p, { workspace: cwd, memory: process.env.FLEET_VM_MEMORY, shipMemory: process.env.FLEET_VM_SHIP_MEMORY, cache: process.env.FLEET_VM_CACHE });
+  }
+  return p;
 }
 
 function dirSize(dir: string): number {

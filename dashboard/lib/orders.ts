@@ -1,3 +1,5 @@
+import { jevAsk } from "./jev.ts";
+import { redact } from "./redact.ts";
 import { watch } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { hostRunning, hostWaiting } from "./agent-host.ts";
@@ -7,6 +9,7 @@ import { dashLog } from "./log.ts";
 import { callMismatch, listOrders, ORDER_TOOLS, ordersDir, updateOrder, type Order, type OrderStep } from "./order-note.ts";
 import { postBus } from "./bus-post.ts";
 import { getWorkflow, resetSteps, stepFinished, stepStarted, steps as journalSteps, updateWorkflow, upsertWorkflow } from "./journal.ts";
+import { onAgentTool } from "./ship-events.ts";
 import { logShipEvent, recentShipEvents } from "./ship-log.ts";
 import { officerBudgetRefusal } from "./shipyard.ts";
 
@@ -41,9 +44,17 @@ type Running = {
   order: Order;
   next: number;
   called: Set<number>;
+  /** Each step's actual tool output (from recordOrderCall), for the independent expect check. */
+  results?: Map<number, string>;
+  /** Steps where Alice logged ok against the independent check once; a second ok is accepted. */
+  disputed?: Set<number>;
   unplannedReads: string[];
   refused: string[];
   lastActive: number;
+  /** The captain wrote to Alice mid-order: pause after the step being worked on (R2 chat priority). */
+  chatPending?: boolean;
+  /** Paused for the captain's message; resumes by itself once Alice has answered and gone quiet. */
+  chatPaused?: boolean;
 };
 
 let running: Running | null = null;
@@ -80,7 +91,7 @@ function brief(order: Order, from: number): string {
     "2. Check the result against its expect line.",
     `3. Call order_step with order="${order.meta.order}", step=<n>, ok (true when the expect line holds), result (one line on what came back), evidence (event id, task number, timestamp, or path).`,
     `Acceptance checks are items too: run and log each one like a step. Only after the last item call order_finish with status "done". If an item cannot be done as written, call order_step with ok=false and why, then order_finish with status "blocked". Do not improvise around the plan, skip items, or add fleet calls; the server refuses calls that do not match.`,
-    "If the captain messages you meanwhile, answer in a line and carry on.",
+    "If the captain messages you meanwhile, keep going until order_step tells you to pause; then answer the captain and end your turn. The order resumes by itself.",
     "",
     ...(order.intent ? ["Intent (context only, do not act on it):", order.intent, ""] : []),
     "Items:",
@@ -104,6 +115,8 @@ function report(r: Running, outcome: string): string {
   const refused = mine.filter((e) => e.kind === "order-step" && e.payload?.reason === "unplanned").map((e) => e.summary);
   const pauses = mine.filter((e) => e.kind === "order-finish" && e.payload?.ok === false).map((e) => `${e.ts} ${e.summary}`);
   const reads = [...new Set(mine.filter((e) => e.kind === "order-read").map((e) => String(e.payload?.tool ?? "")))];
+  const own = mine.filter((e) => e.kind === "order-tool").map((e) => e.summary.replace(/^Alice used /, ""));
+  const chats = mine.filter((e) => e.kind === "order-chat").length;
   const cell = (s: string, n: number) => s.replace(/\|/g, "\\|").replace(/\s+/g, " ").slice(0, n);
   const rows = r.order.steps.map((s) => {
     const rec = [...steps].reverse().find((e) => e.payload?.step === s.n);
@@ -122,6 +135,8 @@ function report(r: Running, outcome: string): string {
     "",
     refused.length ? refused.map((x) => `- ${x}`).join("\n") : "- every fleet call matched its planned step; nothing unplanned was run",
     ...(reads.length ? [`- reads outside the plan (allowed, they change nothing): ${reads.join(", ")}`] : []),
+    ...(own.length ? [`- Alice's own tools during the order (recorded, not refused): ${own.length}`, ...own.slice(0, 30).map((t) => `  - \`${cell(t, 140)}\``), ...(own.length > 30 ? [`  - … ${own.length - 30} more in the fleet log`] : [])] : []),
+    ...(chats ? [`- paused ${chats} time${chats > 1 ? "s" : ""} to answer the captain`] : []),
     ...(pauses.length ? ["", "**Pauses**", "", ...pauses.map((p) => `- ${p}`)] : []),
   ].join("\n");
 }
@@ -194,6 +209,16 @@ async function resume(order: Order): Promise<void> {
   onChange();
 }
 
+/** Alice answered the captain and went quiet: carry on from the next step. */
+async function resumeAfterChat(r: Running): Promise<void> {
+  r.chatPaused = false;
+  r.chatPending = false;
+  r.lastActive = Date.now();
+  log(r.order, "order-start", `Resumed "${r.order.meta.title}" at step ${r.next} after answering the captain`, { step: r.next, resumed: true });
+  await acceptCrewLine(EXECUTOR, "orders", `${brief(r.order, r.next)}\n\n(Resuming after you answered the captain: steps before ${r.next} are done and logged.)`);
+  onChange();
+}
+
 async function tick(): Promise<void> {
   const all = await listOrders();
   if (!booted) {
@@ -220,7 +245,8 @@ async function tick(): Promise<void> {
       running = null;
       onChange();
     } else if (!hostRunning(EXECUTOR) && !hostWaiting(EXECUTOR) && Date.now() - running.lastActive > STALL_MS) {
-      await pause(`Alice's turn ended at step ${running.next} without finishing the order`);
+      if (running.chatPaused) await resumeAfterChat(running);
+      else await pause(`Alice's turn ended at step ${running.next} without finishing the order`);
     }
     return;
   }
@@ -242,6 +268,7 @@ export function kickOrders(): Promise<void> {
 
 export function startOrderWatcher(changed: () => void = () => {}): void {
   onChange = changed;
+  onAgentTool(noteAgentTool);
   void kickOrders();
   setInterval(() => void kickOrders(), POLL_MS);
   try {
@@ -299,7 +326,32 @@ export function recordOrderCall(n: number, tool: string, args: Record<string, st
   if (!r) return;
   r.lastActive = Date.now();
   stepFinished(r.slug, `call:${n}`, { tool, result: result.slice(0, 500) });
+  (r.results ??= new Map()).set(n, result.slice(0, 6000));
   log(r.order, "order-call", `Step ${n}: ${tool}`, { step: n, tool, args, result: result.slice(0, 500) });
+}
+
+/** Jev's probability that `actual` meets `expect` (Level 4C), or null when Jev does not answer. */
+export async function expectMet(expect: string, actual: string, ask: typeof jevAsk = jevAsk): Promise<number | null> {
+  const r = await ask("order-expect", { expected: expect, actual_result: redact(actual).slice(0, 6000) }, {
+    met: {
+      type: "noul",
+      instructions: "An agent ran a fleet tool for one step of an approved plan. `expected` is the plan author's short note of what the step's result should show (it may be terse, and \"if any\" means an empty answer is fine). Is `actual_result` consistent with `expected`?",
+      criteria: {
+        true: "The result shows the kind of thing `expected` describes, in any wording, with any extra detail; or it is an empty or none answer where `expected` allows one",
+        false: "The tool failed (an error, a refusal, a missing ship or agent), or the result is about something different from what `expected` describes",
+      },
+    },
+  });
+  if (!r.ok) return null;
+  const a = r.answers.met;
+  return a && a.type === "noul" ? a.noul : null;
+}
+
+let checkExpect: (expect: string, actual: string) => Promise<number | null> = (e, a) => expectMet(e, a);
+
+/** Test seam: replace the independent expect check (tests never call Jev). */
+export function _setExpectCheckForTest(fn: (expect: string, actual: string) => Promise<number | null>): void {
+  checkExpect = fn;
 }
 
 export async function orderStep(order: string, n: number, ok: boolean, result: string, evidence: string): Promise<{ ok: boolean; message: string }> {
@@ -309,12 +361,34 @@ export async function orderStep(order: string, n: number, ok: boolean, result: s
   if (n !== r.next) return { ok: false, message: `The next step to log is ${r.next}, not ${n}.` };
   const step = r.order.steps.find((s) => s.n === n)!;
   if (ok && !r.called.has(n)) return { ok: false, message: `Call step ${n}'s tool first (${stepLabel(step)} with order and step), then log it.` };
-  const event = log(r.order, "order-step", `Step ${n} ${ok ? "ok" : "blocked"}: ${result.slice(0, 200)}`, { step: n, tool: step.tool, ok, result: result.slice(0, 1000), evidence: evidence.slice(0, 300) });
+  // The independent check: does the tool's actual output meet the step's expect line? Once, advisory.
+  let override = "";
+  const actual = r.results?.get(n);
+  if (ok && actual && step.expect) {
+    const p = await checkExpect(step.expect, actual);
+    // 0.15: measured, correct results scored 0.24-0.73 and failed ones 0.05-0.07 on terse expect lines.
+    if (p !== null && p < 0.15) {
+      if (!(r.disputed ??= new Set()).has(n)) {
+        r.disputed.add(n);
+        log(r.order, "order-check", `Step ${n}: the independent check says the result does not meet "${step.expect}" (${Math.round(p * 100)}%)`, { step: n, p });
+        return { ok: false, message: `Not logged yet: an independent check of step ${n}'s actual output says it does not meet the expect line ("${step.expect}"; ${Math.round(p * 100)}% that it does). Look at the output again. If it is not met, log the step as blocked. If you are sure it is met, call order_step with ok again and put the reason in evidence; it will be accepted and the disagreement recorded.` };
+      }
+      override = ` (logged ok over the independent check, ${Math.round(p * 100)}%)`;
+    }
+  }
+  const event = log(r.order, "order-step", `Step ${n} ${ok ? "ok" : "blocked"}${override}: ${result.slice(0, 200)}`, { step: n, tool: step.tool, ok, result: result.slice(0, 1000), evidence: evidence.slice(0, 300), ...(override ? { override: true } : {}) });
   stepStarted(r.slug, `step:${n}`);
   stepFinished(r.slug, `step:${n}`, { result: result.slice(0, 500), evidence: evidence.slice(0, 300), event }, ok);
   if (ok) r.next += 1;
   updateWorkflow(r.slug, { data: { next: r.next } });
   const left = r.order.steps.length - r.next + 1;
+  if (ok && left > 0 && r.chatPending) {
+    r.chatPending = false;
+    r.chatPaused = true;
+    log(r.order, "order-chat", `Paused after step ${n} so Alice can answer the captain`, { step: n });
+    onChange();
+    return { ok: true, message: `Step ${n} logged (event ${event}). The captain wrote to you: answer them now, then end your turn. Do not continue the order in this turn; it resumes at step ${r.next} by itself once you have answered.` };
+  }
   return {
     ok: true,
     message: ok
@@ -349,6 +423,22 @@ export async function orderFinish(order: string, status: "done" | "blocked", why
   onChange();
   setTimeout(() => void kickOrders(), 1000);
   return { ok: true, message: `Order ${r.slug} is done; the report is in the note.` };
+}
+
+/** The captain wrote to an agent; if it is Alice mid-order, she pauses after her current step to answer. */
+export function captainWrote(agentId: string): void {
+  if (running && agentId === EXECUTOR && !running.chatPaused) running.chatPending = true;
+}
+
+/** Alice's own tools while an order runs, tagged with the order in the fleet log (R4: recorded, not refused). */
+const QUIET_TOOLS = new Set([...Object.keys(ORDER_TOOLS), "order_step", "order_finish"]);
+export function noteAgentTool(agentId: string, summary: string): void {
+  const r = running;
+  if (!r || agentId !== EXECUTOR) return;
+  const tool = summary.split(":")[0]!.trim();
+  if (QUIET_TOOLS.has(tool)) return; // fleet calls are logged as order calls already
+  r.lastActive = Date.now();
+  log(r.order, "order-tool", `Alice used ${summary.slice(0, 200)}`, { tool, step: r.next });
 }
 
 /** For tests. */

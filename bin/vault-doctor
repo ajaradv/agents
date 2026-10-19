@@ -1,0 +1,71 @@
+#!/usr/bin/env bun
+// vault-doctor - check the captain's vault for formatting problems; fix only the safe ones.
+// (dashboard/lib/vault-doctor.ts; vault task fleet-vault-doctor; docs/tool-standards.md)
+//
+// Usage:
+//   bin/vault-doctor                 report problems (read-only)
+//   bin/vault-doctor --fix           also repair the safe ones (quote values in broken frontmatter)
+//   bin/vault-doctor --json          the report as JSON
+//   bin/vault-doctor --vault <path>  another vault (default: ALICE_VAULT or ~/Workspace/brain)
+import { encode } from "@toon-format/toon";
+import { aliceVault } from "../dashboard/lib/paths.ts";
+import { examineVault, fixVault } from "../dashboard/lib/vault-doctor.ts";
+
+const HELP = `command: vault-doctor
+summary: Check vault notes (frontmatter, Task fields, links, blocked_by, the task index); read-only unless --fix
+usage: bin/vault-doctor [--fix] [--json] [--vault <path>]
+flags[4]{flag,default,description}:
+  --fix,off,repair the safe problems (quote values that break frontmatter) and report the rest
+  --json,off,print the report as JSON instead of TOON
+  --vault,ALICE_VAULT or ~/Workspace/brain,the vault folder to check
+  --help,,show this help
+examples[3]:
+  bin/vault-doctor
+  bin/vault-doctor --fix
+  bin/vault-doctor --vault ~/Workspace/brain --json`;
+
+const args = process.argv.slice(2);
+let fix = false;
+let json = false;
+let vault = aliceVault();
+for (let i = 0; i < args.length; i++) {
+  const a = args[i]!;
+  if (a === "--help" || a === "-h") {
+    console.log(HELP);
+    process.exit(0);
+  } else if (a === "--version" || a === "-v" || a === "-V") {
+    console.log("1.0.0");
+    process.exit(0);
+  } else if (a === "--fix") fix = true;
+  else if (a === "--json") json = true;
+  else if (a === "--vault" && args[i + 1]) vault = args[++i]!.replace(/^~/, process.env.HOME ?? "");
+  else {
+    console.log(encode({ error: `unknown or incomplete flag ${a}`, suggestion: "valid flags: --fix, --json, --vault <path>, --help" }));
+    process.exit(2);
+  }
+}
+
+let fixed: string[] = [];
+try {
+  if (fix) fixed = fixVault(vault);
+  const r = examineVault(vault);
+  if (json) {
+    console.log(JSON.stringify({ vault, ...r, fixed }, null, 2));
+    process.exit(0);
+  }
+  const out: Record<string, unknown> = {
+    vault: vault.replace(process.env.HOME ?? "\u0000", "~"),
+    result: r.problems.length ? `${r.problems.length} problem(s) in ${r.notes} notes (${r.links} links checked)` : `0 problems in ${r.notes} notes (${r.links} links checked)`,
+  };
+  if (fixed.length) out.fixed = fixed;
+  // Always the list, even empty, so the count reads the same way every time (docs/tool-standards.md).
+  out.problems = r.problems.map((p) => ({ check: p.check, note: p.note, detail: p.detail, fixable: Boolean(p.fixable) }));
+  const help: string[] = [];
+  if (!fix && r.problems.some((p) => p.fixable)) help.push("bin/vault-doctor --fix");
+  help.push(r.problems.length ? "bin/vault-doctor --json" : "bin/vault-doctor --help");
+  out.help = help;
+  console.log(encode(out));
+} catch (e) {
+  console.log(encode({ error: `could not read the vault at ${vault}: ${e instanceof Error ? e.message : String(e)}`, suggestion: "pass --vault <path> to the vault folder" }));
+  process.exit(1);
+}

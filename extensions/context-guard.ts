@@ -21,6 +21,14 @@
  * It compacts again only after context has grown by FLEET_COMPACT_GROWTH
  * percent of the window (default 15) since the last time, so a session whose
  * floor (system prompt + kept recent turns) sits high cannot loop.
+ * - Moved on (Jev, the compaction advisor): percent lines fire late on a large
+ *   window (40% of 1M tokens is 400k). Below them, once context holds
+ *   FLEET_COMPACT_JEV_MIN_TOKENS (default 60000) and the session has had two
+ *   requests, a settled run asks the node whether the work has moved on (a new
+ *   task, or a finished unit that needs little history; dashboard/lib/
+ *   compaction-advisor.ts). FLEET_COMPACT_JEV: observe (default) only logs the
+ *   verdict for measurement; on compacts while idle, with Jev's pick of where
+ *   the live work starts in the summary instructions; off skips it.
  * bin/launch loads this for every assistant; Firstmate lists it.
  */
 
@@ -35,6 +43,25 @@ const IDLE_MS = clamp(process.env.FLEET_COMPACT_IDLE_SECS, 15, 1800, 150) * 1000
 const GROWTH = clamp(process.env.FLEET_COMPACT_GROWTH, 5, 50, 15);
 const STOW_FIRST = process.env.FLEET_STOW_BEFORE_COMPACT === "1";
 const FOCUS = process.env.FLEET_COMPACT_FOCUS ?? "";
+const JEV_MODE = ["off", "observe", "on"].includes(process.env.FLEET_COMPACT_JEV ?? "") ? (process.env.FLEET_COMPACT_JEV as string) : "observe";
+const JEV_MIN_TOKENS = clamp(process.env.FLEET_COMPACT_JEV_MIN_TOKENS, 5000, 2_000_000, 60_000);
+const NODE = (process.env.FLEET_DASHBOARD_URL ?? "").replace(/\/$/, "");
+const TOKEN = process.env.FLEET_CREW_TOKEN ?? "";
+
+const textOf = (m: unknown): string => {
+  const c = (m as { content?: unknown })?.content;
+  return (Array.isArray(c) ? c.filter((x) => (x as { type?: string })?.type === "text").map((x) => (x as { text?: string }).text ?? "").join("\n") : String(c ?? "")).trim();
+};
+
+async function askNode<T>(path: string, body: unknown): Promise<T | null> {
+  if (!NODE || !TOKEN) return null;
+  try {
+    const res = await fetch(`${NODE}${path}`, { method: "POST", headers: { "Content-Type": "application/json", "x-fleet-crew-token": TOKEN }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
+    return res.ok ? ((await res.json()) as T) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Where an agent's compaction handoff lives, or null outside the fleet. */
 export function stateFile(env: Record<string, string | undefined> = process.env): string | null {
@@ -62,11 +89,21 @@ export default function (pi: ExtensionAPI) {
     timer = null;
   };
 
+  /** What the advisor sees: the requests so far, and the last turn's text and tools. */
+  const requests: string[] = [];
+  let lastSummary = "";
+  let lastReply = "";
+  let lastTools: string[] = [];
+  /** Jev's pick of where the live work starts, for the next compaction (on mode only). */
+  let cutInstructions = "";
+
   const compact = (ctx: ExtensionContext, percent: number, why: string) => {
     stage = "compacting";
     if (ctx.hasUI) ctx.ui.notify(`Context at ${Math.round(percent)}%: compacting ${why}.`, "info");
+    const instructions = [FOCUS, cutInstructions].filter(Boolean).join("\n");
+    cutInstructions = "";
     ctx.compact({
-      ...(FOCUS ? { customInstructions: FOCUS } : {}),
+      ...(instructions ? { customInstructions: instructions } : {}),
       onComplete: () => {
         stage = "idle";
         const after = ctx.getContextUsage()?.percent;
@@ -97,6 +134,33 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_start", async () => cancelIdle());
 
+  pi.on("message_end", async (event) => {
+    const m = (event as { message?: { role?: string } }).message;
+    if (m?.role === "user") requests.push(textOf(m).slice(0, 600));
+    else if (m?.role === "assistant") lastReply = textOf(m).slice(0, 600);
+  });
+  pi.on("tool_execution_end", async (event) => {
+    lastTools = [...lastTools.slice(-19), String((event as { toolName?: string }).toolName ?? "")];
+  });
+
+  /** Below the percent lines: has the work moved on? (observe logs only; on schedules an idle compaction) */
+  const askAdvisor = async (ctx: ExtensionContext, percent: number) => {
+    const tokens = ctx.getContextUsage()?.tokens ?? 0;
+    if (JEV_MODE === "off" || tokens < JEV_MIN_TOKENS || requests.length < 2) return;
+    const previous = [...requests.slice(0, -1).slice(-12).map((r) => r.slice(0, 200)), lastSummary ? `Summary so far: ${lastSummary.slice(0, 400)}` : ""].filter(Boolean).join("\n");
+    const state = { current_request: requests.at(-1) ?? "", previous_work: previous, recent_turn: lastReply || `(tool calls only: ${lastTools.join(", ") || "none"})`, tools_this_turn: lastTools };
+    lastTools = [];
+    const r = await askNode<{ ok: boolean; verdict?: { movedOn: boolean; reason: string } }>("/api/compaction/advise", { mode: JEV_MODE, tokens, percent, state });
+    if (JEV_MODE !== "on" || !r?.verdict?.movedOn || stage !== "idle") return;
+    const cut = await askNode<{ instructions: string | null }>("/api/compaction/cut", { requests });
+    cutInstructions = cut?.instructions ?? "";
+    timer = setTimeout(() => {
+      timer = null;
+      if (stage !== "idle") return;
+      start(ctx, ctx.getContextUsage()?.percent ?? percent, `while idle: ${r.verdict!.reason}`);
+    }, IDLE_MS);
+  };
+
   pi.on("agent_settled", async (_event, ctx) => {
     cancelIdle();
     if (stage === "compacting") return;
@@ -107,6 +171,10 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     const action = decide(percent, floor);
+    if (action === "none") {
+      void askAdvisor(ctx, percent);
+      return;
+    }
     if (action === "now") start(ctx, percent, "now, between tasks");
     else if (action === "idle") {
       timer = setTimeout(() => {
@@ -122,6 +190,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_compact", async (event) => {
     const path = stateFile();
     const summary = (event.compactionEntry as { summary?: string } | undefined)?.summary;
+    if (summary) lastSummary = summary;
     if (!path || !summary) return;
     try {
       mkdirSync(join(path, ".."), { recursive: true });

@@ -1,0 +1,63 @@
+#!/usr/bin/env bun
+// fleet-keys-seed - fill the fleet's Keychain copy of its provider keys from YOUR
+// 1Password session (the desktop app, one Touch ID approval), for when the
+// service account is rate limited. The fleet uses this copy whenever 1Password
+// refuses the service account (dashboard/lib/op-sdk.ts readFleetKeys).
+//
+//   bin/fleet-keys-seed
+//   bin/fleet-keys-seed --usage    service-account requests in the last 24 hours
+//
+// Run it in a terminal (it asks 1Password to approve). Prints key names and
+// lengths only. Then restart the fleet services: bin/fleet-services restart.
+import { existsSync } from "node:fs";
+import { encode } from "@toon-format/toon";
+import { opRefsPath, parseRefs, saveKeychainCache } from "../dashboard/lib/op-sdk.ts";
+
+const args = process.argv.slice(2);
+if (args.includes("--help") || args.includes("-h")) {
+  console.log(`command: fleet-keys-seed
+summary: Fill the fleet's Keychain copy of its keys from your own 1Password session (Touch ID), for when the service account is rate limited
+usage: bin/fleet-keys-seed [--usage]
+flags[2]{flag,description}:
+  --usage,service-account requests in the last 24 hours (the daily limit's count)
+  --help,show this help
+help[1]: bin/fleet-services restart (after seeding)`);
+  process.exit(0);
+}
+if (args.includes("--usage")) {
+  // Service-account requests in the last 24 hours, from dashboard/lib/op-sdk.ts's read log.
+  const { existsSync: ex, readFileSync: rf } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { ROOT } = await import("../dashboard/lib/paths.ts");
+  const file = join(process.env.FLEET_INBOX || join(ROOT, "fleet", "inbox"), ".node", "op-reads.jsonl");
+  const since = Date.now() - 86_400_000;
+  const rows = ex(file) ? rf(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { ts: string; process: string; requests: number; resolved: number }).filter((r) => Date.parse(r.ts) >= since) : [];
+  const by: Record<string, number> = {};
+  for (const r of rows) by[r.process] = (by[r.process] ?? 0) + r.requests;
+  console.log(encode({ result: `${rows.reduce((n, r) => n + r.requests, 0)} service-account requests in 24 h (the account allows 1,000 a day on an individual plan)`, reads: rows.length, by_process: Object.entries(by).map(([p, n]) => ({ process: p, requests: n })) }));
+  process.exit(0);
+}
+const refsFile = opRefsPath();
+if (!existsSync(refsFile)) {
+  console.log(encode({ error: `no ${refsFile}`, suggestion: "copy fleet/config/env.op.example to fleet/home/.env.op" }));
+  process.exit(2);
+}
+const { readFileSync } = await import("node:fs");
+const refs = parseRefs(readFileSync(refsFile, "utf8"));
+// Your session, not the service account: drop its token from this process's environment.
+const env = { ...process.env };
+delete env.OP_SERVICE_ACCOUNT_TOKEN;
+const keys: Record<string, string> = {};
+for (const [name, ref] of Object.entries(refs)) {
+  const p = Bun.spawn(["op", "read", "--no-newline", ref], { env, stdout: "pipe", stderr: "pipe", stdin: "inherit" });
+  const value = (await new Response(p.stdout).text()).trim();
+  const err = (await new Response(p.stderr).text()).trim();
+  if ((await p.exited) !== 0 || !value) {
+    console.log(encode({ error: `could not read ${name}: ${err.split("\n").pop()?.slice(0, 200)}`, suggestion: "unlock the 1Password app and turn on Settings > Developer > Integrate with 1Password CLI, then run this again" }));
+    process.exit(1);
+  }
+  keys[name] = value;
+}
+await saveKeychainCache(keys);
+console.log(encode({ result: `seeded the Keychain copy with ${Object.keys(keys).length} of ${Object.keys(refs).length} keys`, keys: Object.entries(keys).map(([k, v]) => ({ key: k, length: v.length })), next: "bin/fleet-services restart" }));
+process.exit(0);

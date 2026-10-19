@@ -1,19 +1,27 @@
+import { reviewBranch, reviewLine } from "./dock-review.ts";
 import { existsSync } from "node:fs";
+import { describeManeuver, maneuverAvailability } from "./maneuvers.ts";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isMap, parseDocument } from "yaml";
+import { isMap, type Document } from "yaml";
+import { editShipConfig, readShipConfig, shipTemplates } from "./ship-config.ts";
+export { shipYamlText } from "./ship-config.ts";
 import { loadAgents, type AgentMeta } from "./agents.ts";
 import { frontmatter, readShips, type ShipRow } from "./fleet-layers.ts";
 import { aliceVault, ROOT } from "./paths.ts";
 import { spawnTimed } from "./proc.ts";
 import { logShipEvent, shipTurnTotals } from "./ship-log.ts";
+import { describeGates, gateStatus } from "./gates.ts";
+import { endVoyageMemory, startVoyageMemory } from "./crew-memory.ts";
+import { ledgerLine, ledgerMarkdown, recordVoyageDock, recordVoyageStart, voyageId, voyageLedger } from "./metrics.ts";
+import { leaseVoyageWorktree, releaseVoyageWorktree, usesVoyageWorktrees, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
 
 /**
  * The shipyard: build a ship (register it, check what it is missing), crew it
  * (roles from agents/ marked `crew: true`), budget it, and send it on voyages.
  *
- * Ship config lives in fleet/ships/<id>.yaml (edited with the yaml Document API
- * so comments survive). Voyage records live in the vault, like plans:
+ * Ship config is a committed base (fleet/ships/<id>.yaml) with a live overlay
+ * (fleet/home/ships/<id>.yaml) that every edit here goes to (lib/ship-config.ts). Voyage records live in the vault, like plans:
  * {vault}/fleet/voyages/<ship>/<date>-<slug>.md with `status: sailing|docked`.
  */
 
@@ -35,15 +43,17 @@ export async function crewRoles(): Promise<AgentMeta[]> {
 }
 
 /** Remove map.key when the map exists; a ship without that map has nothing to remove. */
-function deleteKey(doc: ReturnType<typeof parseDocument>, map: string, key: string): void {
+export function deleteKey(doc: Document, map: string, key: string): void {
   if (isMap(doc.get(map))) doc.deleteIn([map, key]);
 }
 
-async function editShip(id: string, edit: (doc: ReturnType<typeof parseDocument>) => void): Promise<void> {
-  const path = shipFile(id);
-  const doc = parseDocument(await readFile(path, "utf8"));
-  edit(doc);
-  await writeFile(path, doc.toString(), "utf8");
+/**
+ * Change a ship's config: the edit sees the merged view (base plus overlay) as
+ * one document; what it changes goes to the overlay, never the committed base
+ * (lib/ship-config).
+ */
+export async function editShip(id: string, edit: (doc: Document) => void, who: { by: string; why?: string } = { by: "captain" }): Promise<void> {
+  await editShipConfig(id, edit, who);
 }
 
 export async function setCrew(
@@ -91,8 +101,7 @@ export async function setOrchestrator(shipId: string, orchestrator: string): Pro
 /** Daily budget per role in USD from `crew_budgets:`, or null when unset. */
 export async function crewBudget(shipId: string, role: string): Promise<number | null> {
   try {
-    const doc = parseDocument(await readFile(shipFile(shipId), "utf8"));
-    const v = Number(doc.getIn(["crew_budgets", role]));
+    const v = Number((readShipConfig(shipId)?.crew_budgets as Record<string, unknown> | undefined)?.[role]);
     return v > 0 ? v : null;
   } catch {
     return null;
@@ -163,7 +172,7 @@ export function readyToSail(items: CheckItem[]): boolean {
 
 // ---------------------------------------------------------------- voyages
 
-export type Voyage = { file: string; ship: string; status: "sailing" | "docked"; goal: string; to: string; started: string; ended?: string };
+export type Voyage = { file: string; ship: string; status: "sailing" | "docked"; goal: string; to: string; started: string; ended?: string; worktree?: VoyageWorktree };
 
 function voyageDir(shipId: string): string {
   return join(aliceVault(), "fleet", "voyages", shipId);
@@ -217,6 +226,13 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
   const file = join(voyageDir(shipId), `${now.toISOString().slice(0, 10)}-${slug}.md`);
   if (existsSync(file)) return { ok: false, message: "A voyage with that goal already started today." };
   await mkdir(voyageDir(shipId), { recursive: true });
+  // Fleet-crewed ships work in a leased worktree on a crew/ branch, never in the captain's checkout.
+  let worktree: VoyageWorktree | undefined;
+  if (usesVoyageWorktrees(ship)) {
+    const lease = await leaseVoyageWorktree(ship, slug, g);
+    if ("message" in lease) return { ok: false, message: lease.message };
+    worktree = lease.worktree;
+  }
   const crew = ship.crew.map((r) => `${shipId}-${r}`);
   await writeFile(
     file,
@@ -229,6 +245,7 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
       `to: ${to}`,
       `orchestrator: ${ship.orchestrator}`,
       `crew: [${crew.join(", ")}]`,
+      ...(worktree ? [`branch: ${worktree.branch}`, `worktree: ${yamlStr(worktree.path)}`] : []),
       `started: ${now.toISOString()}`,
       "---",
       "",
@@ -238,27 +255,56 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
       "",
       "## Log",
       "",
-      `- ${now.toISOString()} set sail; goal sent to ${to}`,
+      `- ${now.toISOString()} set sail; goal sent to ${to}${worktree ? `; work on branch ${worktree.branch} (from ${worktree.base}) in ${worktree.path}` : ""}`,
       "",
     ].join("\n"),
     "utf8",
   );
-  logShipEvent(shipId, "captain", "voyage-start", g, { file, to });
-  const voyage: Voyage = { file, ship: shipId, status: "sailing", goal: g, to, started: now.toISOString() };
+  logShipEvent(shipId, "captain", "voyage-start", g, { file, to, ...(worktree ? { branch: worktree.branch, worktree: worktree.path } : {}) });
+  const voyage: Voyage = { file, ship: shipId, status: "sailing", goal: g, to, started: now.toISOString(), ...(worktree ? { worktree } : {}) };
+  recordVoyageStart({ id: voyageId(file), ship: shipId, goal: g, to, branch: worktree?.branch, worktree: worktree?.path, started: now.toISOString() });
+  // Tiered crew memory (lib/crew-memory.ts): a fresh voyage scratchpad, fresh crew sessions, no leftovers.
+  if (ship.orchestrator === "lead") await startVoyageMemory(shipId, { goal: g, branch: worktree?.branch, worktree: worktree?.path, record: file }, crew);
   return { ok: true, message: `${shipId} set sail.`, voyage };
 }
 
 export async function dockVoyage(shipId: string, summary: string): Promise<{ ok: boolean; message: string }> {
   const v = await openVoyage(shipId);
   if (!v) return { ok: false, message: `${shipId} is not under sail.` };
+  // Dock gates first: the branch's latest commit must have passed them (run them with Run gates).
+  const ship = await findShip(shipId);
+  if (ship?.gates.dock.length) {
+    const gates = await gateStatus(ship, "dock");
+    if (!gates.green) return { ok: false, message: `${shipId} cannot dock yet: ${describeGates(gates)} Run the gates (Run gates on the deck, or ask the lead), then dock again.` };
+  }
+  // Return the voyage's worktree: uncommitted work keeps the voyage open.
+  const released = ship ? await releaseVoyageWorktree(ship) : { ok: true, message: "" };
+  if (!released.ok) return { ok: false, message: released.message };
   const now = new Date().toISOString();
+  // The ledger (lib/metrics.ts): what the voyage took, written into its note and the dock message.
+  const id = voyageId(v.file);
+  const commits = Number(released.message.match(/has (\d+) commit/)?.[1] ?? 0);
+  recordVoyageDock(id, { commits, outcome: summary.trim(), branch: released.message.match(/^Branch (\S+)/)?.[1] });
+  const ledger = voyageLedger(id);
+  // Dock review (lib/dock-review.ts): how closely the captain should review the branch before merging. Advisory.
+  const branchInfo = released.message.match(/^Branch (\S+) has \d+ commit\(s\) on (\S+?),/);
+  const review = ship && branchInfo && commits > 0 ? await reviewBranch(ship.path, branchInfo[2]!, branchInfo[1]!).catch(() => null) : null;
+  // The voyage's memory is archived into its note, then discarded.
+  const scratch = ship && ship.orchestrator === "lead" ? await endVoyageMemory(shipId, ship.crew.map((r) => `${shipId}-${r}`)) : "";
   let text = await readFile(v.file, "utf8");
   text = text.replace(/^status: sailing$/m, "status: docked").replace(/^started: (.*)$/m, `started: $1\nended: ${now}`);
   const note = summary.trim();
-  text = text.trimEnd() + `\n- ${now} docked\n` + (note ? `\n## Summary\n\n${note}\n` : "");
+  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "") + (review ? `\n## Dock review\n\n${reviewLine(review)}\n` : "") + (scratch ? `\n## Voyage memory (archived at dock)\n\n${scratch}\n` : "");
   await writeFile(v.file, text, "utf8");
   logShipEvent(shipId, "captain", "voyage-end", note || "Docked", { file: v.file });
-  return { ok: true, message: `${shipId} docked.` };
+  return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}${ledger ? ` ${ledgerLine(ledger)}` : ""}${review ? ` ${reviewLine(review)}` : ""}` };
+}
+
+/** The lead's view of the ship's maneuvers, for the voyage brief. */
+function maneuverBrief(ship: ShipRow): string[] {
+  const all = maneuverAvailability(ship, "lead");
+  if (!all.length) return ["No maneuvers on this ship."];
+  return ["Maneuvers (maneuver_start; locked ones cannot start):", ...all.map((m) => `- ${describeManeuver(m)}`)];
 }
 
 /** The opening message a crewmate (or Firstmate) gets when a voyage starts. */
@@ -269,7 +315,13 @@ export function voyageBrief(ship: ShipRow, v: Voyage): string {
       "",
       `Voyage record (vault): ${v.file}`,
       `Crew aboard: ${ship.crew.filter((r) => r !== "lead").map((r) => `${ship.id}-${r}`).join(", ") || "only you"}.`,
-      ship.adws.length ? `Maneuvers available: ${ship.adws.join(", ")}.` : "No SSSF factory on this ship.",
+      ...maneuverBrief(ship),
+      ...(ship.gates.task.length || ship.gates.dock.length
+        ? [`Gates (checks that must pass on the latest commit): ${ship.gates.task.length ? `a task is done only after ${ship.gates.task.join(", ")} pass (they run when it is reported done)` : ""}${ship.gates.task.length && ship.gates.dock.length ? "; " : ""}${ship.gates.dock.length ? `the voyage docks only after ${ship.gates.dock.join(", ")} pass` : ""}. Commit before reporting a task done.`]
+        : []),
+      ...(v.worktree ?? voyageWorktree(ship.id)
+        ? [`Work happens on branch ${(v.worktree ?? voyageWorktree(ship.id))!.branch} in the voyage's own worktree (your crew's working folder); commit there and never push. The captain reviews and merges after docking. The branch name is a guess from the goal: before the first commit, rename it if the type or words are wrong, and write conventional commit messages (skill git-conventions).`]
+        : []),
       "You are the lead: read voyage_status, plan the goal into tasks, assign them with task_add, tell me the plan in a few lines, and end your turn. Reports come back to you as crew messages.",
     ].join("\n");
   }
@@ -286,13 +338,17 @@ export function voyageBrief(ship: ShipRow, v: Voyage): string {
 
 // ---------------------------------------------------------------- register
 
-export async function registerShip(input: { id: string; path: string; mode: string; factory: boolean; firstmate: string }): Promise<{ ok: boolean; message: string; output?: string }> {
+export async function registerShip(input: { id: string; path: string; mode: string; factory: boolean; firstmate: string; template?: string }): Promise<{ ok: boolean; message: string; output?: string }> {
   if (!SHIP_RE.test(input.id)) return { ok: false, message: "Ship id: lowercase letters, digits, - or _, starting with a letter." };
   if (!input.path.startsWith("/") || !existsSync(input.path)) return { ok: false, message: `${input.path} is not a folder on this machine.` };
   if (!(MODES as readonly string[]).includes(input.mode)) return { ok: false, message: "Pick a delivery mode." };
   if (existsSync(shipFile(input.id))) return { ok: false, message: `${input.id} is already registered.` };
   const args = ["python3", join(ROOT, "bin", "stamp-ship"), input.id, input.path, "--mode", input.mode];
   if (!input.factory) args.push("--no-factory");
+  if (input.template) {
+    if (!shipTemplates().includes(input.template)) return { ok: false, message: `No ship template ${input.template}.` };
+    args.push("--template", input.template);
+  }
   if (input.firstmate.trim()) args.push("--register", input.firstmate.trim().slice(0, 200));
   const res = await spawnTimed(args, { cwd: ROOT, timeoutMs: 180_000 });
   const output = `${res.stdout ?? ""}${res.stderr ?? ""}`.trim().slice(-4000);

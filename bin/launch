@@ -28,16 +28,38 @@ ENV_ALLOWLIST = frozenset(
         "HF_TOKEN",
         "CURSOR_API_KEY",
         "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
     }
 )
 
 
+def code_graph_line(ship_path: Path, isolation: str) -> str:
+    """A CodeGraph index in the ship repo (.codegraph/): tell the crew to start code questions there.
+    The index follows the captain's checkout (the base branch); VM crews have no codegraph binary."""
+    if isolation == "vm" or not (ship_path / ".codegraph").is_dir():
+        return ""
+    p = str(ship_path)
+    return (
+        f"- **Code graph:** this repo is indexed. Start code questions with `codegraph explore -p {p} \"<symbols or question>\"` "
+        f"(the relevant source and the call paths between it, in one call) before grep or reading files; "
+        f"`codegraph node -p {p} <symbol>` for one symbol with its callers and callees, `codegraph impact -p {p} <symbol>` "
+        f"before changing it, `codegraph affected -p {p} <files>` for the tests to run. The index follows the base branch, "
+        "so read the worktree's own copy of a file before editing it.\n"
+    )
+
+
 def parse_simple_yaml(path: Path) -> dict:
-    """Parse flat agent.yaml files (scalars, lists, one-level nested maps)."""
+    """Parse flat agent.yaml files (scalars, lists, one-level nested maps).
+
+    `maneuvers:` is the one two-level map (name -> its fields). Lines nested
+    deeper than the parser follows are skipped, never written to the top level.
+    """
     data: dict = {}
     list_key: str | None = None
     nested: dict | None = None
     nested_key: str | None = None
+    deep: dict | None = None  # a maneuver's fields (indent 4)
+    deep_key: str | None = None
 
     def scalar(s: str):
         s = s.strip()
@@ -45,6 +67,8 @@ def parse_simple_yaml(path: Path) -> dict:
             return None
         if s.startswith('"') and s.endswith('"'):
             return s[1:-1]
+        if s == "{}":
+            return {}
         if s.startswith("[") and s.endswith("]"):
             inner = s[1:-1].strip()
             return [] if not inner else [x.strip().strip('"') for x in inner.split(",")]
@@ -55,6 +79,24 @@ def parse_simple_yaml(path: Path) -> dict:
             continue
         indent = len(raw) - len(raw.lstrip())
         line = raw.strip()
+        if deep is not None and indent >= 4:
+            if line.startswith("- "):
+                if deep_key and isinstance(deep.get(deep_key), list):
+                    deep[deep_key].append(scalar(line[2:]))
+            elif ":" in line:
+                k, _, r = line.partition(":")
+                deep_key = k.strip()
+                deep[deep_key] = [] if not r.strip() else scalar(r)
+            continue
+        deep = None
+        deep_key = None
+        if data.get("maneuvers") is not None and nested is data["maneuvers"] and indent >= 2:
+            if not line.startswith("- ") and ":" in line:
+                k, _, r = line.partition(":")
+                if not r.strip():
+                    deep = {}
+                    nested[k.strip()] = deep
+            continue
         if line.startswith("- "):
             item = scalar(line[2:])
             if nested is not None and nested_key:
@@ -77,7 +119,7 @@ def parse_simple_yaml(path: Path) -> dict:
             list_key = None
         if rest == "":
             if indent == 0:
-                if key in ("authority", "env", "crew_models", "crew_budgets"):
+                if key in ("authority", "env", "crew_models", "crew_budgets", "checks", "gates", "maneuvers"):
                     data[key] = {}
                     nested = data[key]
                     nested_key = None
@@ -91,7 +133,7 @@ def parse_simple_yaml(path: Path) -> dict:
         val = scalar(rest)
         if nested is not None and indent >= 2:
             nested[key] = val
-        else:
+        elif indent == 0:
             data[key] = val
             list_key = None
     return data
@@ -215,11 +257,37 @@ def parse_env_file(path: Path) -> dict[str, str]:
     return out
 
 
+def service_account_env() -> dict[str, str]:
+    """Keys read with the 1Password service account (bin/fleet-secrets): works while the app is locked."""
+    try:
+        r = subprocess.run([str(ROOT / "bin" / "fleet-secrets")], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=25)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    out: dict[str, str] = {}
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        v = v.strip().strip('"').strip("'")
+        if k.strip() and v and not v.startswith("op://"):
+            out[k.strip()] = v
+    return out
+
+
 def apply_fleet_home_env() -> None:
-    env_path = FLEET_HOME / ".env"
-    for key, val in parse_env_file(env_path).items():
-        if key in ENV_ALLOWLIST and key not in os.environ and val:
-            os.environ[key] = val
+    # The service account (no 1Password prompt). The fleet/home/.env mount asks the 1Password app,
+    # so it is read only without a service account (no fleet/home/.env.op) or with FLEET_ENV_MOUNT=1.
+    # Keys the node already handed over (it reads the service account itself) need no second read.
+    have = all(os.environ.get(k) for k in ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"))
+    sources = [{} if have else service_account_env()]
+    mount_ok = os.environ.get("FLEET_ENV_MOUNT") == "1" or not (FLEET_HOME / ".env.op").exists()
+    if mount_ok and not have and not all(k in os.environ or k in sources[0] for k in ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY")):
+        sources.append(parse_env_file(FLEET_HOME / ".env"))
+    for src in sources:
+        for key, val in src.items():
+            if key in ENV_ALLOWLIST and key not in os.environ and val:
+                os.environ[key] = val
     _apply_hf_key_alias()
 
 
@@ -280,6 +348,144 @@ def dashboard_chat_block() -> str:
     return DASHBOARD_RPC_BLOCK if RUNTIME == "rpc" else DASHBOARD_CHAT_BLOCK
 
 
+# What a crewmate's VM reaches when its ship names no vm_allow (keep in step with
+# DEFAULT_VM_ALLOW in dashboard/lib/fleet-layers.ts): package registries and GitHub over HTTPS.
+DEFAULT_VM_ALLOW = [
+    "pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "crates.io", "static.crates.io",
+    "index.crates.io", "github.com", "codeload.github.com", "objects.githubusercontent.com",
+    "raw.githubusercontent.com",
+]
+
+
+def voyage_worktree(ship_id: str) -> dict | None:
+    """The open voyage's worktree for a fleet-crewed ship (written by dashboard/lib/voyage-worktree.ts), or None."""
+    try:
+        w = json.loads((fleet_inbox_root() / "ships" / ship_id / "worktree.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return w if isinstance(w, dict) and Path(str(w.get("path", ""))).is_dir() else None
+
+
+def vm_env(ship: dict, agent_id: str, inbox: Path, agent: dict | None = None) -> dict[str, str]:
+    """Environment for the fleet Gondolin extension (extensions/gondolin), for a ship with `isolation: vm`.
+
+    The agent's `vm_image` (agent.yaml) picks the image: "browser" (R4e: Chromium and the shot command,
+    more memory) when that image is built, else the plain fleet image. Its skill folders are mounted
+    read-only at their host paths, so the model can read the skills pi lists for it.
+    """
+    agent = agent or {}
+    image_kind = str(agent.get("vm_image") or "")
+    allow = ship.get("vm_allow")
+    hosts = DEFAULT_VM_ALLOW if allow is None else [str(h).lower() for h in (allow or [])]
+    ship_mem = inbox / "ships" / str(ship.get("id") or "") / "memory"
+    ship_mem.mkdir(parents=True, exist_ok=True)
+    # Per crewmate, not per ship: two VMs installing hooks into one folder at once could corrupt it.
+    cache = inbox / agent_id / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    env = {
+        "FLEET_VM": "1",
+        "FLEET_VM_ALLOW": ",".join(hosts),
+        "FLEET_VM_MEMORY": str(inbox / agent_id / "memory"),
+        "FLEET_VM_SHIP_MEMORY": str(ship_mem),
+        "FLEET_VM_CACHE": str(cache),
+    }
+    ro = vm_skill_dirs(agent)
+    if ro:
+        env["FLEET_VM_RO_MOUNTS"] = os.pathsep.join(ro)
+    images = ROOT / "fleet" / "home" / "gondolin"
+    browser = images / "browser-assets"
+    if image_kind == "browser" and (browser / "manifest.json").is_file():
+        env["FLEET_VM_IMAGE"] = str(browser)
+        env["FLEET_VM_BROWSER"] = "1"
+        # Chromium alongside node and git: 1 GB is tight.
+        env["FLEET_VM_RAM"] = "2G"
+    elif (images / "fleet-assets" / "manifest.json").is_file():
+        env["FLEET_VM_IMAGE"] = str(images / "fleet-assets")
+        if image_kind == "browser":
+            print(f"{agent_id}: the browser VM image is not built (bin/fleet-vm-image browser); using the plain image", file=sys.stderr)
+    return env
+
+
+def vm_skill_dirs(agent: dict) -> list[str]:
+    """Skill folders a VM crewmate's pi lists (its skill_paths, and the global skill folders pi discovers)."""
+    dirs = [ROOT / str(rel) for rel in agent.get("skill_paths") or []]
+    if str(agent.get("discover_skills")).lower() != "false":
+        dirs += [Path.home() / ".agents" / "skills", Path.home() / ".pi" / "agent" / "skills"]
+    return [str(d.resolve()) for d in dirs if d.is_dir()]
+
+
+def experiments_for(agent_id: str) -> list[str]:
+    """Experimental extensions for this agent (fleet/home/config/experiments.json: {"cheap-reads": ["kinwork-designer"]})."""
+    try:
+        cfg = json.loads((FLEET_HOME / "config" / "experiments.json").read_text())
+    except (OSError, ValueError):
+        return []
+    return [name for name, agents in (cfg.items() if isinstance(cfg, dict) else []) if isinstance(agents, list) and agent_id in agents and (ROOT / "extensions" / f"{name}.ts").is_file()]
+
+
+def launchable_maneuvers(ship: dict, role: str, ship_path: Path) -> list[str]:
+    """Maneuvers this role may launch itself (dashboard/lib/maneuvers.ts decides; this only picks who gets the tool).
+
+    Declared ones whose `by` names the role (default: the lead), never `go: true`
+    ones; for the lead, also the repo's ADWs nobody declared.
+    """
+    decls = ship.get("maneuvers") if isinstance(ship.get("maneuvers"), dict) else {}
+    names: list[str] = []
+    named: set[str] = set()
+    for name, m in decls.items():
+        if not isinstance(m, dict):
+            continue
+        named.update({str(name), str(m.get("adw") or "")})
+        by = m.get("by") or ["lead"]
+        by = [by] if isinstance(by, str) else [str(r) for r in by]
+        if m.get("go") not in (True, "true") and role in by:
+            names.append(str(name))
+    if role == "lead":
+        adws = ship_path / "adws"
+        found = sorted(p.stem for p in adws.glob("adw_*.py")) if adws.is_dir() else []
+        names += [a for a in found if a not in named]
+    return names
+
+
+def ships_dir() -> Path:
+    raw = os.environ.get("FLEET_SHIPS_DIR")
+    return Path(raw).expanduser() if raw else ROOT / "fleet" / "ships"
+
+
+def merge_config(base, overlay):
+    """Overlay on top of base (dashboard/lib/ship-config.ts): maps merge key by key, the rest replaces, None removes."""
+    if not isinstance(base, dict) or not isinstance(overlay, dict):
+        return overlay
+    out = dict(base)
+    for k, v in overlay.items():
+        if v is None:
+            out.pop(k, None)
+        else:
+            out[k] = merge_config(base.get(k), v)
+    return out
+
+
+def ship_config(y: Path) -> dict:
+    """A ship's merged config: the committed base (fleet/ships) plus its live overlay (fleet/home/ships).
+
+    The node writes the merged view as JSON (fleet/inbox/.node/ships/<ship>.json);
+    it is used while it is newer than both files, else the two are merged here.
+    """
+    raw = os.environ.get("FLEET_SHIP_OVERLAY_DIR")
+    overlay = (Path(raw).expanduser() if raw else FLEET_HOME / "ships") / y.name
+    merged_json = fleet_inbox_root() / ".node" / "ships" / f"{y.stem}.json"
+    try:
+        newest = max(y.stat().st_mtime, overlay.stat().st_mtime if overlay.is_file() else 0)
+        if merged_json.is_file() and merged_json.stat().st_mtime >= newest:
+            data = json.loads(merged_json.read_text())
+            if isinstance(data, dict):
+                return data
+    except (OSError, ValueError):
+        pass
+    base = parse_simple_yaml(y)
+    return merge_config(base, parse_simple_yaml(overlay)) if overlay.is_file() else base
+
+
 def resolve_crewmate(agent_id: str) -> tuple[dict, dict] | None:
     """`<ship>-<role>` for a role listed under `crew:` in fleet/ships/<ship>.yaml.
 
@@ -287,8 +493,8 @@ def resolve_crewmate(agent_id: str) -> tuple[dict, dict] | None:
     A crewmate is the role's template deployed aboard one ship: cwd is the ship's
     repo, the session is persistent and lives in fleet/inbox/<ship>-<role>/.
     """
-    for y in sorted((ROOT / "fleet" / "ships").glob("*.yaml")):
-        ship = parse_simple_yaml(y)
+    for y in sorted(ships_dir().glob("*.yaml")):
+        ship = ship_config(y)
         sid = str(ship.get("id") or y.stem)
         if not agent_id.startswith(sid + "-"):
             continue
@@ -321,7 +527,35 @@ def load_agent(agent_id: str) -> tuple[dict, dict | None] | None:
 
 
 # A model's provider and the key it needs from fleet/home/.env.
-PROVIDER_KEYS = {"cursor": "CURSOR_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
+PROVIDER_KEYS = {"cursor": "CURSOR_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "google": "GEMINI_API_KEY"}
+# Every secret the fleet hands out (R4c): an assistant keeps only the ones it needs.
+# GEMINI_FREE_API_KEY is the node's own (free lanes); no agent keeps it.
+SECRET_KEYS = ("TYPESAFE_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "HF_API_KEY", "HF_TOKEN", "CURSOR_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GEMINI_FREE_API_KEY")
+
+
+def keys_needed(agent: dict) -> set[str]:
+    """The provider keys of the agent's model and backup model, plus any it lists under `keys:`."""
+    need: set[str] = set()
+    for m in (agent.get("model"), agent.get("fallback_model")):
+        if isinstance(m, str) and m:
+            key = PROVIDER_KEYS.get(m.split("/", 1)[0])
+            if key:
+                need.add(key)
+    for k in agent.get("keys") or []:
+        if str(k) in SECRET_KEYS:
+            need.add(str(k))
+    if "HF_API_KEY" in need or "HF_TOKEN" in need:
+        need |= {"HF_API_KEY", "HF_TOKEN"}
+    return need
+
+
+def restrict_keys(agent: dict) -> list[str]:
+    """Drop every secret this agent does not need from the environment pi inherits; returns what was dropped."""
+    need = keys_needed(agent)
+    dropped = [k for k in SECRET_KEYS if k in os.environ and k not in need]
+    for k in dropped:
+        del os.environ[k]
+    return dropped
 
 
 def memory_block(agent_id: str, inbox: Path) -> str:
@@ -339,6 +573,54 @@ def memory_block(agent_id: str, inbox: Path) -> str:
         "Read it when a preference matters; Alice keeps it current.\n"
         "Do not paste these files into replies; read them when needed, write them with your file tools.\n"
     )
+
+
+def _read_capped(path: Path, cap: int) -> str:
+    try:
+        text = path.read_text().strip()
+    except OSError:
+        return ""
+    return text if len(text) <= cap else text[:cap].rstrip() + f"\n\n[... cut at {cap} characters; read the file for the rest]"
+
+
+def crew_memory_block(agent_id: str, ship_id: str, inbox: Path, isolated: bool, wt: dict | None) -> str:
+    """Tiered memory for a crewmate (dashboard/lib/crew-memory.ts), most stable first so the
+    top stays a cached prefix and only the bottom (this voyage) changes between voyages."""
+    ship_mem = inbox / "ships" / ship_id / "memory"
+    own = inbox / agent_id / "memory"
+    # Paths as the crewmate's tools see them: inside a VM, the folders are mounted.
+    ship_p = Path("/ship-memory") if isolated else ship_mem
+    own_p = Path("/memory") if isolated else own
+    project = _read_capped(ship_mem / "project.md", 6000)
+    notes = _read_capped(own / "notes.md", 3000)
+    voyage = _read_capped(ship_mem / "voyage.md", 4000)
+    out = [
+        f"\n## Project memory ({ship_id}; shared by the crew, kept across voyages)\n",
+        f"File: `{ship_p / 'project.md'}`. Lasting knowledge about this project: conventions, commands, gotchas, decisions. "
+        "Add a line when you learn something the next voyage should know; prune what stops being true. Never secrets.\n",
+        (project or "(empty so far)") + "\n",
+        "\n## Your notes (kept across voyages)\n",
+        f"File: `{own_p / 'notes.md'}`. Your own durable notes.\n",
+        (notes or "(empty so far)") + "\n",
+        "\n## Memory rules\n",
+        f"- `{own_p / 'plan.md'}` (your plan) and `{own_p / 'state.md'}` (written on compaction) belong to the current voyage and are cleared when it ends.\n",
+        f"- The captain's profile (shared, in the vault): `{Path(os.environ.get('ALICE_VAULT', '/Users/avega/Workspace/brain')).expanduser() / 'fleet' / 'captain.md'}`.\n",
+        "- When your history is empty or starts with a summary, read `plan.md` and `state.md` if they exist.\n",
+        "\n## This voyage (discarded at dock)\n",
+    ]
+    if voyage:
+        if wt:
+            out.append(
+                f"- Work in the voyage worktree (your cwd), on branch `{wt.get('branch', '')}`; never in the ship's repo folder (the captain's checkout). Never push.\n"
+            )
+        out.append(
+            f"- Scratchpad, shared by the crew: `{ship_p / 'voyage.md'}`. Write progress, decisions, and open questions there. "
+            "At dock it is archived into the voyage record and cleared; move anything worth keeping to project memory before then.\n\n"
+        )
+        out.append(voyage + "\n")
+    else:
+        out.append("No voyage under sail. Wait for one; do not start work on your own.\n")
+    return "".join(out)
 
 
 def record_running_model(agent_id: str, configured: object, chosen: object) -> None:
@@ -363,8 +645,8 @@ LAST_FALLBACK_REASON = ""
 
 def model_with_fallback(model: object, fallback: object, agent_id: str) -> object:
     """The agent's model, or its fallback_model when the model cannot work today:
-    its provider key is missing, or the fleet node recorded a billing or auth
-    failure on it today (fleet/inbox/<id>/model-fallback.json, written by the
+    its provider key is missing, or the fleet node recorded a billing, auth, or
+    repeated stream failure on it today (fleet/inbox/<id>/model-fallback.json, written by the
     agent host; it lapses at midnight)."""
     if not (isinstance(model, str) and isinstance(fallback, str) and fallback):
         return model
@@ -432,13 +714,33 @@ def prepare_pi_launch(
         ship_path = Path(str(aboard["path"])).expanduser()
         cwd = ship_path
         os.environ["FLEET_SHIP"] = str(aboard["id"])
+        # A voyage under sail has its own worktree: the crew works there, never in the captain's checkout.
+        wt = voyage_worktree(str(aboard["id"]))
+        if wt:
+            cwd = Path(str(wt["path"]))
+            os.environ["FLEET_SHIP_WORKTREE"] = str(wt["path"])
+            os.environ["FLEET_SHIP_BRANCH"] = str(wt.get("branch", ""))
+            if wt.get("gitDir"):
+                os.environ["FLEET_VM_GITDIR"] = str(wt["gitDir"])
+        else:
+            for k in ("FLEET_SHIP_WORKTREE", "FLEET_SHIP_BRANCH", "FLEET_VM_GITDIR"):
+                os.environ.pop(k, None)
+        checks = aboard.get("checks") if isinstance(aboard.get("checks"), dict) else {}
+        os.environ["FLEET_SHIP_CHECKS"] = ",".join(sorted(str(k) for k in checks))
+        os.environ["FLEET_SHIP_MANEUVERS"] = ",".join(launchable_maneuvers(aboard, role, ship_path))
+        if str(aboard.get("isolation") or "") == "vm":
+            # R4: this crewmate's built-in tools run in a micro-VM with only the repo and its memory mounted.
+            (fleet_inbox_root() / agent_id / "memory").mkdir(parents=True, exist_ok=True)
+            os.environ.update(vm_env(aboard, agent_id, fleet_inbox_root(), agent))
         crew = ", ".join(f"`{aboard['id']}-{r}`" for r in aboard.get("crew") or [])
         path_block = (
             "## Resolved paths (this session)\n\n"
             f"- **Aboard ship:** `{aboard['id']}`; you are its `{role}` crewmate (`{agent_id}`)\n"
-            f"- **Ship repo (cwd):** `{ship_path}`; stay in this project. Work for other ships belongs to their crews.\n"
-            f"- **Delivery mode:** `{aboard.get('mode') or 'unset'}`\n"
-            f"- **Crew aboard:** {crew}\n"
+            + f"- **Ship repo:** `{ship_path}`; stay in this project. Work for other ships belongs to their crews. "
+            "During a voyage your working folder is the voyage's worktree (see This voyage, at the end).\n"
+            + f"- **Delivery mode:** `{aboard.get('mode') or 'unset'}`\n"
+            + code_graph_line(ship_path, str(aboard.get("isolation") or ""))
+            + f"- **Crew aboard:** {crew}\n"
             f"- **FLEET_INBOX:** `{inbox}`\n"
             f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
             f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
@@ -492,8 +794,8 @@ def prepare_pi_launch(
         # Agents that work inside project repos (designer): start in this repo, cd per request.
         cwd = ROOT
         ship_lines = ""
-        for y in sorted((ROOT / "fleet" / "ships").glob("*.yaml")):
-            ship = parse_simple_yaml(y)
+        for y in sorted(ships_dir().glob("*.yaml")):
+            ship = ship_config(y)
             if ship.get("path"):
                 ship_lines += f"  - `{ship.get('id') or y.stem}`: `{ship['path']}`\n"
         path_block = (
@@ -530,7 +832,11 @@ def prepare_pi_launch(
         extra_prompt_files.append((ROOT / str(rel)).resolve())
 
     if agent_type == "assistant":
-        path_block += memory_block(agent_id, inbox)
+        if aboard:
+            isolated_vm = str(aboard.get("isolation") or "") == "vm"
+            path_block += crew_memory_block(agent_id, str(aboard["id"]), inbox, isolated_vm, voyage_worktree(str(aboard["id"])))
+        else:
+            path_block += memory_block(agent_id, inbox)
     prompt_file = build_role_prompt(role_file, path_block, extra_prompt_files)
     args = ["pi", "--approve", "--append-system-prompt", str(prompt_file)]
 
@@ -552,11 +858,14 @@ def prepare_pi_launch(
     # repeated reads (cache-watch.ts).
     if agent_type == "assistant":
         # Crewmates also work as a crew: tasks, crew messages, maneuvers (crew.ts).
-        for name in ("ask-captain", "canvas", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()):
+        isolated = bool(aboard) and str(aboard.get("isolation") or "") == "vm"
+        for name in ("tool-gate", "ask-captain", "canvas", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()) + (("gondolin",) if isolated else ()) + tuple(experiments_for(agent_id)):
             ref = str(ROOT / "extensions" / f"{name}.ts")
             if ref not in ext_refs:
                 ext_refs.append(ref)
     os.environ["FLEET_AGENT_ID"] = agent_id
+    # R4f tool gate (extensions/tool-gate.ts): observe until Jev is calibrated on real traffic.
+    os.environ.setdefault("FLEET_TOOL_GATE", "observe")
     # Per-agent tuning (e.g. Firstmate's FM_* watcher settings); the caller's env wins.
     for key, val in (agent.get("env") or {}).items():
         if re.fullmatch(r"[A-Z][A-Z0-9_]*", str(key)) and val is not None and key not in os.environ:
@@ -591,6 +900,10 @@ def prepare_pi_launch(
 
     args.extend(extra)
     model_str = str(model) if model else None
+    # R4c: an assistant's process holds only its own providers' keys (a crewmate's
+    # VM holds none at all: extensions/gondolin passes a fixed environment).
+    if agent_type == "assistant":
+        restrict_keys(agent)
     return cwd, args, prompt_file, model_str
 
 

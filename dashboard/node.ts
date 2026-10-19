@@ -1,7 +1,8 @@
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   acceptCaptainLine,
+  acceptCrewLine,
   getAllLastChatTurns,
   getHeadlessChatState,
   registerChatBroadcaster,
@@ -12,21 +13,38 @@ import {
 import { abortHost, answerDialog, crewCaller, hostAlive, hostIds, hostRunning, hostWaiting, startHostReaper, stopHost } from "./lib/agent-host.ts";
 import { allChatTargetIds, chatAllowed, chatTarget, refreshAgentTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import type { ChatLine } from "./lib/chat.ts";
-import { crewAddTask, crewMessage, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
+import { crewAddTask, crewDockRequest, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
-import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos } from "./lib/fleet-api.ts";
+import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
+import { startRoutines, type Routine } from "./lib/routines.ts";
+import { budgetRefusal, findShip } from "./lib/shipyard.ts";
+import { materializeAllShips } from "./lib/ship-config.ts";
+import { freeRegistryAge, refreshFreeModels } from "./lib/free-models.ts";
+import { readShips } from "./lib/fleet-layers.ts";
+import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos, needsChanged } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
+import { askPublic } from "./lib/public-helper.ts";
+import { toolText, VIEWS } from "./lib/tool-out.ts";
+import { dueTasks, VAULT_FILTERS, vaultTasksReport, type VaultFilter } from "./lib/vault-tasks.ts";
+import { scheduledVaultCheck } from "./lib/vault-doctor.ts";
+import { decideGate, judgeCall, recordLocalStop, screenResult } from "./lib/tool-gate.ts";
+import { adviseCompaction, cutPoint } from "./lib/compaction-advisor.ts";
+import { askAboutFiles } from "./lib/cheap-reads.ts";
 import { dashLog } from "./lib/log.ts";
+import { spawnTimed } from "./lib/proc.ts";
 import { recall, startRecallIndexer } from "./lib/recall.ts";
+import { backfillMetrics } from "./lib/metrics-backfill.ts";
 import { notifyCaptain, onNoticesChange, startDigestClock, type NoticeKind } from "./lib/notify.ts";
-import { checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
+import { captainWrote, checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
 import { nodeToken, tokenMatches } from "./lib/node-auth.ts";
 import { NODE_CODE_VERSION } from "./lib/node-version.ts";
 import type { NodeAgentState, NodeState } from "./lib/node-client.ts";
 import { HOST, NODE_PORT, nodeStateDir, ROOT } from "./lib/paths.ts";
 import { requestRefusal } from "./lib/request-guard.ts";
-import { onShipLogWrite } from "./lib/ship-log.ts";
+import { logShipEvent, onShipLogWrite } from "./lib/ship-log.ts";
+import { runCheck } from "./lib/ship-checks.ts";
+import { recordToolFailure } from "./lib/tool-failures.ts";
 import { newSession } from "./lib/session-rotate.ts";
 
 /**
@@ -46,7 +64,7 @@ import { newSession } from "./lib/session-rotate.ts";
  *   POST /v1/answer          { agentId, dialogId, value?, confirmed?, cancelled? }
  *   POST /v1/abort|stop|new-session  { agentId }
  *   POST /v1/refresh-targets after crew changes
- * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers>
+ * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers|check|vm|helm>
  * Fleet API (extensions/fleet.ts, officers' crew token): GET /api/fleet/<status|log|tasks|maneuvers|chat>, POST /api/fleet/chat
  */
 
@@ -135,6 +153,78 @@ function startRuntime(): void {
   startDigestClock();
   // recall: keep the full-text index of chats, helper results, digests, and notices current.
   startRecallIndexer();
+  // Ship config (lib/ship-config.ts): the merged view of every ship, as JSON for bin/launch.
+  void readShips().then((ships) => materializeAllShips(ships.map((s) => s.id))).catch((e) => console.error("[node] ship config:", e));
+  // Routines (lib/routines.ts, fleet/config/routines.yaml): the jobs below and agent routines, on their schedules.
+  // Free model lanes (lib/free-models.ts): refresh the registry when it is a day old.
+  const freeRefresh = async (): Promise<string> => {
+    const age = freeRegistryAge();
+    if (age && Date.now() - Date.parse(age) < 20 * 3_600_000) return "registry is fresh";
+    const n = await refreshFreeModels();
+    return n ? `refreshed: ${JSON.stringify(n).slice(0, 200)}` : "refreshed";
+  };
+  // Vault doctor (lib/vault-doctor.ts): check the vault soon after start and every 6 hours; a notice only for new problems.
+  const vaultCheck = (): string => {
+    const { result, fresh } = scheduledVaultCheck();
+    if (fresh.length) {
+      notifyCaptain({ from: "vault-doctor", kind: "info", summary: `Vault doctor: ${fresh.length} new problem${fresh.length > 1 ? "s" : ""} (${result.problems.length} in all)`, detail: fresh.slice(0, 8).map((p) => `${p.note}: ${p.detail}`).join("\n"), ref: "health/diagnostics" });
+    }
+    return `${result.problems.length} problem${result.problems.length === 1 ? "" : "s"}${fresh.length ? `, ${fresh.length} new` : ""}`;
+  };
+  // Due vault tasks (lib/vault-tasks.ts): a notice the day a task with a due: date comes due, once per task and date.
+  const dueCheck = (): string => {
+    {
+      const file = join(nodeStateDir(), "due-reminded.json");
+      let sent: string[] = [];
+      try {
+        sent = JSON.parse(readFileSync(file, "utf8")) as string[];
+      } catch {
+        /* first run */
+      }
+      const today = new Date().toLocaleDateString("en-CA");
+      const fresh = dueTasks(today).filter((t) => !sent.includes(`${t.id}@${t.due}`));
+      for (const t of fresh) {
+        notifyCaptain({ from: "vault", kind: "decision", summary: `Due ${t.due === today ? "today" : `since ${t.due}`}: ${t.title}`, detail: `${t.description}\n\nVault task tasks/${t.id}.md`, ref: `tasks/${t.id}.md` });
+        sent.push(`${t.id}@${t.due}`);
+      }
+      if (fresh.length) writeFileSync(file, JSON.stringify(sent.slice(-500)), "utf8");
+      return fresh.length ? `${fresh.length} reminder${fresh.length > 1 ? "s" : ""} sent` : "nothing due";
+    }
+  };
+  // Helm review (lib/helm.ts): the ship's helmsman gets the review digest as a crew message, and a turn.
+  const helmReview = async (r: Routine): Promise<string> => {
+    const ship = r.ship ? await findShip(r.ship) : undefined;
+    if (!ship) throw new Error(`no ship named ${r.ship ?? "(none)"}`);
+    if (!hasHelmsman(ship)) return `skipped: ${ship.id} has no helmsman aboard`;
+    await acceptCrewLine(`${ship.id}-helmsman`, "helm", helmDigest(ship, `scheduled review (${r.every})`).slice(0, 8000));
+    return `review sent to ${ship.id}-helmsman; proposals appear in Needs you`;
+  };
+  // Code graphs (CodeGraph): keep each indexed ship repo current. Only repos that already have
+  // .codegraph/ are synced; indexing a repo is the captain's decision.
+  const codegraphSync = async (): Promise<string> => {
+    const synced: string[] = [];
+    for (const ship of await readShips()) {
+      if (!existsSync(join(ship.path, ".codegraph"))) continue;
+      const r = await spawnTimed(["codegraph", "sync", ship.path], { timeoutMs: 600_000, cwd: ship.path });
+      synced.push(`${ship.id}${r.exitCode === 0 ? "" : " (failed)"}`);
+    }
+    return synced.length ? `synced ${synced.join(", ")}` : "skipped: no ship repo has a code graph yet";
+  };
+  startRoutines({
+    jobs: { "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview, "codegraph-sync": codegraphSync },
+    runAgent: async (agentId, text) => void (await acceptCrewLine(agentId, "routine", text)),
+    agentExists: (agentId) => allChatTargetIds().includes(agentId),
+    budgetRefusal: (ship, agentId) => budgetRefusal(ship, agentId),
+  });
+  // Fleet metrics (lib/metrics.ts): import history from ship logs and voyage notes once.
+  setTimeout(() => {
+    try {
+      const n = backfillMetrics();
+      if (n) console.error(`[node] metrics backfill: ${JSON.stringify(n)}`);
+    } catch (e) {
+      console.error("[node] metrics backfill:", e);
+    }
+  }, 3000);
   onFleetChange((what) => (what === "rail" ? emit("rail", {}) : what === "ship" ? emit("ship", "") : emit("go", {})));
   });
 }
@@ -187,20 +277,36 @@ function events(server: ReturnType<typeof Bun.serve>, req: Request): Response {
   return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
 }
 
+/** A crewmate's VM started, stopped, failed, or blocked a request (extensions/gondolin). */
+function crewVmEvent(shipId: string, from: string, event: string, detail: string): { ok: boolean; message: string } {
+  if (!["start", "stop", "blocked", "error"].includes(event)) return { ok: false, message: "unknown vm event" };
+  const say = { start: "VM started", stop: "VM stopped", blocked: "VM blocked a request to", error: "VM did not start:" }[event as "start"];
+  logShipEvent(shipId, from, "vm", `${say} ${detail}`.trim(), { event, detail });
+  if (event === "blocked" || event === "error") recordToolFailure({ agent: from, tool: event === "blocked" ? "network" : "vm", args: event === "blocked" ? detail : "", error: event === "blocked" ? `blocked by the ship's allowlist: ${detail}` : detail });
+  return { ok: true, message: "noted" };
+}
+
 async function crewApi(req: Request, shipId: string, what: string, num: string | undefined): Promise<Response> {
   // The caller is whoever holds the token its live process was given; a name
   // in the request ("from") is never trusted.
   const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
   if (!from) return Response.json({ ok: false, message: "Crew calls come from a crewmate's live session." }, { status: 403 });
-  let res: { ok: boolean; message: string };
+  let res: { ok: boolean; message: string; [k: string]: unknown };
   if (what === "status" && req.method === "GET") {
     res = await voyageStatus(shipId, from);
+    res = { ...res, text: toolText(res, VIEWS.voyage_status, { full: new URL(req.url).searchParams.get("full") === "true" }) };
   } else if (req.method === "POST") {
     const b = await body(req);
     if (what === "tasks" && num) res = await crewUpdateTask(shipId, Number(num), { ...b, from } as never);
     else if (what === "tasks") res = await crewAddTask(shipId, { ...b, from } as never);
     else if (what === "message") res = await crewMessage(shipId, { ...b, from } as never);
+    else if (what === "crew-request") res = await crewRequestRole(shipId, { ...b, from } as never);
+    else if (what === "dock-request") res = await crewDockRequest(shipId, { ...b, from } as never);
+    else if (what === "look") res = await crewLook(shipId, { ...b, from } as never);
     else if (what === "maneuvers") res = await crewStartManeuver(shipId, { ...b, from } as never);
+    else if (what === "check") res = await runCheck(shipId, from, String(b.name ?? ""));
+    else if (what === "helm") res = await helmPropose(shipId, from, b as Record<string, unknown>);
+    else if (what === "vm") res = crewVmEvent(shipId, from, String(b.event ?? ""), String(b.detail ?? ""));
     else res = { ok: false, message: "unknown crew call" };
     emit("ship", shipId);
   } else {
@@ -220,6 +326,7 @@ function fleetCall(what: string, method: string, q: URLSearchParams, b: Record<s
   if (method === "GET" && what === "maneuvers") return { tool: "ship_maneuvers", read: true, args: fromQ(["ship"]) };
   if (method === "GET" && what === "chat") return { tool: "agent_chat_read", read: true, args: fromQ(["agent", "n"]) };
   if (method === "GET" && what === "recall") return { tool: "recall", read: true, args: fromQ(["query", "limit"]) };
+  if (method === "GET" && what === "vault-tasks") return { tool: "vault_tasks", read: true, args: fromQ(["filter", "id"]) };
   if (method === "POST" && what === "chat") return { tool: "fleet_chat", read: false, args: pick((k) => b[k], ["to", "text"]) };
   return null;
 }
@@ -239,6 +346,10 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
 
   if (what === "delegate" && req.method === "POST") {
     return reply(await startDelegation(from, String(b.task ?? ""), String(b.where ?? "vault")));
+  }
+
+  if (what === "public" && req.method === "POST") {
+    return reply(await askPublic(from, String(b.question ?? ""), String(b.text ?? "")));
   }
 
   if (what === "notify" && req.method === "POST") {
@@ -271,12 +382,13 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
   if (!gate.ok) return reply({ ok: false, message: gate.message });
 
   const a = call.args;
-  let res: { ok: boolean; message: string };
+  let res: { ok: boolean; message: string; [k: string]: unknown };
   if (call.tool === "fleet_status") res = await fleetStatus(a.detail === "true");
   else if (call.tool === "ship_log") res = shipLog(a.ship ?? "", Number(a.limit) || 40, a.kind || undefined);
   else if (call.tool === "ship_tasks") res = await shipTasks(a.ship ?? "");
   else if (call.tool === "ship_maneuvers") res = await shipManeuvers(a.ship ?? "");
   else if (call.tool === "agent_chat_read") res = await agentChatRead(a.agent ?? "", Number(a.n) || 12);
+  else if (call.tool === "vault_tasks") res = vaultTasksReport((VAULT_FILTERS as string[]).includes(a.filter ?? "") ? (a.filter as VaultFilter) : "ready", a.id ?? "");
   else if (call.tool === "recall") {
     const hits = recall(a.query ?? "", Number(a.limit) || 8);
     res = { ok: true, message: hits.length ? `${hits.length} match(es), best first.` : "No matches. Try other words, or delegate a deeper search.", hits };
@@ -286,6 +398,8 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
     recordOrderCall(gate.step, call.tool, call.args, res.message);
     res = { ...res, message: `${res.message} (Step ${gate.step} call recorded; now check its expect line and call order_step.)` };
   }
+  // Read tools: what the agent sees (lib/tool-out); the JSON stays for anything else that reads it.
+  if (call.read && VIEWS[call.tool]) res = { ...res, text: toolText(res, VIEWS[call.tool], { full: q.get("full") === "true" }) };
   return reply(res);
 }
 
@@ -293,10 +407,55 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const url = new URL(req.url);
   const path = url.pathname;
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|recall)$/);
+  // The tool gate's second layer (lib/tool-gate.ts): any live agent may ask, by its token.
+  if (path === "/api/gate/stopped" && req.method === "POST") {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ ok: false }, { status: 403 });
+    const b = await body(req);
+    const input = b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
+    recordLocalStop({ agent: from, tool: String(b.tool ?? ""), input, cwd: String(b.cwd ?? ""), why: String(b.why ?? "").slice(0, 200) });
+    return Response.json({ ok: true });
+  }
+  // Cheap reads (an experiment, lib/cheap-reads.ts): answers about files instead of the files.
+  if (path === "/api/jev/files" && req.method === "POST") {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ error: "calls come from a live agent session" }, { status: 403 });
+    const b = await body(req);
+    const files = Array.isArray(b.files) ? (b.files as { path?: unknown; content?: unknown }[]).map((f) => ({ path: String(f.path ?? ""), content: String(f.content ?? "") })) : [];
+    return Response.json(await askAboutFiles((b.question ?? {}) as Record<string, unknown>, files));
+  }
+  // The compaction advisor (lib/compaction-advisor.ts), asked by context-guard after a settled run.
+  if ((path === "/api/compaction/advise" || path === "/api/compaction/cut") && req.method === "POST") {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ ok: false }, { status: 403 });
+    const b = await body(req);
+    if (path === "/api/compaction/cut") return Response.json({ instructions: await cutPoint(Array.isArray(b.requests) ? b.requests.map(String) : []) });
+    const st = (b.state ?? {}) as Record<string, unknown>;
+    const state = { current_request: String(st.current_request ?? ""), previous_work: String(st.previous_work ?? ""), recent_turn: String(st.recent_turn ?? ""), tools_this_turn: Array.isArray(st.tools_this_turn) ? st.tools_this_turn.map(String) : [] };
+    return Response.json(await adviseCompaction({ agent: from, mode: String(b.mode ?? "observe"), tokens: Number(b.tokens) || 0, percent: Number(b.percent) || 0, state }));
+  }
+  if (path === "/api/gate/screen" && req.method === "POST") {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ flagged: false }, { status: 403 });
+    const b = await body(req);
+    const input = b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
+    return Response.json(await screenResult({ agent: from, tool: String(b.tool ?? ""), input, text: String(b.text ?? ""), why: String(b.why ?? "").slice(0, 200) }));
+  }
+  if (path === "/api/gate" && req.method === "POST") {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ decision: "stop", message: "Tool gate: calls come from a live agent session." }, { status: 403 });
+    const b = await body(req);
+    const input = b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
+    const writable = Array.isArray(b.writable) ? b.writable.map(String).slice(0, 8) : [];
+    const r = await judgeCall({ agent: from, tool: String(b.tool ?? ""), input, cwd: String(b.cwd ?? ""), why: String(b.why ?? "").slice(0, 200), writable }, undefined, { observe: b.mode === "observe" });
+    if (r.decision === "hold") needsChanged();
+    return Response.json(r);
+  }
+
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|public|recall|vault-tasks)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
-  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers)(?:\/(\d+))?$/);
+  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm|look|crew-request|dock-request)(?:\/(\d+))?$/);
   if (crew) return crewApi(req, crew[1]!, crew[2]!, crew[3]);
 
   if (!path.startsWith("/v1/")) return new Response("not found", { status: 404 });
@@ -310,6 +469,11 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
 
   const b = await body(req);
   const agentId = String(b.agentId ?? "");
+  if (path === "/v1/gate") {
+    const r = await decideGate(String(b.id ?? ""), b.decision === "allow");
+    needsChanged();
+    return Response.json(r, { status: r.ok ? 200 : 409 });
+  }
   if (path === "/v1/go") {
     const r = await decideGo(String(b.id ?? ""), b.decision === "go");
     return Response.json(r, { status: r.ok ? 200 : 409 });
@@ -327,6 +491,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   if (path === "/v1/captain-line") {
     const line = b.line as ChatLine | undefined;
     if (!line?.ts || typeof line.text !== "string") return Response.json({ ok: false, error: "bad line" }, { status: 400 });
+    captainWrote(agentId);
     await acceptCaptainLine(agentId, line);
     stateChanged();
     return Response.json({ ok: true });

@@ -78,6 +78,11 @@ function open(ship: string, root?: string): Database | null {
     db = new Database(path, { create: true });
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec(SCHEMA);
+    // Added after the first voyages: dependencies between tasks (voyage-tasks.ts), as comma-separated ids.
+    const cols = db.query("PRAGMA table_info(tasks)").all() as { name: string }[];
+    if (!cols.some((c) => c.name === "blocked_by")) db.exec("ALTER TABLE tasks ADD COLUMN blocked_by TEXT NOT NULL DEFAULT ''");
+    // Who may claim the task (a crew role), or NULL for anyone aboard.
+    if (!cols.some((c) => c.name === "role")) db.exec("ALTER TABLE tasks ADD COLUMN role TEXT");
     dbs.set(key, db);
   }
   return db;

@@ -10,6 +10,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Fleet" />
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+  <!-- Tailwind utilities and daisyUI components (d- prefix), built from ui/ui.css; pixel.css wins any clash. -->
+  <link rel="stylesheet" href="/ui.css" />
   <link rel="stylesheet" href="/pixel.css" />
   <!-- Served locally (public/vendor/README.md): no CDN wait, works offline and over Tailscale. -->
   <script src="/vendor/htmx-4.0.0.min.js" integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc"></script>
@@ -26,7 +29,7 @@
       <button type="button" class="needs-btn" :class="{ 'has-items': needs.length, 'is-open': leaf === 'needs' && !chatOpen }"
               :aria-label="needs.length ? needs.length + (needs.length === 1 ? ' thing needs' : ' things need') + ' you' : 'Nothing needs you'"
               @click="openLeaf('needs')">Needs you <span class="needs-count" x-text="needs.length"></span></button>
-      <button type="button" class="btn quiet-btn" :class="{ 'btn-ink': quiet.snoozed }" :aria-pressed="quiet.snoozed"
+      <button type="button" class="d-btn d-btn-sm quiet-btn" :class="{ 'd-btn-neutral': quiet.snoozed }" :aria-pressed="quiet.snoozed"
               :title="quiet.snoozed ? 'Snoozed: interruptions are held. Wake to see them as a digest.' : 'Snooze: hold interruptions until you wake'"
               @click="toggleQuiet()" x-text="quiet.snoozed ? 'Wake' + (quiet.held ? ' · ' + quiet.held : '') : 'Snooze'"></button>
       <p class="muted mast-hint"><kbd>⌘K</kbd> command</p>
@@ -51,10 +54,10 @@
       <div class="between needs-head">
         <h2 id="needs-title">Needs you</h2>
         <span class="row">
-        <button type="button" class="btn" x-show="push !== 'unsupported'" x-cloak :disabled="push === 'busy' || push === 'denied'" :aria-pressed="push === 'on'" @click="togglePush()"
+        <button type="button" class="d-btn d-btn-sm" x-show="push !== 'unsupported'" x-cloak :disabled="push === 'busy' || push === 'denied'" :aria-pressed="push === 'on'" @click="togglePush()"
                 :title="push === 'denied' ? 'Notifications are blocked for this site in the browser settings' : 'Push what needs you to this device'"
                 x-text="push === 'on' ? 'Notifying this device' : push === 'denied' ? 'Notifications blocked' : 'Notify this device'"></button>
-        <button type="button" class="btn" :class="{ 'btn-ink': quiet.snoozed }" :aria-pressed="quiet.snoozed" @click="toggleQuiet()"
+        <button type="button" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': quiet.snoozed }" :aria-pressed="quiet.snoozed" @click="toggleQuiet()"
                 x-text="quiet.snoozed ? 'Wake' + (quiet.held ? ' · ' + quiet.held + ' held' : '') : 'Snooze'"></button>
         </span>
       </div>
@@ -66,6 +69,7 @@
     <section id="leaf-harbor" class="leaf" role="tabpanel" aria-labelledby="tab-harbor"
              :class="{ 'is-open': leaf === 'harbor', 'is-hinge': hinge === 'harbor' }">
       <h2 x-text="shipSel ? 'Ship' : 'Harbor'">Harbor</h2>
+      <div id="sea-chart" class="sea-chart" x-show="!shipSel" x-cloak></div>
       <div id="harbor-view" @click="harborClick($event)" @submit="harborSubmit($event)"></div>
     </section>
 
@@ -75,10 +79,28 @@
       <aside class="slip" x-show="waitSummary" x-cloak>
         <p x-text="waitSummary"></p>
       </aside>
-      <div class="stack">
-        <div id="fleet" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerMorph"></div>
-        <div id="usage" hx-get="/partials/usage" hx-trigger="load" hx-swap="innerMorph"></div>
-        <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerMorph"></div>
+      <div role="tablist" class="d-tabs d-tabs-border health-tabs" aria-label="Health sections">
+        <template x-for="t in healthTabs" :key="t.id">
+          <button type="button" role="tab" class="d-tab" :class="{ 'd-tab-active': healthTab === t.id }" :aria-selected="healthTab === t.id"
+                  @click="setHealthTab(t.id)" x-text="t.label"></button>
+        </template>
+      </div>
+      <div class="stack" role="tabpanel">
+        <!-- Status: Firstmate, ships, and anything waiting. -->
+        <div id="fleet" x-show="healthTab === 'status'" hx-get="/partials/fleet" hx-trigger="load" hx-swap="innerMorph"></div>
+        <!-- Usage: subscriptions, API lanes, model spend. -->
+        <div id="usage" x-show="healthTab === 'usage'" hx-get="/partials/usage" hx-trigger="load" hx-swap="innerMorph"></div>
+        <!-- Metrics: the fleet metrics dashboard (metrics database). -->
+        <div id="fleet-metrics" x-show="healthTab === 'metrics'" hx-get="/partials/fleet-metrics?days=7" hx-trigger="load" hx-swap="innerMorph"></div>
+        <!-- Diagnostics: tool failures, the bus, the vault. -->
+        <div x-show="healthTab === 'diagnostics'" class="stack">
+          <div id="tool-failures" hx-get="/partials/tool-failures" hx-trigger="load, every 60s" hx-swap="innerMorph"></div>
+          <div id="jev" hx-get="/partials/jev" hx-trigger="load, every 300s" hx-swap="innerMorph"></div>
+          <div id="tool-gate" hx-get="/partials/tool-gate" hx-trigger="load, every 60s" hx-swap="innerMorph"></div>
+          <div id="vault-doctor" hx-get="/partials/vault-doctor" hx-trigger="load, every 300s" hx-swap="innerMorph"></div>
+          <div id="routines" hx-get="/partials/routines" hx-trigger="load, every 60s" hx-swap="innerMorph"></div>
+          <div id="metrics" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerMorph"></div>
+        </div>
       </div>
     </section>
 
@@ -151,18 +173,31 @@
         </div>
       </div>
       <div class="row">
-        <button type="button" class="btn" x-show="!chatGroup && chatThinking && current().runtime === 'rpc'" @click="stopAgent()">Stop</button>
-        <button type="button" class="btn" x-show="!chatGroup && !chatThinking && current().persistentSession" x-cloak
+        <div class="mode-pick" role="radiogroup" aria-label="How to talk" x-show="!chatGroup" x-cloak>
+          <button type="button" role="radio" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': voiceMode === 'type' }" :aria-checked="voiceMode === 'type'"
+                  title="Type only (no mic)" @click="setVoiceMode('type')">Type</button>
+          <button type="button" role="radio" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': voiceMode === 'talk' }" :aria-checked="voiceMode === 'talk'"
+                  title="Tap to talk: speech to text, sent when you pause" @click="setVoiceMode('talk')">Talk</button>
+          <button type="button" role="radio" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': voiceMode === 'live' }" :aria-checked="voiceMode === 'live'"
+                  :disabled="!current().liveVoice" :title="current().liveVoice ? 'Live: a back-and-forth conversation you can interrupt (Gemini Live, free account)' : 'No live voice for this agent'"
+                  @click="setVoiceMode('live')">Live</button>
+        </div>
+        <button type="button" class="d-btn d-btn-sm" x-show="!chatGroup && voiceMode === 'talk'" x-cloak :class="{ 'd-btn-neutral': handsFree }" :aria-pressed="handsFree"
+                :title="handsFree ? 'Hands-free on: the mic opens again after each spoken reply' : 'Hands-free: the mic opens again after each spoken reply'" @click="toggleHandsFree()">Hands-free</button>
+        <button type="button" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': showThinking }" :aria-pressed="showThinking" @click="toggleThinking()"
+                :title="showThinking ? 'Showing what agents write between steps; click to hide it' : 'Show what agents write between steps (their thinking)'">Thinking</button>
+        <button type="button" class="d-btn d-btn-sm" x-show="!chatGroup && chatThinking && current().runtime === 'rpc'" @click="stopAgent()">Stop</button>
+        <button type="button" class="d-btn d-btn-sm" x-show="!chatGroup && !chatThinking && current().persistentSession" x-cloak
                 title="Start this agent on an empty history. Long sessions make every turn re-send everything." @click="newAgentSession()">New session</button>
-        <button type="button" class="btn" :class="{ 'btn-ink': canvasOpen }" x-show="!chatGroup && canvasItems.length" x-cloak
+        <button type="button" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': canvasOpen }" x-show="!chatGroup && canvasItems.length" x-cloak
                 :aria-pressed="canvasOpen" :data-fresh="canvasFresh ? '' : null" @click="toggleCanvas()" x-text="'Canvas · ' + canvasItems.length + (canvasFresh ? ' · new' : '')"></button>
       </div>
-      <button type="button" class="btn icon-btn voice-toggle-phone" x-show="!chatGroup" :class="{ 'btn-ink': voiceReplies }" :aria-pressed="voiceReplies"
+      <button type="button" class="d-btn d-btn-sm icon-btn voice-toggle-phone" x-show="!chatGroup" :class="{ 'd-btn-neutral': voiceReplies }" :aria-pressed="voiceReplies"
                 :aria-label="voiceReplies ? 'Voice replies on' : 'Voice replies off'" :title="voiceReplies ? 'Voice replies on: new replies are spoken (Esc stops)' : 'Voice replies off'"
                 @click="voiceSpeaking ? stopSpeaking() : toggleVoiceReplies()">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6h3l4-3v10L5 10H2z"/><path x-show="voiceReplies" fill="currentColor" d="M11 5h1v6h-1zM13 3h1v10h-1z"/><path x-show="!voiceReplies" fill="currentColor" d="M11 6l1-1 3 3-1 1zm0 4l3-3 1 1-3 3z"/></svg>
         </button>
-      <button type="button" class="btn chat-close" @click="closeChat()" aria-label="Close chat">
+      <button type="button" class="d-btn d-btn-sm chat-close" @click="closeChat()" aria-label="Close chat">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2l3 3 2 2 2-2 3-3 1 1-3 3-2 2 2 2 3 3-1 1-3-3-2-2-2 2-3 3-1-1 3-3 2-2-2-2-3-3z"/></svg>
         <span class="chat-close-label">Close</span>
       </button>
@@ -188,7 +223,7 @@
     <div class="group-to" x-show="chatGroup" x-cloak>
       <span class="muted">To</span>
       <template x-for="id in (chatGroup ? chatGroup.members : [])" :key="id">
-        <button type="button" class="btn" :class="{ 'btn-ink': groupTo === id }" @click="groupTo = id; focusComposer()"
+        <button type="button" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': groupTo === id }" @click="groupTo = id; focusComposer()"
                 x-text="id + (chatGroup && chatGroup.lead === id ? ' (lead)' : '')"></button>
       </template>
     </div>
@@ -210,7 +245,7 @@
                   <a :href="canvasSrc(canvasItem(), img.file)" target="_blank" rel="noopener"><img :src="canvasSrc(canvasItem(), img.file)" :alt="img.label" loading="lazy" /></a>
                   <figcaption class="row">
                     <span x-text="img.label"></span>
-                    <button type="button" class="btn btn-ink" x-show="canvasItem().choose" @click="pickCanvasImage(canvasItem(), img)">Pick</button>
+                    <button type="button" class="d-btn d-btn-neutral d-btn-sm" x-show="canvasItem().choose" @click="pickCanvasImage(canvasItem(), img)">Pick</button>
                   </figcaption>
                 </figure>
               </template>
@@ -220,7 +255,7 @@
             <div class="canvas-frame-wrap">
               <div class="canvas-blocked" x-show="canvasItem().frameBlocked">
                 <p><strong>This page won't open inside the canvas:</strong> <span x-text="canvasItem().frameBlocked"></span>.</p>
-                <p><a class="btn btn-ink" :href="canvasItem().url" target="_blank" rel="noopener">Open it in a new tab</a></p>
+                <p><a class="d-btn d-btn-neutral d-btn-sm" :href="canvasItem().url" target="_blank" rel="noopener">Open it in a new tab</a></p>
                 <p class="muted">To review it here, the dev server has to allow framing from the dashboard (for Django in local settings: drop X-Frame-Options and send <code>frame-ancestors 'self' http://localhost:8787</code>).</p>
               </div>
               <iframe x-show="!canvasItem().frameBlocked" x-ref="canvasFrame" class="canvas-frame" :src="canvasFrameSrc(canvasItem())" :sandbox="canvasSandbox(canvasItem())"
@@ -231,7 +266,7 @@
         </div>
       </template>
     </section>
-    <div class="thread" x-ref="chatLog" aria-live="polite">
+    <div class="thread" x-ref="chatLog" aria-live="polite" :class="{ 'show-steps': showThinking }">
       <div class="bubble-row is-system" x-show="chatEmpty" x-cloak>
         <div class="bubble"><p x-text="title() + (chatGroup ? ' is on the line. Messages go to the lead unless you pick another member.' : ' is on the line.')"></p></div>
       </div>
@@ -241,30 +276,34 @@
       <p x-text="routeNote"></p>
       <div class="row-wrap" x-show="routeChoices.length">
         <template x-for="c in routeChoices" :key="c.key">
-          <button type="button" class="btn" @click="pickRoute(c.key)"
+          <button type="button" class="d-btn d-btn-sm" @click="pickRoute(c.key)"
                   x-text="c.label + (c.p != null ? ' · ' + Math.round(c.p * 100) + '%' : '')"></button>
         </template>
       </div>
-      <button type="button" class="btn" @click="routeNote = ''; routeChoices = []">Dismiss</button>
+      <button type="button" class="d-btn d-btn-sm" @click="routeNote = ''; routeChoices = []">Dismiss</button>
     </div>
     <form class="chat-compose" @submit.prevent="sendChat">
       <img class="avatar" src="/art/captain.png" width="48" height="48" alt="" />
       <div class="composer">
-        <button type="button" class="btn" :class="{ 'btn-ink': autoRoute }" :aria-pressed="autoRoute"
+        <button type="button" class="d-btn d-btn-sm" :class="{ 'd-btn-neutral': autoRoute }" :aria-pressed="autoRoute"
                 title="Let Jev pick an agent, a group (its lead), or Firstmate" @click="autoRoute = !autoRoute">Auto</button>
-        <textarea class="field chat-field" x-ref="chatField" x-model="chatDraft" rows="1" @input="growComposer()" @keydown.enter="composerEnter($event)" :placeholder="autoRoute ? 'Message — Jev picks who' : 'Message ' + current().label" autocomplete="off" :aria-label="autoRoute ? 'Message, routed by Jev (Shift+Enter for a new line)' : 'Message ' + current().label + ' (Shift+Enter for a new line)'"></textarea>
-        <button type="button" class="btn icon-btn voice-toggle" x-show="!chatGroup" :class="{ 'btn-ink': voiceReplies }" :aria-pressed="voiceReplies"
+        <textarea class="d-textarea chat-field" x-ref="chatField" x-model="chatDraft" rows="1" @input="growComposer()" @keydown.enter="composerEnter($event)" :placeholder="autoRoute ? 'Message — Jev picks who' : 'Message ' + current().label" autocomplete="off" :aria-label="autoRoute ? 'Message, routed by Jev (Shift+Enter for a new line)' : 'Message ' + current().label + ' (Shift+Enter for a new line)'"></textarea>
+        <button type="button" class="d-btn d-btn-sm icon-btn voice-toggle" x-show="!chatGroup" :class="{ 'd-btn-neutral': voiceReplies }" :aria-pressed="voiceReplies"
                 :aria-label="voiceReplies ? 'Voice replies on' : 'Voice replies off'" :title="voiceReplies ? 'Voice replies on: new replies are spoken (Esc stops)' : 'Voice replies off'"
                 @click="voiceSpeaking ? stopSpeaking() : toggleVoiceReplies()">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6h3l4-3v10L5 10H2z"/><path x-show="voiceReplies" fill="currentColor" d="M11 5h1v6h-1zM13 3h1v10h-1z"/><path x-show="!voiceReplies" fill="currentColor" d="M11 6l1-1 3 3-1 1zm0 4l3-3 1 1-3 3z"/></svg>
         </button>
-        <button type="button" class="btn icon-btn mic-btn" x-show="!chatGroup" :class="{ 'is-live': voiceState === 'listening', 'is-busy': voiceState === 'transcribing' }"
+        <button type="button" class="d-btn d-btn-sm icon-btn mic-btn" x-show="!chatGroup && voiceMode === 'talk'" :class="{ 'is-live': voiceState === 'listening', 'is-busy': voiceState === 'transcribing' }"
                 :aria-pressed="voiceState === 'listening'" :aria-label="voiceState === 'listening' ? 'Listening; tap or release to send' : 'Talk (tap, or hold with a mouse; Option+V)'"
                 title="Talk: tap to start (it sends when you pause), or hold with a mouse (Option+V)"
                 @pointerdown="micDown($event)" @pointerup="micUp()" @pointerleave="voiceState === 'listening' && !micToggled && micUp()" @click="micClick()">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M6 1h4v8H6zM4 7h1v2h6V7h1v3H9v2h2v2H5v-2h2v-2H4z"/></svg>
         </button>
-        <button class="btn btn-ink" type="submit">Send</button>
+        <button type="button" class="d-btn d-btn-sm live-btn" x-show="!chatGroup && voiceMode === 'live' && current().liveVoice" x-cloak
+                :class="{ 'd-btn-neutral': liveState !== 'off', 'is-speaking': liveState === 'speaking' }" :aria-pressed="liveState !== 'off'"
+                :title="liveState === 'off' ? 'Start talking live with ' + current().label : 'End the live conversation'"
+                @click="toggleLive()" x-text="liveState === 'off' ? 'Start' : liveState === 'connecting' ? 'Live…' : 'End'"></button>
+        <button class="d-btn d-btn-neutral d-btn-sm" type="submit">Send</button>
       </div>
       <p class="voice-note" role="status" aria-live="polite" x-show="voiceNote || voiceSpeaking" x-cloak
          x-text="voiceNote || 'Speaking… press Esc or the speaker to stop.'"></p>
@@ -274,7 +313,7 @@
   <div class="palette-backdrop" x-show="paletteOpen" x-cloak @click="closePalette()"></div>
   <div class="palette" role="dialog" aria-label="Command palette" x-show="paletteOpen" x-cloak @click.stop>
     <p class="palette-title">Command</p>
-    <input class="field palette-field" x-ref="paletteField" readonly aria-label="Command palette" />
+    <input class="d-input d-input-sm palette-field" x-ref="paletteField" readonly aria-label="Command palette" />
     <ul class="palette-list" role="listbox">
       <template x-for="(item, idx) in paletteItems()" :key="item.id">
         <li>
@@ -309,6 +348,9 @@
   </nav>
 
   <script src="/md.js"></script>
+  <script src="/live-voice.js"></script>
+  <script src="/sfx.js"></script>
   <script src="/app.js"></script>
+  <script type="module" src="/harbor-chart.js"></script>
 </body>
 </html>

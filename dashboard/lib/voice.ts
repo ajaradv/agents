@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { envKeyValue, loadFleetDotenv } from "./fleet-env.ts";
+import { agentKeyEnv } from "./fleet-env.ts";
 import { dashLog } from "./log.ts";
 import { ROOT } from "./paths.ts";
 
@@ -195,12 +195,11 @@ export async function synthesize(text: string, voice: string, speed = 1.0): Prom
 
 // ---------------------------------------------------------------- listening (OpenRouter)
 
-// fleet/home/.env is a pipe fed by the secrets manager: a read can come back
-// empty when the feed is slow, so keep the key once it has been read.
+// Read once through the service account (agentKeyEnv), then kept.
 let openRouterKey = "";
 
 async function routerKey(): Promise<string> {
-  if (!openRouterKey) openRouterKey = envKeyValue("OPENROUTER_API_KEY", await loadFleetDotenv());
+  if (!openRouterKey) openRouterKey = (await agentKeyEnv()).OPENROUTER_API_KEY ?? "";
   return openRouterKey;
 }
 
@@ -224,7 +223,7 @@ export function echoedHints(text: string): boolean {
 
 export async function transcribe(wav: Uint8Array): Promise<{ text: string; cost: number }> {
   const key = await routerKey();
-  if (!key) throw new Error("Voice input needs OPENROUTER_API_KEY in fleet/home/.env (the secrets feed did not answer; try again).");
+  if (!key) throw new Error("Voice input needs OPENROUTER_API_KEY (the service account did not answer; check bin/fleet-op-token).");
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },

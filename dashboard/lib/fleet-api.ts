@@ -3,6 +3,7 @@ import { acceptCrewLine, FLEET_OFFICERS, postCaptainLine, postLine } from "./cha
 import { readCaptainChat } from "./chat.ts";
 import { chatAllowed, chatTarget, listChatTargets, refreshAgentTargets } from "./chat-targets.ts";
 import { crewStartManeuver } from "./crew-api.ts";
+import { describeManeuver, maneuverAvailability } from "./maneuvers.ts";
 import { describeAction, holdGoRequest, tier2ArgError, type GoRequest } from "./go-gate.ts";
 import { getWorkflow, journalEvent, listWorkflows, once, updateWorkflow } from "./journal.ts";
 import { newSession } from "./session-rotate.ts";
@@ -15,7 +16,7 @@ import { recentShipEvents, shipTurnTotals } from "./ship-log.ts";
 import { recentManeuvers } from "./ship-maneuvers.ts";
 import { crewStatus } from "./ship-view.ts";
 import { dockVoyage, findShip, openVoyage, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./shipyard.ts";
-import { listTasks, taskProgress } from "./voyage-tasks.ts";
+import { listTasks, taskProgress, waitingOn, readyTasks } from "./voyage-tasks.ts";
 
 /**
  * The fleet API for officers (extensions/fleet.ts), served by the fleet node.
@@ -84,6 +85,10 @@ export async function fleetStatus(detail = false): Promise<Res> {
       ? { kind: n.kind, task: n.taskId, title: n.title, reason: n.reason }
       : n.kind === "go"
         ? { kind: n.kind, from: n.agentId, action: n.summary }
+        : n.kind === "gate"
+          ? { kind: n.kind, from: n.agentId, held: n.summary, why: n.why }
+          : n.kind === "helm"
+            ? { kind: n.kind, ship: n.ship, proposal: n.what }
         : n.kind === "question"
           ? { kind: n.kind, agent: n.agentId, asked: n.ts, question: n.questions.map((q) => q.question).join(" / ") }
           : n.kind === "notice"
@@ -146,7 +151,11 @@ export async function shipTasks(ship: string): Promise<Res> {
     message: `${ship} under sail: ${v.goal}`,
     voyage: { goal: v.goal, to: v.to, started: v.started, record: v.file },
     progress: taskProgress(tasks),
-    tasks: tasks.map((t) => ({ id: t.id, title: t.title, assignee: t.assignee, kind: t.kind, status: t.status, note: t.note.slice(0, 300), adwId: t.adwId })),
+    tasks: tasks.map((t) => {
+      const waits = waitingOn(t, tasks);
+      return { id: t.id, title: t.title, assignee: t.assignee, kind: t.kind, status: t.status, note: t.note.slice(0, 300), adwId: t.adwId, ...(waits.length ? { waitingOn: waits } : {}) };
+    }),
+    ready: readyTasks(tasks).map((t) => t.id),
   };
 }
 
@@ -156,8 +165,9 @@ export async function shipManeuvers(ship: string): Promise<Res> {
   const runs = recentManeuvers(row.path);
   return {
     ok: true,
-    message: runs.length ? `${runs.length} recent maneuver(s) on ${ship}.` : `No maneuvers on ${ship}${row.adws.length ? "" : " (no factory)"}.`,
+    message: runs.length ? `${runs.length} recent SSSF run(s) on ${ship}.` : `No SSSF runs on ${ship}.`,
     adws: row.adws,
+    declared: maneuverAvailability(row, "lead").map(describeManeuver),
     maneuvers: runs.map((m) => ({
       adwId: m.adwId,
       adw: m.adwName,
@@ -199,6 +209,11 @@ let fleetChanged: (what: "rail" | "ship" | "go") => void = () => {};
 /** The node tells the dashboard when an action changed crews, ships, or pending Gos. */
 export function onFleetChange(fn: (what: "rail" | "ship" | "go") => void): void {
   fleetChanged = fn;
+}
+
+/** Needs you changed (a held call, a decision): the dashboard refreshes it. */
+export function needsChanged(): void {
+  fleetChanged("go");
 }
 
 /** Run a fleet action now: the captain said Go, or it is an approved order's step. */
@@ -248,7 +263,8 @@ export async function runFleetAction(tool: string, a: Record<string, string>): P
       break;
     case "maneuver_start": {
       if (!ship!.crew.includes("lead")) return { ok: false, message: `${ship!.id} has no lead aboard to run a maneuver; crew the ship first.` };
-      res = await crewStartManeuver(ship!.id, { from: `${ship!.id}-lead`, adw: a.adw, prompt: a.prompt });
+      // The captain's Go authorises it (any role), but a locked maneuver stays locked.
+      res = await crewStartManeuver(ship!.id, { from: `${ship!.id}-lead`, maneuver: a.adw, prompt: a.prompt }, { withGo: true });
       break;
     }
     case "agent_abort":
@@ -267,10 +283,11 @@ export async function runFleetAction(tool: string, a: Record<string, string>): P
 }
 
 /** Outside an order: hold the action for the captain's Go and ask in the officer's thread. */
-export async function requestGo(from: string, tool: string, a: Record<string, string>): Promise<Res> {
+export async function requestGo(from: string, tool: string, a: Record<string, string>, why = ""): Promise<Res> {
   const bad = tier2ArgError(tool, a);
   if (bad) return { ok: false, message: bad };
-  const summary = describeAction(tool, a);
+  const reason = why.trim().replace(/\s+/g, " ").slice(0, 300);
+  const summary = `${describeAction(tool, a)}${reason ? ` Why: ${reason}` : ""}`;
   const id = crypto.randomUUID().slice(0, 12);
   const line = await postLine(from, {
     ts: new Date().toISOString(),

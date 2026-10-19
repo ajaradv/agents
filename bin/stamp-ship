@@ -15,6 +15,7 @@ Steps:
      (fleet/home/data/projects.md). Without it, print the line to add.
 
 Steps 2-4 write outside this repo. Run with --dry-run first and get a captain yes.
+With no arguments it lists the ships and templates.
 """
 from __future__ import annotations
 
@@ -26,16 +27,23 @@ import sys
 from datetime import date
 from pathlib import Path
 
+import axi_cli
+
 ROOT = Path(__file__).resolve().parent.parent
 SSSF = ROOT / ".claude" / "skills" / "sssf"
 SHIPS = ROOT / "fleet" / "ships"
+TEMPLATES = ROOT / "fleet" / "ship-templates"
 PROJECTS = ROOT / "fleet" / "home" / "data" / "projects.md"
 ID_RE = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
 MODES = ("no-mistakes", "no-mistakes-prod-only", "no-mistakes-required", "direct-PR", "local-only")
 COPY_IGNORE = shutil.ignore_patterns("node_modules", "__pycache__", "*.pyc", ".DS_Store", "dist")
 
 
-def ship_yaml(ship_id: str, path: Path, mode: str, factory: bool, adws: list[str]) -> str:
+def templates() -> list[str]:
+    return sorted(p.stem for p in TEMPLATES.glob("*.yaml"))
+
+
+def ship_yaml(ship_id: str, path: Path, mode: str, factory: bool, adws: list[str], template: str = "") -> str:
     lines = [f"id: {ship_id}", f"path: {path}", "orchestrator: firstmate", "crew: []"]
     if factory:
         lines += ["factory:", "  skill: .claude/skills/sssf"]
@@ -45,7 +53,11 @@ def ship_yaml(ship_id: str, path: Path, mode: str, factory: bool, adws: list[str
     else:
         lines.append("factory: null")
     lines.append(f"mode: {mode}")
-    return "\n".join(lines) + "\n"
+    text = "\n".join(lines) + "\n"
+    if template:
+        # The template's checks, gates, and maneuvers become the base's defaults (live edits go to the overlay).
+        text += f"# From template {template} (fleet/ship-templates/{template}.yaml)\n" + (TEMPLATES / f"{template}.yaml").read_text()
+    return text
 
 
 def registry_line(ship_id: str, mode: str, desc: str) -> str:
@@ -58,8 +70,33 @@ def registered(ship_id: str) -> bool:
     return any(re.match(rf"^[-*]\s+{re.escape(ship_id)}(\s|$)", l, re.I) for l in PROJECTS.read_text().splitlines())
 
 
+def home() -> int:
+    """No arguments: the ships recorded here and the templates to start from."""
+    rows = []
+    for y in sorted(SHIPS.glob("*.yaml")):
+        text = y.read_text()
+        get = lambda k: (re.search(rf"^{k}:\s*(.+)$", text, re.M) or [None, ""])[1].strip()
+        rows.append({"id": y.stem, "mode": get("mode"), "factory": "no" if get("factory") == "null" else "yes", "path": get("path")})
+    print("bin: ~/Workspace/agents/bin/stamp-ship")
+    print("description: Record a ship in fleet/ships/ and stamp the SSSF factory onto its repo")
+    print(axi_cli.table("ships", ["id", "mode", "factory", "path"], rows))
+    print(axi_cli.table("templates", ["name"], [{"name": t} for t in templates()]))
+    print(axi_cli.hints(["bin/stamp-ship <id> <path> --template <name> --dry-run", "bin/stamp-ship --help"]))
+    return 0
+
+
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    if len(sys.argv) == 1:
+        return home()
+    p = axi_cli.Parser(
+        prog="bin/stamp-ship",
+        description=__doc__,
+        examples=[
+            "bin/stamp-ship kinwork ~/Workspace/Kinwork --template python-web --dry-run",
+            "bin/stamp-ship docs-site ~/Workspace/docs --no-factory --mode local-only",
+            "bin/stamp-ship pochteca ~/Workspace/pochteca --register \"Pochteca marketplace\" --force",
+        ],
+    )
     p.add_argument("id")
     p.add_argument("path")
     p.add_argument("--mode", default="no-mistakes", choices=MODES)
@@ -67,38 +104,35 @@ def main() -> int:
     p.add_argument("--no-factory", action="store_true", help="record the ship without stamping SSSF")
     p.add_argument("--force", action="store_true", help="replace the ship yaml and pass --force to install.py")
     p.add_argument("--register", metavar="DESC", help="append the project to Firstmate's projects.md")
+    p.add_argument("--template", default="", help=f"start from fleet/ship-templates/<name>.yaml ({', '.join(templates()) or 'none'})")
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
     sys.stdout.reconfigure(line_buffering=True)
 
     if not ID_RE.match(a.id):
-        print(f"error: id must match {ID_RE.pattern}", file=sys.stderr)
-        return 2
+        return axi_cli.fail(f"id must match {ID_RE.pattern}", "use lowercase letters, digits, - or _, starting with a letter", code=2)
     ship_path = Path(a.path).expanduser().resolve()
     if not ship_path.is_dir():
-        print(f"error: {ship_path} is not a directory", file=sys.stderr)
-        return 1
+        return axi_cli.fail(f"{ship_path} is not a directory", "pass the path of the ship's git repo", code=2)
     if ship_path == ROOT:
-        print("error: this repo is the meta ship `fleet`; do not stamp SSSF onto it", file=sys.stderr)
-        return 1
+        return axi_cli.fail("this repo is the meta ship fleet; do not stamp SSSF onto it", "stamp a project repo instead")
+    if a.template and a.template not in templates():
+        return axi_cli.fail(f"no template {a.template}", f"use one of: {', '.join(templates()) or 'none'} (bin/stamp-ship lists them)", code=2)
     yaml_path = SHIPS / f"{a.id}.yaml"
     if yaml_path.exists() and not a.force:
-        print(f"error: {yaml_path.relative_to(ROOT)} exists (use --force to replace)", file=sys.stderr)
-        return 1
+        return axi_cli.fail(f"{yaml_path.relative_to(ROOT)} exists", "add --force to replace it (with --dry-run first)")
     factory = not a.no_factory
     adws = [x.strip() for x in a.adws.split(",") if x.strip()]
     if factory:
         known = {f.stem for f in (SSSF / "templates" / "adws").glob("adw_*.py")}
         unknown = [x for x in adws if x not in known]
         if unknown:
-            print(f"error: unknown ADW chain(s): {', '.join(unknown)} (known: {', '.join(sorted(known))})", file=sys.stderr)
-            return 1
+            return axi_cli.fail(f"unknown ADW chain(s): {', '.join(unknown)}", f"known: {', '.join(sorted(known))}", code=2)
     if shutil.which("uv") is None and factory and not a.dry_run:
-        print("error: uv not on PATH (needed for install.py)", file=sys.stderr)
-        return 1
+        return axi_cli.fail("uv is not on PATH (install.py needs it)", "brew install uv, or pass --no-factory")
 
     verb = "would" if a.dry_run else "will"
-    print(f"{verb} write {yaml_path.relative_to(ROOT)}")
+    print(f"{verb} write {yaml_path.relative_to(ROOT)}{f' from template {a.template}' if a.template else ''}")
     if factory:
         print(f"{verb} copy {SSSF.relative_to(ROOT)} -> {ship_path / '.claude/skills/sssf'}")
         print(f"{verb} run install.py{' --force' if a.force else ''} in {ship_path}")
@@ -111,7 +145,7 @@ def main() -> int:
         return 0
 
     SHIPS.mkdir(parents=True, exist_ok=True)
-    yaml_path.write_text(ship_yaml(a.id, ship_path, a.mode, factory, adws))
+    yaml_path.write_text(ship_yaml(a.id, ship_path, a.mode, factory, adws, a.template))
     if factory:
         dest = ship_path / ".claude" / "skills" / "sssf"
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -119,8 +153,7 @@ def main() -> int:
         cmd = ["uv", "run", ".claude/skills/sssf/scripts/install.py"] + (["--force"] if a.force else [])
         r = subprocess.run(cmd, cwd=str(ship_path))
         if r.returncode != 0:
-            print(f"error: install.py exited {r.returncode}; ship yaml written, factory partly copied", file=sys.stderr)
-            return r.returncode
+            return axi_cli.fail(f"install.py exited {r.returncode}; the ship yaml is written and the factory partly copied", f"fix the error above, then run bin/stamp-ship {a.id} {ship_path} --force")
     if not registered(a.id):
         if a.register:
             PROJECTS.parent.mkdir(parents=True, exist_ok=True)

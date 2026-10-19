@@ -1,9 +1,21 @@
+import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { readFleetKeys } from "./op-sdk.ts";
 import { ROOT } from "./paths.ts";
 
 const FLEET_ENV_PATH = join(ROOT, "fleet", "home", ".env");
 const READ_TIMEOUT_MS = 2000;
+
+/**
+ * The service account is the fleet's key path once fleet/home/.env.op exists:
+ * reading the fleet/home/.env mount asks the 1Password app, which prompts the
+ * captain. The mount is read only without a service account, or with
+ * FLEET_ENV_MOUNT=1.
+ */
+export function mountAllowed(): boolean {
+  return process.env.FLEET_ENV_MOUNT === "1" || !existsSync(process.env.FLEET_OP_ENV_FILE || join(ROOT, "fleet", "home", ".env.op"));
+}
 
 /** Parse KEY=value lines; never log values. */
 export function parseEnvLines(text: string): Record<string, string> {
@@ -41,8 +53,9 @@ async function readFifoEnv(timeoutMs: number): Promise<string> {
   }
 }
 
-/** Load fleet/home/.env with FIFO timeout; merge into a copy of process.env keys only. */
+/** The fleet's keys: the service account when set up, else fleet/home/.env (FIFO, with a timeout). */
 export async function loadFleetDotenv(): Promise<Record<string, string>> {
+  if (!mountAllowed()) return serviceAccountEnv();
   try {
     const st = await stat(FLEET_ENV_PATH);
     let text = "";
@@ -74,6 +87,7 @@ const AGENT_KEYS = [
   "HF_TOKEN",
   "CURSOR_API_KEY",
   "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
 ];
 
 /**
@@ -81,12 +95,77 @@ const AGENT_KEYS = [
  * the pipe answering in that moment (bin/launch keeps keys already in its env).
  * Retries an empty read once before giving up.
  */
+/** Provider of a model id → its key (keep in step with PROVIDER_KEYS in bin/launch). */
+const PROVIDER_KEYS: Record<string, string> = { cursor: "CURSOR_API_KEY", deepseek: "DEEPSEEK_API_KEY", openrouter: "OPENROUTER_API_KEY", anthropic: "ANTHROPIC_API_KEY", google: "GEMINI_API_KEY" };
+
+/** Only the keys these models need (R4c), e.g. a helper on deepseek/... gets DEEPSEEK_API_KEY alone. */
+export function keysForModels(all: Record<string, string>, models: string[]): Record<string, string> {
+  const need = new Set(models.map((m) => PROVIDER_KEYS[m.split("/")[0] ?? ""]).filter(Boolean));
+  return Object.fromEntries(Object.entries(all).filter(([k]) => need.has(k)));
+}
+
+/** Keys only the node uses (never handed to an agent): the free Gemini account for the free lanes. */
+const NODE_KEYS = ["GEMINI_FREE_API_KEY"];
+
+/** Every secret the fleet holds; stripped from a child's inherited environment before adding what it needs. */
+export function withoutSecrets(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !AGENT_KEYS.includes(k) && !NODE_KEYS.includes(k)));
+}
+
+/** A key only the node uses (NODE_KEYS), from the service account; "" when not set. */
+export async function nodeKey(name: (typeof NODE_KEYS)[number]): Promise<string> {
+  return (process.env[name] ?? (await serviceAccountEnv())[name] ?? "").trim();
+}
+
+let saCache: { at: number; keys: Record<string, string> } | null = null;
+
+/** Keys rarely change: one read per process every 6 hours keeps the service account well under its rate limit. */
+const SA_TTL_MS = 6 * 3_600_000;
+
+/** Keys read with the 1Password service account (the SDK, lib/op-sdk.ts); cached 6 hours. Empty when not set up. */
+export async function serviceAccountEnv(): Promise<Record<string, string>> {
+  if (saCache && Date.now() - saCache.at < SA_TTL_MS) return { ...saCache.keys };
+  // One read at a time: callers arriving together share it.
+  saPending ??= readServiceAccount().finally(() => (saPending = null));
+  return { ...(await saPending) };
+}
+
+let saPending: Promise<Record<string, string>> | null = null;
+
+async function readServiceAccount(): Promise<Record<string, string>> {
+  // Tests never read real keys: only a test's own secrets command (FLEET_SECRETS_CMD).
+  if (process.env.NODE_ENV === "test") return process.env.FLEET_SECRETS_CMD ? readSecretsCommand(process.env.FLEET_SECRETS_CMD) : {};
+  const r = await readFleetKeys().catch(() => ({ keys: {} as Record<string, string>, from: "none" as const, complete: false }));
+  if (r.complete) saCache = { at: Date.now(), keys: r.keys };
+  // 1Password refused all or part: keep the fullest set we have and try 1Password again in 10 minutes.
+  else if (Object.keys(r.keys).length >= Object.keys(saCache?.keys ?? {}).length) saCache = { at: Date.now() - SA_TTL_MS + 10 * 60_000, keys: { ...(saCache?.keys ?? {}), ...r.keys } };
+  return { ...(saCache?.keys ?? {}) };
+}
+
+async function readSecretsCommand(cmd: string): Promise<Record<string, string>> {
+  const proc = Bun.spawn([cmd], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+  const keys = parseEnvLines(await new Response(proc.stdout).text());
+  if (Object.keys(keys).length) saCache = { at: Date.now(), keys };
+  return keys;
+}
+
+export function _resetServiceAccountForTests(): void {
+  saCache = null;
+  saPending = null;
+}
+
 export async function agentKeyEnv(): Promise<Record<string, string>> {
-  let dotenv = await loadFleetDotenv();
-  if (!Object.keys(dotenv).length) {
-    await Bun.sleep(500);
+  // The service account (no 1Password prompt); the fleet/home/.env mount only where mountAllowed().
+  const sa = await serviceAccountEnv();
+  let dotenv: Record<string, string> = {};
+  if (mountAllowed() && !AGENT_KEYS.filter((k) => k !== "HF_TOKEN" && k !== "ANTHROPIC_API_KEY").every((k) => sa[k] || process.env[k])) {
     dotenv = await loadFleetDotenv();
+    if (!Object.keys(dotenv).length && !Object.keys(sa).length) {
+      await Bun.sleep(500);
+      dotenv = await loadFleetDotenv();
+    }
   }
+  dotenv = { ...dotenv, ...sa };
   applyHfKeyAlias(dotenv);
   const out: Record<string, string> = {};
   for (const k of AGENT_KEYS) {
