@@ -1326,3 +1326,39 @@ body.chat-open { overflow: hidden; }
 .masthead-flag { display: inline-block; position: relative; width: 1.1rem; height: 1.1rem; margin-left: 0.4rem; vertical-align: middle; }
 .masthead-flag::before { content: ""; position: absolute; left: 1px; top: 0; bottom: 0; width: 2px; background: var(--ink); }
 .masthead-flag::after { content: ""; position: absolute; left: 3px; top: 0; width: 0.8rem; height: 0.6rem; background: var(--vermilion); clip-path: polygon(0 0, 100% 50%, 0 100%); }
+
+/* weather glyph: stepped pixel cloud, colour reads the sky */
+.weather-glyph {
+  position: relative; display: inline-block; flex: none;
+  width: 14px; height: 8px; margin-right: 0.15rem; vertical-align: -1px;
+  background: var(--sheet);
+  clip-path: polygon(0 100%, 0 62%, 12.5% 62%, 12.5% 37%, 35% 37%, 35% 12%, 65% 12%, 65% 37%, 87.5% 37%, 87.5% 62%, 100% 62%, 100% 100%);
+  filter: drop-shadow(1px 0 0 var(--ink)) drop-shadow(-1px 0 0 var(--ink)) drop-shadow(0 1px 0 var(--ink)) drop-shadow(0 -1px 0 var(--ink));
+}
+.weather-glyph.weather-clear { background: var(--sheet); opacity: 0.55; height: 6px; width: 12px; }
+.weather-glyph.weather-overcast { background: #8d9aa0; }
+.weather-glyph.weather-storm { background: #3a4650; margin-bottom: 4px; }
+.weather-glyph.weather-storm::after {
+  content: ""; position: absolute; left: 3px; top: 8px; width: 1px; height: 3px;
+  background: var(--ink); box-shadow: 4px 0 0 var(--ink), 8px 0 0 var(--ink);
+}
+.weather-word { font-size: 0.75rem; }
+.weather-badge.weather-storm { color: var(--vermilion); border-color: var(--vermilion); }
+.weather-badge.weather-overcast { color: var(--yellow); border-color: var(--yellow); }
+
+/* supply gauge: 8 detents of budget left today */
+.supply-gauge { display: inline-flex; align-items: center; gap: 2px; flex-wrap: nowrap; font-size: 0.72rem; }
+.supply-detent {
+  width: 6px; height: 10px; flex: none;
+  border: 1px solid var(--ink); background: var(--sheet); opacity: 0.45;
+}
+.supply-detent.is-lit { opacity: 1; background: var(--supply, var(--ink)); }
+.supply-teal { --supply: var(--teal); }
+.supply-yellow { --supply: var(--yellow); }
+.supply-vermilion { --supply: var(--vermilion); }
+.supply-figure { margin-left: 0.4rem; color: var(--quiet); white-space: nowrap; }
+.supply-vermilion .supply-figure { color: var(--vermilion); }
+.supply-none {
+  color: var(--quiet); font-style: italic; padding: 0 0.35rem;
+  border: 1px dashed var(--quiet); background: transparent;
+}
