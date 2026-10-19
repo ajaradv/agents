@@ -877,6 +877,14 @@ body.chat-open { overflow: hidden; }
   font-family: "Silkscreen", ui-sans-serif, sans-serif; font-size: 0.72rem; line-height: 1.4;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
+/* Reveal the visually-hidden ship list while a keyboard user is inside it. */
+.sea-chart .sr-only:focus-within {
+  position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal;
+  margin: 0.5rem 0 0; padding: 0 0 0 1.4rem;
+  font-family: "Silkscreen", ui-sans-serif, sans-serif; font-size: 0.72rem; color: var(--ink);
+}
+.sea-chart .sr-only:focus-within a { color: var(--ink); }
+.sea-chart .sr-only:focus-within a:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 2px; }
 .stack-tight { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
 .harbor { display: grid; gap: 0.9rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); }
 .ship-tile {

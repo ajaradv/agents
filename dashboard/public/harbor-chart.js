@@ -3,8 +3,9 @@
  *
  * A 16:7 pixel canvas at the top of the Harbor leaf, drawn from
  * GET /api/harbor/chart (dashboard/lib/harbor-chart.ts). No framework: plain
- * canvas + DOM. The model is 160×70 chart units; the canvas maps them onto an
- * 8 px grid, snapped to integer cells so the ink is crisp and pixelated.
+ * canvas + DOM. The model is 160×70 chart units; positions map onto an 8 px
+ * grid, and sprites, ticks, islands and text draw on a width-scaled sprite
+ * cell (≥8 px, a multiple of 8) so they stay legible as the canvas grows.
  *
  * Motion: on a progress change the ships and waypoints tween from the last
  * frame over 600 ms in 6 steps, drawn on requestAnimationFrame only while
@@ -19,7 +20,7 @@
 
 const CHART_W = 160;
 const CHART_H = 70;
-const WALL_CELLS = 2; // drydock strip along the left, in 8 px cells
+const WALL_CELLS = 3; // drydock strip along the left, in sprite cells
 const DURATION_MS = 600;
 const STEPS = 6;
 
@@ -58,9 +59,9 @@ const state = {
   refreshTimer: 0,
   cssWidth: 0,
   cssHeight: 0,
-  cols: 0,
   rows: 0,
   dpr: 1,
+  cell: 8, // sprite cell in CSS px, scaled with the canvas and snapped to 8
   hits: [],
   reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   fontsReady: null,
@@ -111,8 +112,9 @@ function layout() {
   state.dpr = window.devicePixelRatio || 1;
   state.cssWidth = Math.max(8 * 8, Math.floor(w / 8) * 8);
   state.cssHeight = Math.max(3 * 8, Math.round((state.cssWidth * 7) / 16 / 8) * 8);
-  state.cols = Math.round(state.cssWidth / 8);
   state.rows = Math.round(state.cssHeight / 8);
+  // One sprite cell, scaled with the canvas and snapped to a multiple of 8.
+  state.cell = Math.max(8, Math.round(state.cssWidth / (CHART_W * 8)) * 8);
   const c = state.canvas;
   c.style.width = `${state.cssWidth}px`;
   c.style.height = `${state.cssHeight}px`;
@@ -123,15 +125,38 @@ function layout() {
   ctx.imageSmoothingEnabled = false;
 }
 
+/** The drydock strip width in px (2 sprite cells). */
+function wallPx() {
+  return WALL_CELLS * state.cell;
+}
+
 /** Chart x (0..160) → CSS px, snapped to the 8 px grid, inside the water area. */
 function gx(x) {
-  const cell = (x / CHART_W) * (state.cols - WALL_CELLS);
-  return (WALL_CELLS + Math.round(cell)) * 8;
+  const waterW = state.cssWidth - wallPx();
+  const cols = Math.round(waterW / 8);
+  return wallPx() + Math.round((x / CHART_W) * cols) * 8;
 }
 
 /** Chart y (0..70) → CSS px, snapped to the 8 px grid. */
 function gy(y) {
   return Math.round((y / CHART_H) * state.rows) * 8;
+}
+
+/** Label font scaled with the cell, floored at 10 px so it stays readable. */
+function labelFont() {
+  return `${Math.max(10, Math.round(state.cell * 0.9))}px Silkscreen, sans-serif`;
+}
+
+function hullTop() {
+  return Math.round(state.cell * 0.75);
+}
+
+function hullBot() {
+  return Math.round(state.cell * 0.25);
+}
+
+function berthLabel(s) {
+  return (s.id || "").toUpperCase();
 }
 
 function lerpPoint(a, b, t) {
@@ -156,45 +181,73 @@ function interpolated(from, to, t) {
 
 function drawWater(c) {
   const ctx = state.ctx;
-  const waterX = WALL_CELLS * 8;
+  const waterX = wallPx();
   const waterW = state.cssWidth - waterX;
+  // Flat sea with a calm stripe band (not per-row scanlines).
   ctx.fillStyle = c.sea;
   ctx.fillRect(waterX, 0, waterW, state.cssHeight);
-  // Wave stripes: two sea blues alternating every 8 px.
-  for (let y = 0; y < state.rows; y += 2) {
-    ctx.fillStyle = c.seaDeep;
-    ctx.fillRect(waterX, y * 8, waterW, 1);
-    if (y + 1 < state.rows) {
-      ctx.fillStyle = c.seaDeeper;
-      ctx.fillRect(waterX, (y + 1) * 8, waterW, 1);
-    }
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = c.seaDeep;
+  for (let yy = state.cell; yy < state.cssHeight; yy += state.cell * 2) {
+    ctx.fillRect(waterX, yy, waterW, state.cell);
   }
+  ctx.globalAlpha = 1;
 }
 
 function drawHarbor(c, model) {
   const ctx = state.ctx;
-  // Drydock strip along the left edge.
+  const wall = wallPx();
+  const cell = state.cell;
+  // Drydock strip: timber deck with a rail per berth so it reads as a drydock.
   ctx.fillStyle = c.drydock;
-  ctx.fillRect(0, 0, WALL_CELLS * 8, state.cssHeight);
-  // Waterline.
+  ctx.fillRect(0, 0, wall, state.cssHeight);
+  // Waterline between the dock and the sea.
   ctx.fillStyle = c.ink;
-  ctx.fillRect(WALL_CELLS * 8, 0, 1, state.cssHeight);
-  // Berth cleats along the waterline.
+  ctx.fillRect(wall - 1, 0, 1, state.cssHeight);
   for (const s of model.ships) {
     const y = gy(s.berthPos.y);
+    // A drydock cradle: two rails the yard hull sits between, plus a cleat.
+    ctx.fillStyle = c.drydockRail;
+    const railH = Math.max(3, Math.round(cell / 2));
+    ctx.fillRect(2, y - hullTop(), wall - 4, railH);
+    ctx.fillRect(2, y + hullBot(), wall - 4, railH);
     ctx.fillStyle = c.ink;
-    ctx.fillRect(WALL_CELLS * 8 - 2, y - 2, 4, 4);
+    ctx.fillRect(wall - 2, y - 2, 4, 4);
+    // Berth label: the ship id just off the cleat.
+    ctx.save();
+    ctx.font = labelFont();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.fillStyle = c.ink;
+    ctx.fillText(berthLabel(s), wall + Math.round(cell / 2), y - Math.round(cell * 0.75));
+    ctx.restore();
   }
 }
 
-function drawRoute(c, s) {
+/** The sailing ship furthest along its voyage leads; its route reads in ink. */
+function activeShipId(model) {
+  let best = null;
+  let bestP = -1;
+  for (const s of model.ships) {
+    if (s.voyage && s.island && s.progress > bestP) {
+      best = s.id;
+      bestP = s.progress;
+    }
+  }
+  return best;
+}
+
+function drawRoute(c, s, active) {
   const ctx = state.ctx;
+  const cell = state.cell;
   const from = { x: gx(0), y: gy(s.berthPos.y) };
   const to = { x: gx(s.island.x), y: gy(s.island.y) };
   ctx.save();
   ctx.strokeStyle = c.ink;
-  ctx.lineWidth = 1;
-  ctx.setLineDash([8, 4]);
+  // The active route reads in ink; the rest draw lighter so crossings separate.
+  ctx.globalAlpha = active ? 1 : 0.45;
+  ctx.lineWidth = Math.max(2, Math.round(cell / 4));
+  ctx.setLineDash([cell * 2, cell]);
   ctx.beginPath();
   ctx.moveTo(from.x, from.y);
   ctx.lineTo(to.x, to.y);
@@ -204,155 +257,184 @@ function drawRoute(c, s) {
 
 function drawWaypoint(c, w) {
   const ctx = state.ctx;
+  const cell = state.cell;
   const x = gx(w.x);
   const y = gy(w.y);
   const color = statusColor(c, w.status);
-  const thick = w.kind === "maneuver";
-  const s = thick ? 8 : 4;
+  const s = cell * 2; // at least 2×2 cells
   const x0 = x - s / 2;
   const y0 = y - s / 2;
+  // Ink border first so done/working/blocked/open read against the sea.
+  ctx.strokeStyle = c.ink;
   ctx.lineWidth = 1;
+  ctx.strokeRect(x0 + 0.5, y0 + 0.5, s - 1, s - 1);
   if (w.status === "done") {
     ctx.fillStyle = color;
-    ctx.fillRect(x0, y0, s, s);
+    ctx.fillRect(x0 + 2, y0 + 2, s - 4, s - 4);
   } else if (w.status === "working") {
     ctx.strokeStyle = color;
-    ctx.strokeRect(x0 + 0.5, y0 + 0.5, s - 1, s - 1);
+    ctx.lineWidth = Math.max(2, Math.round(cell / 4));
+    ctx.strokeRect(x0 + 2.5, y0 + 2.5, s - 5, s - 5);
   } else if (w.status === "blocked") {
     ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2, Math.round(cell / 4));
     ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x0 + s, y0 + s);
-    ctx.moveTo(x0 + s, y0);
-    ctx.lineTo(x0, y0 + s);
+    ctx.moveTo(x0 + 2, y0 + 2);
+    ctx.lineTo(x0 + s - 2, y0 + s - 2);
+    ctx.moveTo(x0 + s - 2, y0 + 2);
+    ctx.lineTo(x0 + 2, y0 + s - 2);
     ctx.stroke();
   } else {
-    // open: a dot
+    // open: a dot in the middle of the box
+    const d = Math.max(2, Math.round(cell / 4));
     ctx.fillStyle = color;
-    ctx.fillRect(x - 1, y - 1, 2, 2);
+    ctx.fillRect(x - d / 2, y - d / 2, d, d);
   }
-  // Maneuver ticks are thicker and carry phase sub-dashes (pass|ok|done / total).
-  if (thick) {
+  // Maneuver ticks carry phase sub-dashes (pass|ok|done / total).
+  if (w.kind === "maneuver") {
     const filled = Math.max(0, Math.min(4, Math.round(w.phase * 4)));
+    const dw = Math.max(2, Math.round(cell / 2));
+    const dh = Math.max(1, Math.round(cell / 4));
     for (let i = 0; i < 4; i++) {
       ctx.fillStyle = i < filled ? c.teal : c.quiet;
-      ctx.fillRect(x0 + i * 2, y0 + s + 2, 2, 1);
+      ctx.fillRect(x0 + i * Math.round(cell / 2), y0 + s + Math.round(cell / 4), dw - 1, dh);
     }
   }
 }
 
 function drawIsland(c, s) {
   const ctx = state.ctx;
+  const cell = state.cell;
   const tile = ISLAND_TILES[s.island.shape % ISLAND_TILES.length];
   const h = tile.length;
   const w = tile[0].length;
-  const x0 = gx(s.island.x) - (w * 8) / 2;
-  const y0 = gy(s.island.y) - (h * 8) / 2;
+  const x0 = gx(s.island.x) - (w * cell) / 2;
+  const y0 = gy(s.island.y) - (h * cell) / 2;
   for (let r = 0; r < h; r++) {
     for (let col = 0; col < w; col++) {
       const ch = tile[r][col];
       if (ch === ".") continue;
       ctx.fillStyle = ch === "g" ? c.teal : ch === "y" ? c.yellow : c.bone;
-      ctx.fillRect(x0 + col * 8, y0 + r * 8, 8, 8);
+      ctx.fillRect(x0 + col * cell, y0 + r * cell, cell, cell);
       ctx.fillStyle = c.ink;
-      if (r === 0 || tile[r - 1][col] === ".") ctx.fillRect(x0 + col * 8, y0 + r * 8, 8, 1);
-      if (r === h - 1 || tile[r + 1][col] === ".") ctx.fillRect(x0 + col * 8, y0 + r * 8 + 7, 8, 1);
-      if (col === 0 || tile[r][col - 1] === ".") ctx.fillRect(x0 + col * 8, y0 + r * 8, 1, 8);
-      if (col === w - 1 || tile[r][col + 1] === ".") ctx.fillRect(x0 + col * 8 + 7, y0 + r * 8, 1, 8);
+      if (r === 0 || tile[r - 1][col] === ".") ctx.fillRect(x0 + col * cell, y0 + r * cell, cell, 1);
+      if (r === h - 1 || tile[r + 1][col] === ".") ctx.fillRect(x0 + col * cell, y0 + r * cell + cell - 1, cell, 1);
+      if (col === 0 || tile[r][col - 1] === ".") ctx.fillRect(x0 + col * cell, y0 + r * cell, 1, cell);
+      if (col === w - 1 || tile[r][col + 1] === ".") ctx.fillRect(x0 + col * cell + cell - 1, y0 + r * cell, 1, cell);
     }
   }
   // Label: voyage goal, first 10 chars, under the island.
   const label = (s.voyage?.label || "").slice(0, 10).toUpperCase();
   if (label) {
     ctx.save();
-    ctx.font = "8px Silkscreen, sans-serif";
+    ctx.font = labelFont();
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     ctx.fillStyle = c.ink;
-    ctx.fillText(label, gx(s.island.x), y0 + h * 8 + 2);
+    ctx.fillText(label, gx(s.island.x), y0 + h * cell + Math.max(2, Math.round(cell / 4)));
     ctx.restore();
   }
-  state.hits.push({ kind: "island", ship: s, x: gx(s.island.x), y: gy(s.island.y), r: Math.max(12, (Math.max(w, h) * 8) / 2 + 4) });
+  state.hits.push({ kind: "island", ship: s, x: gx(s.island.x), y: gy(s.island.y), r: Math.max(cell * 1.5, (Math.max(w, h) * cell) / 2 + Math.round(cell / 2)) });
 }
 
-function drawHull(c, x, y) {
+function drawHull(c, x, y, w, insetTop = 0) {
   const ctx = state.ctx;
+  const half = w / 2;
+  const topY = y - hullTop() + insetTop;
+  const botY = y + hullBot();
+  const botHalf = Math.max(1, Math.round(half * 0.6));
   ctx.fillStyle = c.hull;
   ctx.beginPath();
-  ctx.moveTo(x - 8, y - 3);
-  ctx.lineTo(x + 8, y - 3);
-  ctx.lineTo(x + 5, y + 1);
-  ctx.lineTo(x - 5, y + 1);
+  ctx.moveTo(x - half, topY);
+  ctx.lineTo(x + half, topY);
+  ctx.lineTo(x + botHalf, botY);
+  ctx.lineTo(x - botHalf, botY);
   ctx.closePath();
   ctx.fill();
   ctx.fillStyle = c.hullDark;
-  ctx.fillRect(x - 5, y - 1, 10, 2);
+  const stripeH = Math.max(2, Math.round(state.cell / 4));
+  ctx.fillRect(x - half, botY - stripeH, w, stripeH);
 }
 
 function drawSail(c, x, y, height) {
   if (height <= 0) return;
   const ctx = state.ctx;
-  const apex = y - 3 - height;
+  const cell = state.cell;
+  const topY = y - hullTop();
+  const apex = topY - height;
+  const sailW = Math.max(cell, Math.round(cell * 1.25));
+  const mastW = Math.max(1, Math.round(cell / 8));
   // Mast behind the sail.
   ctx.fillStyle = c.ink;
-  ctx.fillRect(x - 1, apex, 1, y + 1 - apex);
+  ctx.fillRect(x - Math.round(mastW / 2), apex, mastW, topY + 1 - apex);
   // Sail: a right triangle left of the mast.
   ctx.fillStyle = c.sheet;
   ctx.beginPath();
   ctx.moveTo(x, apex);
-  ctx.lineTo(x - 6, y - 3);
-  ctx.lineTo(x, y - 3);
+  ctx.lineTo(x - sailW, topY);
+  ctx.lineTo(x, topY);
   ctx.closePath();
   ctx.fill();
   // Boom.
   ctx.fillStyle = c.ink;
-  ctx.fillRect(x - 6, y - 3, 6, 1);
+  ctx.fillRect(x - sailW, topY, sailW, mastW);
 }
 
 function drawWake(c, s, x, y) {
   if (s.progress <= 0.04) return;
   const ctx = state.ctx;
+  const cell = state.cell;
   const bx = gx(0);
   const by = gy(s.berthPos.y);
   const dx = x - bx;
   const dy = y - by;
   const len = Math.hypot(dx, dy);
-  if (len < 2) return;
+  if (len < cell) return;
   const ux = dx / len;
   const uy = dy / len;
+  const nx = -uy;
+  const ny = ux;
+  const off = Math.round(cell * 0.75); // below the route, clear of the ink dashes
+  const dashW = Math.max(2, Math.round(cell / 2));
+  const dashH = Math.max(2, Math.round(cell / 3));
   ctx.fillStyle = c.sheet;
-  for (let d = 4; d < len; d += 8) {
-    ctx.fillRect(Math.round(x - ux * d) - 2, Math.round(y - uy * d) + 2, 4, 2);
+  for (let d = cell; d < len; d += cell + dashW) {
+    const px = x - ux * d + nx * off;
+    const py = y - uy * d + ny * off;
+    ctx.fillRect(Math.round(px) - Math.round(dashW / 2), Math.round(py) - Math.round(dashH / 2), dashW, dashH);
   }
 }
 
 function drawShip(c, s) {
+  const cell = state.cell;
+  const wall = wallPx();
   let x;
   let y;
+  let hullW;
   let sailHeight;
   if (s.state === "yard") {
-    // Drydock: hull resting on a rail above the waterline.
-    x = (WALL_CELLS * 8) / 2;
+    // Drydock: hull inset between the two cradle rails so both stay visible.
+    x = wall / 2;
     y = gy(s.berthPos.y);
-    const ctx = state.ctx;
-    ctx.fillStyle = c.drydockRail;
-    ctx.fillRect(2, y + 1, WALL_CELLS * 8 - 4, 2);
-    drawHull(c, x, y);
+    hullW = Math.max(cell, wall - 8);
+    drawHull(c, x, y, hullW, Math.max(2, Math.round(cell / 4)));
     sailHeight = 0;
   } else if (s.state === "docked") {
     x = gx(0);
     y = gy(s.berthPos.y);
-    drawHull(c, x, y);
-    sailHeight = 4;
+    hullW = cell * 2;
+    drawHull(c, x, y, hullW);
+    sailHeight = cell;
   } else {
     x = gx(s.position.x);
     y = gy(s.position.y);
+    hullW = cell * 3;
     drawWake(c, s, x, y);
-    drawHull(c, x, y);
-    sailHeight = 9;
+    drawHull(c, x, y, hullW);
+    sailHeight = cell * 2;
   }
   drawSail(c, x, y, sailHeight);
-  state.hits.push({ kind: "ship", ship: s, x, y, r: 10 });
+  state.hits.push({ kind: "ship", ship: s, x, y, r: Math.max(cell, hullW / 2 + Math.round(cell / 2)) });
 }
 
 function draw(model) {
@@ -366,8 +448,9 @@ function draw(model) {
   drawHarbor(c, model);
   // Routes first (they end under the island), then islands, then waypoint
   // ticks on top so the last tick (at the island) stays visible, ships last.
+  const activeId = activeShipId(model);
   for (const s of model.ships) {
-    if (s.voyage && s.island) drawRoute(c, s);
+    if (s.voyage && s.island) drawRoute(c, s, s.id === activeId);
   }
   for (const s of model.ships) if (s.island) drawIsland(c, s);
   for (const s of model.ships) {
@@ -409,7 +492,15 @@ function buildList(model) {
   state.list.textContent = "";
   for (const s of model.ships) {
     const li = document.createElement("li");
-    li.textContent = shipText(s);
+    // A real link: reachable by keyboard, opens the deck in place with the href as a fallback.
+    const a = document.createElement("a");
+    a.href = `/ships/${encodeURIComponent(s.id)}`;
+    a.textContent = shipText(s);
+    a.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      openDeck(s.id);
+    });
+    li.appendChild(a);
     state.list.appendChild(li);
   }
 }
