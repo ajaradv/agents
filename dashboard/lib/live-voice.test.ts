@@ -73,3 +73,22 @@ describe("conversation mode bridge (V1)", () => {
     expect(p).toContain("Never invent fleet facts");
   });
 });
+
+describe("live tools (V2)", () => {
+  test("a tool call is answered from fleet data, shown in the action log, and the setup declares the tools", async () => {
+    const up = fakeUpstream();
+    const events: any[] = [];
+    const s = new LiveSession({ audio: () => {}, event: (e) => void events.push(e), close: () => {} }, { agent: "alice", connect: () => up as never, key: async () => "k", briefing: async () => "", tool: async (name, args) => ({ result: `${name}:${JSON.stringify(args)} -> 2 in progress`, summary: "listed in-progress vault tasks" }) });
+    await s.start();
+    up.onopen();
+    expect(up.sent[0].setup.tools[0].functionDeclarations.map((f: any) => f.name)).toEqual(["fleet_status", "ship", "vault_tasks"]);
+    up.onmessage({ data: JSON.stringify({ setupComplete: {} }) });
+    await tick();
+    up.onmessage({ data: JSON.stringify({ toolCall: { functionCalls: [{ id: "c1", name: "vault_tasks", args: { filter: "in-progress" } }] } }) });
+    await tick();
+    await tick();
+    const reply = up.sent.at(-1);
+    expect(reply.toolResponse.functionResponses[0]).toEqual({ id: "c1", name: "vault_tasks", response: { result: 'vault_tasks:{"filter":"in-progress"} -> 2 in progress' } });
+    expect(events.find((e) => e.type === "action")).toMatchObject({ name: "vault_tasks", summary: "listed in-progress vault tasks" });
+  });
+});

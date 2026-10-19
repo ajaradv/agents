@@ -20,6 +20,30 @@ export const LIVE_MODEL = process.env.FLEET_LIVE_MODEL ?? "gemini-3.1-flash-live
 export const LIVE_VOICE = process.env.FLEET_LIVE_VOICE ?? "Aoede";
 const LIVE_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
+/** V2: what live Alice can look up while she talks (read-only; acting comes with V3 and the captain's Go). */
+export const LIVE_TOOLS = [
+  { name: "fleet_status", description: "The fleet right now: ships, open voyages and task progress, who is working, what waits on the captain, today's spend.", parameters: { type: "OBJECT", properties: { detail: { type: "BOOLEAN", description: "Add each crewmate's activity and spend per agent" } } } },
+  { name: "ship", description: "One ship: its open voyage's tasks (owner, status) and its latest log lines.", parameters: { type: "OBJECT", properties: { ship: { type: "STRING", description: "Ship id, e.g. fleet, pochteca, kinwork" } }, required: ["ship"] } },
+  { name: "vault_tasks", description: "The captain's vault tasks: by filter (ready, open, in-progress, blocked, done) or one task by id.", parameters: { type: "OBJECT", properties: { filter: { type: "STRING", description: "ready (default), open, in-progress, blocked, done" }, id: { type: "STRING", description: "One task's id" } } } },
+];
+
+/** Run a live tool; compact text back to the model, a one-line summary for the drawer's action log. */
+export async function runLiveTool(name: string, args: Record<string, unknown>): Promise<{ result: string; summary: string }> {
+  const { fleetStatus, shipLog, shipTasks } = await import("./fleet-api.ts");
+  const { vaultTasksReport, VAULT_FILTERS } = await import("./vault-tasks.ts");
+  const { toolText, VIEWS } = await import("./tool-out.ts");
+  if (name === "fleet_status") return { result: toolText(await fleetStatus(Boolean(args.detail)), VIEWS.fleet_status).slice(0, 6000), summary: "checked the fleet's status" };
+  if (name === "ship") {
+    const id = String(args.ship ?? "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    return { result: `${toolText(await shipTasks(id), VIEWS.ship_tasks)}\n${toolText(shipLog(id, 12), VIEWS.ship_log)}`.slice(0, 6000), summary: `looked at ${id}` };
+  }
+  if (name === "vault_tasks") {
+    const filter = VAULT_FILTERS.includes(String(args.filter) as never) ? String(args.filter) : "ready";
+    return { result: toolText(vaultTasksReport(filter as never, args.id ? String(args.id) : ""), VIEWS.vault_tasks).slice(0, 6000), summary: args.id ? `read vault task ${String(args.id)}` : `listed ${filter} vault tasks` };
+  }
+  return { result: `No tool named ${name}.`, summary: `tried an unknown tool ${name}` };
+}
+
 export type LiveSink = { audio(pcm: Uint8Array): void; event(e: Record<string, unknown>): void; close(): void };
 /** The upstream socket: a WebSocket, or a fake in tests. */
 export type Upstream = { send(data: string): void; close(): void; onopen: (() => void) | null; onmessage: ((e: { data: unknown }) => void) | null; onclose: ((e: { code: number; reason: string }) => void) | null; onerror: (() => void) | null };
@@ -64,7 +88,7 @@ export function persona(agent: string, character = "", briefing = ""): string {
     "The fleet is the captain's set of AI agents: officers (Alice, the Architect, the Designer) and ship crews (a lead, a builder, a scout, a designer, a helmsman) that sail voyages on the captain's projects.",
     "Speak naturally and briefly: one to three sentences, then let the captain talk. The captain can interrupt you; when they do, stop and listen.",
     briefing ? `What you know about the fleet right now (a snapshot from when this talk began; it does not update):\n${briefing}` : "",
-    "You can describe the snapshot, but you cannot act on the fleet or look anything else up by voice yet. For an action or fresh detail, say so plainly and suggest typing it to Alice in the chat, where the full Alice can act. Never invent fleet facts beyond the snapshot.",
+    "For fresh detail, use your tools (fleet_status, ship, vault_tasks) rather than guessing; say briefly that you are checking. You cannot act on the fleet by voice yet: for an action, say so plainly and suggest typing it to Alice in the chat, where the full Alice can act after the captain's Go. Never invent fleet facts.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -79,10 +103,11 @@ export class LiveSession {
   private tokens = { in: 0, out: 0 };
   private started = Date.now();
   private closed = false;
+  private actions: string[] = [];
 
   constructor(
     private sink: LiveSink,
-    private opts: { agent: string; connect?: (url: string) => Upstream; key?: () => Promise<string>; briefing?: () => Promise<string>; character?: string; voice?: string },
+    private opts: { agent: string; connect?: (url: string) => Upstream; key?: () => Promise<string>; briefing?: () => Promise<string>; character?: string; voice?: string; tool?: typeof runLiveTool },
   ) {}
 
   async start(): Promise<void> {
@@ -106,6 +131,7 @@ export class LiveSession {
             systemInstruction: { parts: [{ text: instruction }] },
             inputAudioTranscription: {},
             outputAudioTranscription: {},
+            tools: [{ functionDeclarations: LIVE_TOOLS }],
           },
         }),
       );
@@ -180,11 +206,30 @@ export class LiveSession {
         this.sink.event({ type: "turn" });
       }
     }
+    if (m.toolCall?.functionCalls?.length) await this.toolCall(m.toolCall.functionCalls);
     if (m.usageMetadata) {
       this.tokens.in = Number(m.usageMetadata.promptTokenCount) || this.tokens.in;
       this.tokens.out = Number(m.usageMetadata.responseTokenCount ?? m.usageMetadata.candidatesTokenCount) || this.tokens.out;
     }
     if (m.goAway) this.sink.event({ type: "error", message: "The voice service is ending this session soon; start a new conversation." });
+  }
+
+  /** Gemini asked for fleet facts: look them up, show each in the drawer's action log, and answer. */
+  private async toolCall(calls: { id: string; name: string; args?: Record<string, unknown> }[]): Promise<void> {
+    const responses = [];
+    for (const c of calls) {
+      const t0 = Date.now();
+      let out: { result: string; summary: string };
+      try {
+        out = await (this.opts.tool ?? runLiveTool)(c.name, c.args ?? {});
+      } catch (e) {
+        out = { result: `The lookup failed: ${e instanceof Error ? e.message : String(e)}`, summary: `${c.name} failed` };
+      }
+      this.sink.event({ type: "action", name: c.name, summary: out.summary, ms: Date.now() - t0 });
+      this.actions.push(out.summary);
+      responses.push({ id: c.id, name: c.name, response: { result: out.result } });
+    }
+    this.up?.send(JSON.stringify({ toolResponse: { functionResponses: responses } }));
   }
 
   /** One spoken exchange, appended to the agent's voice log (not its chat thread). */
@@ -193,7 +238,7 @@ export class LiveSession {
     try {
       const dir = join(fleetInboxRoot(), this.opts.agent, "voice");
       mkdirSync(dir, { recursive: true });
-      appendFileSync(join(dir, `${new Date().toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify({ ts: new Date().toISOString(), captain: this.captainText.trim(), agent: this.agentText.trim(), model: LIVE_MODEL })}\n`);
+      appendFileSync(join(dir, `${new Date().toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify({ ts: new Date().toISOString(), captain: this.captainText.trim(), agent: this.agentText.trim(), ...(this.actions.length ? { looked_up: this.actions.splice(0) } : {}), model: LIVE_MODEL })}\n`);
     } catch {
       /* the log never breaks the talk */
     }

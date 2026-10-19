@@ -1187,6 +1187,18 @@ function dashboardApp() {
         this.liveRows = { captain: null, agent: null, last: "" };
         return;
       }
+      if (e.type === "action") {
+        // The live action log: each lookup Alice makes while she talks.
+        const log = this.$refs.chatLog;
+        if (!log) return;
+        const row = document.createElement("div");
+        row.className = "bubble-row is-system is-live is-action";
+        row.innerHTML = `<div class="bubble"><p>⚙ ${escapeHtml(this.current().label || "Alice")} ${escapeHtml(e.summary)}</p></div>`;
+        log.appendChild(row);
+        log.scrollTop = log.scrollHeight;
+        this.liveRows.agent = null; // her answer after a lookup starts a new bubble
+        return;
+      }
       if (e.type !== "transcript") return;
       const log = this.$refs.chatLog;
       if (!log) return;
