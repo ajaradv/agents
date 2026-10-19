@@ -93,6 +93,8 @@ function dashboardApp() {
     /** Voice: "idle" | "listening" | "transcribing"; replies are spoken when voiceReplies is on. */
     voiceState: "idle",
     voiceReplies: false,
+    /** Conversation mode (public/live-voice.js): "off" | "connecting" | "listening" | "speaking". Alice only in V1. */
+    liveState: "off",
     /** Show agents' thinking: narration between tool calls and the live "writing" text (per device, off by default). */
     showThinking: false,
     voiceSpeaking: false,
@@ -1035,6 +1037,7 @@ function dashboardApp() {
 
     openChat(id) {
       this.closePalette();
+      if (id !== this.chatId) this.stopLive();
       const switching = id !== this.chatId || this.chatGroup || !this.chatWs;
       this.chatGroup = null;
       this.chatId = id;
@@ -1143,6 +1146,67 @@ function dashboardApp() {
 
     closeChat() {
       this.chatOpen = false;
+      this.stopLive();
+    },
+
+    // ------------------------------------------------------------ conversation mode (V1)
+
+    /** Start or stop talking live with the agent (Gemini Live on the free account; Alice only for now). */
+    toggleLive() {
+      if (this.liveState !== "off") return this.stopLive();
+      if (this.chatId !== "alice" || !window.LiveVoice) return;
+      if (this.voiceState === "listening") this.stopListening(false);
+      this.stopSpeaking?.();
+      this.liveRows = { captain: null, agent: null, last: "" };
+      this.voiceNote = "Connecting to Alice's voice… (headphones help: the mic can hear her otherwise)";
+      this.live = new window.LiveVoice({
+        agent: "alice",
+        onState: (st) => {
+          this.liveState = st;
+          if (st === "listening") this.voiceNote = "Live with Alice: talk any time, and talk over her to interrupt. Tap Live to end.";
+          if (st === "off" && this.voiceNote.startsWith("Live with")) this.voiceNote = "";
+        },
+        onEvent: (e) => this.liveEvent(e),
+      });
+      this.live.start();
+    },
+
+    stopLive() {
+      this.live?.stop();
+      this.live = null;
+      this.liveState = "off";
+    },
+
+    /** Live transcripts as bubbles in the drawer (not saved to the chat thread; the voice log keeps them). */
+    liveEvent(e) {
+      if (e.type === "error") {
+        this.voiceNote = e.message;
+        return;
+      }
+      if (e.type === "turn") {
+        this.liveRows = { captain: null, agent: null, last: "" };
+        return;
+      }
+      if (e.type !== "transcript") return;
+      const log = this.$refs.chatLog;
+      if (!log) return;
+      const role = e.role === "captain" ? "captain" : "agent";
+      const rows = this.liveRows;
+      // A new speaker starts a new bubble for them.
+      if (rows.last && rows.last !== role) rows[role] = null;
+      rows.last = role;
+      if (!rows[role]) {
+        const row = document.createElement("div");
+        const t = this.current();
+        row.className = role === "captain" ? "d-chat d-chat-end bubble-row is-captain is-live" : "d-chat d-chat-start bubble-row is-agent is-live";
+        row.innerHTML = role === "captain"
+          ? `<img class="avatar" src="/art/captain.png" alt="" width="48" height="48" /><div class="d-chat-bubble bubble"><span class="bubble-name">You · live</span><p></p></div>`
+          : `${this.faceHtml(t)}<div class="d-chat-bubble bubble"><span class="bubble-name">${escapeHtml(t.label || "Alice")} · live</span><p></p></div>`;
+        log.appendChild(row);
+        rows[role] = row;
+      }
+      rows[role].querySelector("p").textContent += e.text;
+      log.scrollTop = log.scrollHeight;
     },
 
     connectThreads(ids) {

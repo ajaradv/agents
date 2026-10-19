@@ -23,6 +23,7 @@ import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fl
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
 import { toolFailuresHtml } from "./lib/tool-failures.ts";
 import { routinesHtml } from "./lib/routines.ts";
+import { LiveSession } from "./lib/live-voice.ts";
 import { vaultDoctorHtml } from "./lib/vault-doctor.ts";
 import { toolGateHtml } from "./lib/tool-gate.ts";
 import { jevHtml } from "./lib/compaction-advisor.ts";
@@ -69,7 +70,7 @@ import { HOST, PORT, ROOT } from "./lib/paths.ts";
 import { requestRefusal } from "./lib/request-guard.ts";
 import { dashLog } from "./lib/log.ts";
 
-type WsData = { agentId: string };
+type WsData = { agentId: string; live?: LiveSession };
 const chatSockets = new Map<string, Set<ServerWebSocket<WsData>>>();
 const sseEncoder = new TextEncoder();
 type SseController = ReadableStreamDefaultController<Uint8Array>;
@@ -261,8 +262,12 @@ const server = Bun.serve<WsData>({
     open(ws) {
       const data = ws.data;
       if (data.agentId === "voice") {
-        ws.send(JSON.stringify({ error: "not configured", hint: "Gemini Live voice later" }));
-        ws.close();
+        // Conversation mode (lib/live-voice.ts): this socket bridges to one Gemini Live session.
+        data.live = new LiveSession(
+          { audio: (pcm) => ws.send(pcm), event: (e) => ws.send(JSON.stringify(e)), close: () => ws.close() },
+          { agent: "alice" },
+        );
+        void data.live.start();
         return;
       }
       if (!chatSockets.has(data.agentId)) {
@@ -277,6 +282,11 @@ const server = Bun.serve<WsData>({
     },
     message(ws, message) {
       const data = ws.data;
+      if (data.live) {
+        if (typeof message === "string") data.live.control(message);
+        else data.live.audio(new Uint8Array(message));
+        return;
+      }
       const { text, requestId } = parseWsSend(message.toString());
       captainSend(data.agentId, text, requestId)
         .catch(() => {
@@ -285,6 +295,7 @@ const server = Bun.serve<WsData>({
     },
     close(ws) {
       const data = ws.data;
+      data.live?.close();
       chatSockets.get(data.agentId)?.delete(ws);
     },
   },
@@ -952,7 +963,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
 /** Which page code is on disk (the files' change times): an open tab compares it and reloads when it changes. */
 function pageBuild(): string {
   let parts = "";
-  for (const f of ["index.html", "app.js", "md.js", "pixel.css", "ui.css"]) {
+  for (const f of ["index.html", "app.js", "md.js", "live-voice.js", "pcm-capture.js", "pixel.css", "ui.css"]) {
     try {
       parts += statSync(join(publicDir, f)).mtimeMs.toFixed(0);
     } catch {

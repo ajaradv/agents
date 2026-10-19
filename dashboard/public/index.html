@@ -287,6 +287,10 @@
                 @pointerdown="micDown($event)" @pointerup="micUp()" @pointerleave="voiceState === 'listening' && !micToggled && micUp()" @click="micClick()">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M6 1h4v8H6zM4 7h1v2h6V7h1v3H9v2h2v2H5v-2h2v-2H4z"/></svg>
         </button>
+        <button type="button" class="d-btn d-btn-sm live-btn" x-show="chatId === 'alice' && !chatGroup" x-cloak
+                :class="{ 'd-btn-neutral': liveState !== 'off', 'is-speaking': liveState === 'speaking' }" :aria-pressed="liveState !== 'off'"
+                :title="liveState === 'off' ? 'Talk live with Alice: a back-and-forth conversation you can interrupt (Gemini Live, free account)' : 'End the live conversation'"
+                @click="toggleLive()" x-text="liveState === 'off' ? 'Live' : liveState === 'connecting' ? 'Live…' : 'End'"></button>
         <button class="d-btn d-btn-neutral d-btn-sm" type="submit">Send</button>
       </div>
       <p class="voice-note" role="status" aria-live="polite" x-show="voiceNote || voiceSpeaking" x-cloak
@@ -332,6 +336,7 @@
   </nav>
 
   <script src="/md.js"></script>
+  <script src="/live-voice.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

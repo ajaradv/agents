@@ -1220,3 +1220,7 @@ body.chat-open { overflow: hidden; }
 /* Health: tool failures (lib/tool-failures.ts). */
 .fail-list { list-style: none; margin: 0.4rem 0 0; padding: 0; display: grid; gap: 0.45rem; font-size: 0.85rem; }
 .fail-list li { overflow-wrap: anywhere; }
+
+/* Conversation mode (V1): live transcripts and the Live button. */
+.bubble-row.is-live .bubble { border-style: dashed; }
+.live-btn.is-speaking { box-shadow: inset 0 0 0 2px var(--teal); }
