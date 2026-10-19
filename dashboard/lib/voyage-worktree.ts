@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import type { ShipRow } from "./fleet-layers.ts";
 import { fleetInboxRoot } from "./paths.ts";
 import { spawnTimed } from "./proc.ts";
+import { readShipConfig } from "./ship-config.ts";
 
 /**
  * A worktree per voyage (vault plan fleet/plans/research/helm-and-maneuvers).
@@ -64,8 +65,17 @@ async function git(cwd: string, args: string[], timeoutMs = 60_000): Promise<{ o
   return { ok: !r.timedOut && r.exitCode === 0, out: (r.stdout || r.stderr).trim() };
 }
 
-/** The default branch to start from: origin's HEAD when there is a remote, else local main or master. */
-async function defaultBase(cwd: string): Promise<string | null> {
+/**
+ * The branch a voyage starts from: the ship's `base_branch` (ship config) when
+ * it exists, as origin/<branch> when the remote has it; else origin's HEAD when
+ * there is a remote, else local main or master. A ship whose work lives on a
+ * long-running branch (the fleet on fleet-reliability) sets base_branch, or its
+ * crews build on a stale main.
+ */
+async function defaultBase(cwd: string, configured?: string): Promise<string | null> {
+  if (configured) {
+    for (const ref of [`origin/${configured}`, configured]) if ((await git(cwd, ["rev-parse", "--verify", "--quiet", ref])).ok) return ref;
+  }
   const remote = await git(cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
   if (remote.ok && remote.out) return remote.out;
   for (const b of ["main", "master"]) if ((await git(cwd, ["rev-parse", "--verify", "--quiet", b])).ok) return b;
@@ -166,7 +176,8 @@ async function prepareLease(
     await release();
     return { ok: false, message: `The leased worktree ${path} is not clean; voyage not started.` };
   }
-  const base = await defaultBase(path);
+  const configured = readShipConfig(ship.id)?.base_branch;
+  const base = await defaultBase(path, typeof configured === "string" && /^[\w./-]{1,100}$/.test(configured) ? configured : undefined);
   if (!base) {
     await release();
     return { ok: false, message: `Could not find ${ship.id}'s default branch (origin/HEAD, main, or master); voyage not started.` };

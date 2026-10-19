@@ -56,3 +56,12 @@ routines:
   Alice's weekly report) live in `fleet/config/routines.yaml`.
 - Health > Diagnostics > Routines lists both layers with last run, result, and
   next run. Engine: `dashboard/lib/routines.ts`.
+
+## Base branch
+
+Voyage worktrees branch from the repo's default branch (`origin/HEAD`, else
+`main` or `master`). A ship whose work lives on a long-running branch sets
+`base_branch` (base or overlay), for example the fleet ship's overlay has
+`base_branch: fleet-reliability`; the voyage then starts from
+`origin/<branch>` (or the local branch when the remote lacks it). Without it,
+crews build on a stale main and their branch conflicts at merge.
