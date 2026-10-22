@@ -782,7 +782,9 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
 
     // Voice (lib/voice.ts): local Kokoro speech, OpenRouter transcription.
     if (path === "/api/voice/status" && req.method === "GET") {
-      return Response.json({ tts: ttsState(), stt: await sttAvailable() });
+      // On the hub, Kokoro is the laptop's while it is awake (lib/laptop.ts).
+      const tts = ttsState() !== "missing" ? ttsState() : (await (await import("./lib/laptop.ts")).laptopCan("tts")) ? "laptop" : "missing";
+      return Response.json({ tts, stt: await sttAvailable() });
     }
     if (path === "/api/voice/stt" && req.method === "POST") {
       const buf = new Uint8Array(await req.arrayBuffer());

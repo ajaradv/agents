@@ -230,6 +230,8 @@ export class EventRouter {
 /** Default wake: Firstmate through its TUI, live agents through their thread. */
 async function wakeOwner(owner: string, events: BusEvent[]): Promise<{ ok: boolean; detail: string }> {
   if (owner === "firstmate") {
+    // On the hub Firstmate lives on the laptop: wake it there while the laptop is awake (lib/laptop.ts).
+    if (process.env.FLEET_LAPTOP_URL) return (await import("./laptop.ts")).laptopFirstmateSend(wakeText(owner, events, true));
     const r = await sendToFirstmateTui(wakeText(owner, events, true));
     return { ok: r.ok, detail: r.ok ? "fm-send" : (r.stderr || r.stdout || "TUI not reachable").trim() };
   }

@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# laptop-worker - let the always-on hub borrow this laptop while it is awake:
+# Kokoro voices and Firstmate's TUI (dashboard/worker.ts; the hub side is
+# dashboard/lib/laptop.ts). macOS only.
+#
+# Usage:
+#   bin/laptop-worker --install            a launchd service on 127.0.0.1:8790, published to the
+#                                          tailnet with Tailscale Serve (https, port 8790), and a
+#                                          shared token in the Keychain (made if missing)
+#   bin/laptop-worker --push-token <host>  give the hub the token (piped over SSH, never shown)
+#   bin/laptop-worker --status             the service, the tailnet address, and a health check
+#   bin/laptop-worker --uninstall
+#
+# The hub then needs FLEET_LAPTOP_URL=https://<this laptop's tailnet name>:8790 in its services
+# (FLEET_LAPTOP_URL=... bin/fleet-services install on the hub).
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PORT="${FLEET_WORKER_PORT:-8790}"
+LABEL=com.fleet.worker
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG="${FLEET_INBOX:-$ROOT/fleet/inbox}/.node/worker.log"
+BUN="$(command -v bun || true)"
+TS="$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)"
+
+token() { security find-generic-password -a fleet -s laptop-worker-token -w 2>/dev/null || true; }
+ts_name() { "$TS" status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null; }
+
+case "${1:-}" in
+  --install)
+    [ "$(uname)" = Darwin ] || { echo "error: the laptop worker is for the macOS laptop"; exit 2; }
+    [ -n "$BUN" ] || { echo "error: bun is not on PATH"; exit 1; }
+    if [ -z "$(token)" ]; then
+      t="$(openssl rand -hex 32)"
+      printf 'add-generic-password -U -a fleet -s laptop-worker-token -l "Fleet laptop worker token" -w %s\n' "$t" | security -i >/dev/null 2>&1 || { echo "error: could not save the token to the Keychain"; exit 1; }
+      unset t
+      echo "made a new worker token (Keychain: laptop-worker-token)"
+    fi
+    mkdir -p "$(dirname "$LOG")" "$(dirname "$PLIST")"
+    cat > "$PLIST" <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key><array><string>$BUN</string><string>run</string><string>$ROOT/dashboard/worker.ts</string></array>
+  <key>WorkingDirectory</key><string>$ROOT</string>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$PATH</string><key>HOME</key><string>$HOME</string><key>FLEET_WORKER_PORT</key><string>$PORT</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$LOG</string>
+  <key>StandardErrorPath</key><string>$LOG</string>
+</dict></plist>
+PL
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" && echo "started $LABEL on 127.0.0.1:$PORT"
+    "$TS" serve --bg --https="$PORT" "http://127.0.0.1:$PORT" >/dev/null 2>&1 && echo "published on the tailnet: https://$(ts_name):$PORT"
+    ;;
+  --push-token)
+    host="${2:-}"; [ -n "$host" ] || { echo "usage: bin/laptop-worker --push-token <host>"; exit 2; }
+    [ -n "$(token)" ] || { echo "error: no token yet; run --install first"; exit 1; }
+    token | ssh -o BatchMode=yes "$host" 'umask 077; d="${FLEET_SECRETS_DIR:-$HOME/.config/fleet/secrets}"; mkdir -p "$d" && chmod 700 "$d" && tr -d "\n" > "$d/laptop-worker-token.tmp" && mv "$d/laptop-worker-token.tmp" "$d/laptop-worker-token"' && echo "the hub has the worker token"
+    ;;
+  --status)
+    launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && echo "service: running" || echo "service: not installed"
+    echo "tailnet: https://$(ts_name):$PORT"
+    # The token goes to curl on stdin (-H @-), never on a command line.
+    echo "health: $(printf 'Authorization: Bearer %s' "$(token)" | curl -s -w ' (HTTP %{http_code})' -H @- "http://127.0.0.1:$PORT/health" 2>/dev/null)"
+    ;;
+  --uninstall)
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null; rm -f "$PLIST"
+    "$TS" serve --https="$PORT" off >/dev/null 2>&1
+    echo "removed $LABEL and its tailnet address"
+    ;;
+  *) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 2 ;;
+esac
