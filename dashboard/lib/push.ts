@@ -104,15 +104,28 @@ export async function sendToAll(msg: PushMessage): Promise<{ sent: number; faile
   vapidKeys();
   let sent = 0;
   let failed = 0;
+  const opts = { TTL: 6 * 3600, urgency: "high" as const, topic: msg.tag.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || undefined };
   for (const { sub } of subscriptions()) {
-    try {
-      await webpush.sendNotification(sub, JSON.stringify(msg), { TTL: 6 * 3600, urgency: "high", topic: msg.tag.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || undefined });
-      sent++;
-    } catch (e) {
-      failed++;
-      const code = (e as { statusCode?: number }).statusCode;
-      if (code === 404 || code === 410) removeSubscription(sub.endpoint);
-      void dashLog("push", `send failed (${code ?? "?"}): ${e instanceof Error ? e.message.slice(0, 160) : String(e)}`);
+    // One retry for a refusal that can pass (Apple answered 403 five times on 2026-10-21/22, then the same send went through).
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await webpush.sendNotification(sub, JSON.stringify(msg), opts);
+        sent++;
+        break;
+      } catch (e) {
+        const err = e as { statusCode?: number; body?: unknown };
+        const code = err.statusCode;
+        const retry = attempt === 0 && (code === 403 || code === 429 || (code ?? 0) >= 500);
+        // The push service's reason is in the body (Apple: {"reason":"BadJwtToken"} and the like).
+        void dashLog("push", `send failed (${code ?? "?"})${retry ? ", retrying" : ""}: ${String(err.body ?? "").slice(0, 160) || (e instanceof Error ? e.message.slice(0, 160) : String(e))}`);
+        if (retry) {
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+        failed++;
+        if (code === 404 || code === 410) removeSubscription(sub.endpoint);
+        break;
+      }
     }
   }
   return { sent, failed };
