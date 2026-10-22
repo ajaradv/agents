@@ -9,7 +9,7 @@ export function fleetInboxRoot(): string {
 }
 
 export function aliceVault(): string {
-  const raw = process.env.ALICE_VAULT ?? "/Users/avega/Workspace/brain";
+  const raw = process.env.ALICE_VAULT ?? "~/Workspace/brain";
   return raw.replace(/^~/, process.env.HOME ?? "");
 }
 

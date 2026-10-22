@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VAULT="${ALICE_VAULT:-/Users/avega/Workspace/brain}"
+VAULT="${ALICE_VAULT:-$HOME/Workspace/brain}"
 SKILLS_SRC="$ROOT/vendor/obsidian-skills/skills"
 INBOX="${VAULT}/fleet/inbox"
 

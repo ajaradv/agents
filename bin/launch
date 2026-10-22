@@ -561,7 +561,7 @@ def restrict_keys(agent: dict) -> list[str]:
 def memory_block(agent_id: str, inbox: Path) -> str:
     """File-based memory for every assistant: static paths (cache-safe), read on demand."""
     mem = inbox / agent_id / "memory"
-    vault = Path(os.environ.get("ALICE_VAULT", "/Users/avega/Workspace/brain")).expanduser()
+    vault = Path(os.environ.get("ALICE_VAULT", "~/Workspace/brain")).expanduser()
     return (
         "\n## Memory (files, read on demand)\n\n"
         f"- **Your memory folder:** `{mem}`\n"
@@ -604,7 +604,7 @@ def crew_memory_block(agent_id: str, ship_id: str, inbox: Path, isolated: bool, 
         (notes or "(empty so far)") + "\n",
         "\n## Memory rules\n",
         f"- `{own_p / 'plan.md'}` (your plan) and `{own_p / 'state.md'}` (written on compaction) belong to the current voyage and are cleared when it ends.\n",
-        f"- The captain's profile (shared, in the vault): `{Path(os.environ.get('ALICE_VAULT', '/Users/avega/Workspace/brain')).expanduser() / 'fleet' / 'captain.md'}`.\n",
+        f"- The captain's profile (shared, in the vault): `{Path(os.environ.get('ALICE_VAULT', '~/Workspace/brain')).expanduser() / 'fleet' / 'captain.md'}`.\n",
         "- When your history is empty or starts with a summary, read `plan.md` and `state.md` if they exist.\n",
         "\n## This voyage (discarded at dock)\n",
     ]
@@ -748,7 +748,7 @@ def prepare_pi_launch(
             + dashboard_chat_block()
         )
     elif vault_raw or agent_id in vault_agents:
-        default_vault = str(vault_raw) if vault_raw else "/Users/avega/Workspace/brain"
+        default_vault = str(vault_raw) if vault_raw else "~/Workspace/brain"
         vault_path = Path(os.environ.get("ALICE_VAULT", default_vault)).expanduser().resolve()
         os.environ["ALICE_VAULT"] = str(vault_path)
         cwd = vault_path
@@ -776,7 +776,7 @@ def prepare_pi_launch(
     elif str(agent.get("workspace") or "") == "repo":
         # Repo-upkeep agents (shipwright): work in this repo, not the vault or FM_HOME.
         cwd = ROOT
-        vault_path = Path(os.environ.get("ALICE_VAULT", "/Users/avega/Workspace/brain")).expanduser()
+        vault_path = Path(os.environ.get("ALICE_VAULT", "~/Workspace/brain")).expanduser()
         path_block = (
             "## Resolved paths (this session)\n\n"
             f"- **Repo (cwd):** `{ROOT}`\n"

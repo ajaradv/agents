@@ -14,7 +14,7 @@ dashboard_session: persistent
 # canvas, voice); design turns read a lot of code, so allow up to 30 minutes.
 runtime: rpc
 turn_timeout: 1800
-vault: /Users/avega/Workspace/brain
+vault: ~/Workspace/brain
 extensions:
   - cursor-sdk
   - hermes-memory
