@@ -65,6 +65,27 @@ describe("EventRouter", () => {
     await r.flush("designer");
     expect(calls).toBe(2);
   });
+  test("an owner that stays unreachable is reported once, then retried quietly; recovery is noted", async () => {
+    mkdirSync(join(inbox, "architect"), { recursive: true });
+    writeFileSync(bus("architect"), "");
+    let up = false;
+    const told: string[] = [];
+    const r = new EventRouter(async () => (up ? { ok: true, detail: "ok" } : { ok: false, detail: "●━━━━\n●  WORKTREE TANGLE\n●━━━━" }), () => ["architect"], 30, (summary) => void told.push(summary));
+    await r.poll();
+    add("architect", { from: "captain", kind: "plan-request", summary: "graphics" });
+    await r.poll();
+    await wait(80);
+    await r.flush("architect");
+    expect(told).toEqual([]);
+    await r.flush("architect");
+    expect(told).toEqual(["architect cannot be woken; 1 bus line(s) wait for it"]);
+    await r.flush("architect");
+    expect(told.length).toBe(1);
+    up = true;
+    await r.flush("architect");
+    await r.flush("architect");
+    expect(told.length).toBe(1);
+  });
 });
 
 describe("test inboxes never reach the captain's live TUIs", () => {

@@ -6,6 +6,7 @@ import { allChatTargetIds, chatTarget } from "./chat-targets.ts";
 import { sendToFirstmateTui } from "./firstmate-chat.ts";
 import { dashLog } from "./log.ts";
 import { fleetInboxRoot, nodeStateDir } from "./paths.ts";
+import { notifyCaptain } from "./notify.ts";
 import { logShipEvent } from "./ship-log.ts";
 
 /**
@@ -26,12 +27,21 @@ import { logShipEvent } from "./ship-log.ts";
  * FLEET_ROUTER_MAX_PER_HOUR wakes per agent (default 6), the rest waiting for
  * the next hour. Read positions persist in fleet/inbox/.node/router.json, so a
  * restart never replays old lines; a bus seen for the first time starts at its
- * end. Every wake is logged on the fleet ship log (kind "router").
+ * end. Wakes are logged on the fleet ship log (kind "router").
+ *
+ * An owner that cannot be woken (Firstmate's TUI closed) keeps its lines and is
+ * retried every 5 minutes, then hourly after UNREACHABLE_AFTER failures, when
+ * the captain gets one notice. Only the first failure, that notice, and the
+ * recovery are logged: on 2026-10-22 a hand-off to a Firstmate that had been
+ * down for six days wrote the same failure 60 times in nine hours, and nobody
+ * was told.
  */
 
 const BATCH_MS = Math.max(5, Number(process.env.FLEET_ROUTER_BATCH_SECS) || 30) * 1000;
 const MAX_PER_HOUR = Math.max(1, Number(process.env.FLEET_ROUTER_MAX_PER_HOUR) || 6);
 const POLL_MS = 5000;
+/** Failed wakes in a row before the captain is told and retries slow to hourly. */
+export const UNREACHABLE_AFTER = 3;
 /** Lines that never need anyone: liveness, the dashboard's own bookkeeping. */
 const NOISE = new Set(["heartbeat", "captain-chat", "captain-wait", "captain-wait-clear"]);
 
@@ -73,6 +83,12 @@ export function wakeText(owner: string, events: BusEvent[], firstmate: boolean):
   ].join("\n");
 }
 
+/** A wake failure's useful part: Firstmate's tools print a framed banner first. */
+function firstLines(detail: string): string {
+  const lines = detail.split("\n").map((l) => l.replace(/^[\s●━─═|]+|[\s●━─═]+$/g, "")).filter((l) => l && !/^[━─═]+$/.test(l));
+  return lines.slice(0, 3).join(" · ").slice(0, 400);
+}
+
 type Offsets = Record<string, number>;
 
 function offsetsPath(): string {
@@ -87,12 +103,15 @@ export class EventRouter {
   private offsets: Offsets = {};
   private pending = new Map<string, { events: BusEvent[]; timer: ReturnType<typeof setTimeout> | null }>();
   private sent = new Map<string, number[]>();
+  /** Failed wakes in a row per owner, and whether the captain was told. */
+  private failing = new Map<string, { count: number; told: boolean }>();
   private busy = false;
 
   constructor(
     private wake: (owner: string, events: BusEvent[]) => Promise<{ ok: boolean; detail: string }>,
     private owners: () => string[],
     private batchMs = BATCH_MS,
+    private tell: (summary: string, detail: string) => void = (summary, detail) => void notifyCaptain({ from: "router", kind: "blocked", summary, detail, ref: "health" }),
   ) {
     try {
       this.offsets = JSON.parse(readFileSync(offsetsPath(), "utf8")) as Offsets;
@@ -183,21 +202,28 @@ export class EventRouter {
     } catch (err) {
       res = { ok: false, detail: err instanceof Error ? err.message : "wake failed" };
     }
-    logShipEvent("fleet", "router", "router", `${res.ok ? "Woke" : "Could not wake"} ${owner}: ${events.map((e) => e.kind).join(", ")}${res.ok ? "" : ` (${res.detail})`}`, {
-      owner,
-      ok: res.ok,
-      kinds: events.map((e) => e.kind),
-      from: [...new Set(events.map((e) => e.from))],
-      detail: res.detail.slice(0, 300),
-    });
-    await dashLog("router", `${owner} ${res.ok ? "woken" : "not woken"}: ${events.map((e) => e.kind).join(",")} ${res.detail.slice(0, 120)}`);
-    if (!res.ok) {
-      // Keep them for the next attempt (Firstmate's TUI may be closed).
-      const back = this.pending.get(owner) ?? { events: [], timer: null };
-      back.events.unshift(...events);
-      if (!back.timer) back.timer = setTimeout(() => void this.flush(owner), 5 * 60_000);
-      this.pending.set(owner, back);
+    const kinds = events.map((e) => e.kind).join(", ");
+    const payload = { owner, ok: res.ok, kinds: events.map((e) => e.kind), from: [...new Set(events.map((e) => e.from))], detail: firstLines(res.detail).slice(0, 300) };
+    const was = this.failing.get(owner);
+    await dashLog("router", `${owner} ${res.ok ? "woken" : "not woken"}: ${events.map((e) => e.kind).join(",")} ${firstLines(res.detail).slice(0, 120)}`);
+    if (res.ok) {
+      this.failing.delete(owner);
+      logShipEvent("fleet", "router", "router", `Woke ${owner}: ${kinds}${was ? ` (reachable again after ${was.count} failed tries)` : ""}`, payload);
+      return;
     }
+    const f = { count: (was?.count ?? 0) + 1, told: was?.told ?? false };
+    this.failing.set(owner, f);
+    if (f.count === 1) logShipEvent("fleet", "router", "router", `Could not wake ${owner}: ${kinds} (${firstLines(res.detail)}); retrying every 5 minutes`, payload);
+    if (f.count >= UNREACHABLE_AFTER && !f.told) {
+      f.told = true;
+      logShipEvent("fleet", "router", "router", `${owner} is unreachable (${f.count} failed wakes); holding its lines and retrying hourly`, payload);
+      this.tell(`${owner} cannot be woken; ${events.length} bus line(s) wait for it`, `The event router could not reach ${owner} ${f.count} times in a row: ${firstLines(res.detail)}\n\nWaiting: ${events.map((e) => line(e, 120)).join("\n")}\n\nThey are delivered when ${owner} is back (retried hourly).`);
+    }
+    // Keep them for the next attempt (Firstmate's TUI may be closed).
+    const back = this.pending.get(owner) ?? { events: [], timer: null };
+    back.events.unshift(...events);
+    if (!back.timer) back.timer = setTimeout(() => void this.flush(owner), (f.count >= UNREACHABLE_AFTER ? 60 : 5) * 60_000);
+    this.pending.set(owner, back);
   }
 }
 
