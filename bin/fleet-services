@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# fleet-services - run the fleet node and the dashboard as macOS background
-# services (launchd LaunchAgents): they start at login and restart if they die.
+# fleet-services - run the fleet node and the dashboard as background
+# services (launchd LaunchAgents on macOS, systemd units on Linux): they
+# start at login (Linux: at boot) and restart if they die.
 #
 # Usage:
 #   bin/fleet-services install     write ~/Library/LaunchAgents/*.plist and start both
@@ -85,6 +86,56 @@ start_job() { # bootstrap with a few retries
   done
   launchctl bootstrap "$DOMAIN" "$AGENTS_DIR/$1.plist"
 }
+
+# ---------------------------------------------------------------- Linux (the exe.dev hub)
+# systemd system units (run as this user) instead of LaunchAgents:
+# fleet-node and fleet-dashboard, started at boot and restarted if they die.
+# System units, not user units: an SSH session on the hub has no user manager.
+if [ "$(uname)" = Linux ]; then
+  UNITS=/etc/systemd/system
+  U_NODE="fleet-node${SUFFIX:+-$SUFFIX}"
+  U_DASH="fleet-dashboard${SUFFIX:+-$SUFFIX}"
+  unit() { # name, script, log, description, [KEY=VALUE ...]
+    printf '[Unit]\nDescription=%s\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\n' "$4"
+    printf 'User=%s\nWorkingDirectory=%s\nExecStart=%s run %s\n' "$(id -un)" "$ROOT" "$BUN" "$ROOT/$2"
+    printf 'Environment=PATH=%s\nEnvironment=HOME=%s\n' "$PATH" "$HOME"
+    for kv in "${@:5}"; do printf 'Environment=%s\n' "$kv"; done
+    for k in DASHBOARD_PORT FLEET_INBOX ALICE_VAULT FLEET_NODE_PORT FLEET_TAILNET_USERS; do
+      if [ -n "${!k:-}" ]; then printf 'Environment=%s=%s\n' "$k" "${!k}"; fi
+    done
+    printf 'Restart=always\nRestartSec=5\nStandardOutput=append:%s\nStandardError=append:%s\n\n[Install]\nWantedBy=multi-user.target\n' "$LOGS/$3" "$LOGS/$3"
+  }
+  sc() { sudo systemctl "$@"; }
+  case "${1:-}" in
+    install)
+      [ -n "$BUN" ] || die "bun is not on PATH"
+      mkdir -p "$LOGS"
+      unit "$U_NODE" dashboard/node.ts node.log "Fleet node (agents, routines, orders)" | sudo tee "$UNITS/$U_NODE.service" >/dev/null
+      unit "$U_DASH" dashboard/server.ts dashboard.log "Fleet dashboard" FLEET_NODE_SPAWN=0 | sudo tee "$UNITS/$U_DASH.service" >/dev/null
+      sc daemon-reload
+      for u in "$U_NODE" "$U_DASH"; do sc enable --now "$u.service" >/dev/null && echo "started $u"; done
+      ;;
+    uninstall)
+      for u in "$U_DASH" "$U_NODE"; do sc disable --now "$u.service" 2>/dev/null; sudo rm -f "$UNITS/$u.service"; echo "removed $u"; done
+      sc daemon-reload
+      ;;
+    restart)
+      for u in "$U_NODE" "$U_DASH"; do sc restart "$u.service" && echo "restarted $u"; done
+      ;;
+    status)
+      for u in "$U_NODE" "$U_DASH"; do
+        if sc is-active --quiet "$u.service"; then echo "$u: running (pid $(sc show -p MainPID --value "$u.service"))"
+        elif [ -f "$UNITS/$u.service" ]; then echo "$u: installed, not running"
+        else echo "$u: not installed"; fi
+      done
+      ;;
+    *)
+      awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+      exit 2
+      ;;
+  esac
+  exit 0
+fi
 
 case "${1:-}" in
   install)

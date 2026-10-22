@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # fleet-op-token - store or check the 1Password service account token the fleet
 # reads secrets with (docs/onepassword.md, "Service account"). The token goes to
-# the login Keychain (service op-service-account, account fleet); it is never
-# printed, put in shell history, or written to a file.
+# the login Keychain on macOS (service op-service-account, account fleet), or on
+# Linux (the exe.dev hub) a file only this user can read (~/.config/fleet/secrets,
+# lib/secret-store.ts). It is never printed or put in shell history.
 #
 # Usage:
 #   bin/fleet-op-token           check the stored token (length, sign-in, vaults)
 #   bin/fleet-op-token --store   paste a new token (hidden), verify it, then save it
+#   ... | bin/fleet-op-token --stdin   the same, reading the token from a pipe (setting up a remote host)
 #   bin/fleet-op-token --help
 #
 # Why not `security add-generic-password -w`: its prompt silently cuts input at
@@ -15,6 +17,23 @@ set -uo pipefail
 
 SERVICE=op-service-account
 ACCOUNT=fleet
+SECRETS_DIR="${FLEET_SECRETS_DIR:-$HOME/.config/fleet/secrets}"
+FILES=0; [ "${FLEET_SECRET_BACKEND:-}" = file ] || [ "$(uname)" = Linux ] && FILES=1
+
+stored() {
+  if [ "$FILES" = 1 ]; then cat "$SECRETS_DIR/$SERVICE" 2>/dev/null || true
+  else security find-generic-password -a "$ACCOUNT" -s "$SERVICE" -w 2>/dev/null || true; fi
+}
+
+save() { # the token on stdin
+  if [ "$FILES" = 1 ]; then
+    (umask 077; mkdir -p "$SECRETS_DIR" && chmod 700 "$SECRETS_DIR" && cat > "$SECRETS_DIR/$SERVICE.tmp" && mv "$SECRETS_DIR/$SERVICE.tmp" "$SECRETS_DIR/$SERVICE")
+  else
+    local t; t="$(cat)"
+    security add-generic-password -U -a "$ACCOUNT" -s "$SERVICE" -l "1Password service account (fleet)" -w "$t" >/dev/null 2>&1
+  fi
+}
+WHERE="the Keychain"; [ "$FILES" = 1 ] && WHERE="$SECRETS_DIR (mode 600)"
 
 check() {
   local t="$1"
@@ -27,25 +46,28 @@ check() {
 
 case "${1:-}" in
   "")
-    t="$(security find-generic-password -a "$ACCOUNT" -s "$SERVICE" -w 2>/dev/null || true)"
+    t="$(stored)"
     if [ -z "$t" ]; then echo "result: no token stored"; echo "help[1]:"; echo "  bin/fleet-op-token --store"; exit 0; fi
     if out="$(check "$t")"; then echo "result: token works (${#t} characters)"; echo "$out"; echo "help[2]:"; echo "  bin/fleet-op-token --store"; echo "  bin/fleet-secrets | <reader>"; else echo "result: stored token does not work"; echo "$out"; echo "help[1]:"; echo "  bin/fleet-op-token --store"; fi
     unset t; exit 0 ;;
-  --store)
-    printf 'Paste the service account token, then press Return (nothing is shown): ' >&2
-    # Non-canonical mode: the terminal's line editor caps a line at 1024 bytes.
-    old="$(stty -g 2>/dev/null || true)"
-    stty -echo -icanon min 1 time 0 2>/dev/null || true
-    t=""
-    while IFS= read -r -n 1 c; do [ -z "$c" ] && break; t+="$c"; done
-    [ -n "$old" ] && stty "$old" 2>/dev/null
-    printf '\n' >&2
+  --store|--stdin)
+    if [ "$1" = --stdin ]; then
+      t="$(cat)"
+    else
+      printf 'Paste the service account token, then press Return (nothing is shown): ' >&2
+      # Non-canonical mode: the terminal's line editor caps a line at 1024 bytes.
+      old="$(stty -g 2>/dev/null || true)"
+      stty -echo -icanon min 1 time 0 2>/dev/null || true
+      t=""
+      while IFS= read -r -n 1 c; do [ -z "$c" ] && break; t+="$c"; done
+      [ -n "$old" ] && stty "$old" 2>/dev/null
+      printf '\n' >&2
+    fi
     t="$(printf '%s' "$t" | tr -d '[:space:]')"
     if ! out="$(check "$t")"; then echo "$out"; echo "result: not saved"; unset t; exit 1; fi
-    security add-generic-password -U -a "$ACCOUNT" -s "$SERVICE" -l "1Password service account (fleet)" -w "$t" >/dev/null 2>&1 \
-      || { echo "error: the Keychain refused the token (is the login keychain unlocked?)"; unset t; exit 1; }
+    printf '%s' "$t" | save || { echo "error: could not save the token to $WHERE"; unset t; exit 1; }
     unset t
-    echo "result: saved to the Keychain and verified"
+    echo "result: saved to $WHERE and verified"
     echo "$out"
     exit 0 ;;
   -h|--help)
@@ -53,8 +75,9 @@ case "${1:-}" in
 command: fleet-op-token
 summary: Store or check the 1Password service account token the fleet reads secrets with
 usage: bin/fleet-op-token [--store]
-flags[2]{flag,description}:
-  --store,paste a new token (hidden), verify it with 1Password, then save it to the Keychain
+flags[3]{flag,description}:
+  --store,paste a new token (hidden), verify it with 1Password, then save it (Keychain on macOS; a 0600 file on Linux)
+  --stdin,the same with the token from a pipe (op read ... | ssh host bin/fleet-op-token --stdin)
   --help,show this help
 examples[2]:
   bin/fleet-op-token

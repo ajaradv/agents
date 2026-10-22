@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { branchForGoal, usesVoyageWorktrees, voyageBranch } from "./voyage-worktree.ts";
+
+/** This repo (a git checkout on any machine). */
+const REPO = join(import.meta.dir, "..", "..");
 
 describe("voyage worktrees", () => {
   test("branch names: <type>/<words> from the goal (python-semantic-release prefixes), unique when taken", () => {
@@ -12,8 +16,8 @@ describe("voyage worktrees", () => {
     expect(voyageBranch("fix/rounding", (b) => taken.has(b), "2026-10-17")).toBe("fix/rounding-2026-10-17-3");
   });
   test("only ships the fleet's crew sails, with a git repo", () => {
-    expect(usesVoyageWorktrees({ orchestrator: "firstmate", path: "/Users/avega/Workspace/agents" })).toBe(false);
+    expect(usesVoyageWorktrees({ orchestrator: "firstmate", path: REPO })).toBe(false);
     expect(usesVoyageWorktrees({ orchestrator: "lead", path: "/nonexistent" })).toBe(false);
-    expect(usesVoyageWorktrees({ orchestrator: "lead", path: "/Users/avega/Workspace/agents" })).toBe(true);
+    expect(usesVoyageWorktrees({ orchestrator: "lead", path: REPO })).toBe(true);
   });
 });

@@ -2,6 +2,7 @@ import { createClient } from "@1password/sdk";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT } from "./paths.ts";
+import { readSecret, writeSecret } from "./secret-store.ts";
 
 /**
  * The fleet's provider keys from the 1Password service account, read with
@@ -10,7 +11,7 @@ import { ROOT } from "./paths.ts";
  * stalled before its first log line and never answered (2026-10-18), so the
  * services and bin/fleet-secrets both read keys here.
  *
- * - The token: the login Keychain item bin/fleet-op-token stores (-a fleet -s op-service-account).
+ * - The token: what bin/fleet-op-token stores (lib/secret-store.ts: the login Keychain on macOS, a 0600 file on Linux).
  * - The references: fleet/home/.env.op (KEY=op://vault/item/field, item ids).
  */
 
@@ -29,11 +30,7 @@ export function parseRefs(text: string): Record<string, string> {
 }
 
 async function keychainToken(): Promise<string> {
-  const p = Bun.spawn(["/usr/bin/security", "find-generic-password", "-a", "fleet", "-s", "op-service-account", "-w"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
-  const t = setTimeout(() => p.kill(), 10_000);
-  const out = await new Response(p.stdout).text();
-  clearTimeout(t);
-  return out.trim();
+  return readSecret("op-service-account");
 }
 
 /** KEY → value for every reference that resolves; {} when no token or no refs file. */
@@ -102,8 +99,7 @@ function cacheHash(keys: Record<string, string>): string {
 
 export async function readKeychainCache(): Promise<Record<string, string>> {
   if (process.env.NODE_ENV === "test") return {};
-  const p = Bun.spawn(["/usr/bin/security", "find-generic-password", "-a", "fleet", "-s", CACHE_SERVICE, "-w"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
-  const out = (await new Response(p.stdout).text()).trim();
+  const out = await readSecret(CACHE_SERVICE);
   if (!out) return {};
   try {
     return JSON.parse(Buffer.from(out, "base64").toString("utf8")) as Record<string, string>;
@@ -122,10 +118,7 @@ export async function saveKeychainCache(keys: Record<string, string>): Promise<v
     return;
   }
   const value = Buffer.from(JSON.stringify(keys)).toString("base64");
-  const p = Bun.spawn(["/usr/bin/security", "-i"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
-  p.stdin.write(`add-generic-password -U -a fleet -s ${CACHE_SERVICE} -l "Fleet provider keys (cache)" -w ${value}\n`);
-  p.stdin.end();
-  if ((await p.exited) === 0) savedHash = h;
+  if (await writeSecret(CACHE_SERVICE, value, "Fleet provider keys (cache)")) savedHash = h;
 }
 
 /** The service account first; when 1Password refuses (rate limit, outage), the Keychain copy of the last good keys. */

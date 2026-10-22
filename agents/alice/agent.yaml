@@ -16,7 +16,7 @@ dashboard_session: persistent
 live_voice: Sulafat
 # Spend cap per day, checked against her turns in the fleet ship log.
 daily_budget_usd: 6
-vault: /Users/avega/Workspace/brain
+vault: ~/Workspace/brain
 vault_inbox: fleet/inbox
 # A light delegator: no Hermes (durable memory is files: captain profile,
 # state/plan/notes, and recall), no Obsidian extension (built-in file tools

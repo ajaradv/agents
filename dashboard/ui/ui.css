@@ -9,11 +9,12 @@
  * - One theme, "pixel": the dashboard's colors, square corners, 2px borders.
  */
 @import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
 
+/* Only these files: automatic detection also read untracked folders on the laptop, so builds differed by machine. */
 @source "../lib";
-@source "../public/index.html";
-@source "../public/app.js";
+@source "../*.ts";
+@source "../public/*.{html,js}";
 
 @plugin "daisyui" {
   themes: false;

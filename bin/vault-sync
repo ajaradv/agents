@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# vault-sync - keep the vault the same on the laptop and the hub, through its
+# private git remote: commit local changes, rebase on the remote, push.
+# Runs every few minutes on both machines (--install), so notes written in
+# Obsidian reach Alice on the hub and hers reach Obsidian.
+#
+# Usage:
+#   bin/vault-sync              one sync now
+#   bin/vault-sync --install    every 3 minutes (launchd on macOS, a systemd timer on Linux)
+#   bin/vault-sync --uninstall
+#   bin/vault-sync --status     the last result
+#
+# A conflict never forces anything: the rebase is undone, local work stays
+# committed locally, and the status file says so (fleet/inbox/.node/vault-sync.json)
+# until someone resolves it.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VAULT="${ALICE_VAULT:-$HOME/Workspace/brain}"
+VAULT="${VAULT/#\~/$HOME}"
+STATUS="${FLEET_INBOX:-$ROOT/fleet/inbox}/.node/vault-sync.json"
+HOST="$(hostname -s 2>/dev/null || hostname)"
+
+status() { # result, detail
+  mkdir -p "$(dirname "$STATUS")"
+  printf '{"ts":"%s","host":"%s","result":"%s","detail":"%s"}\n' "$(date -u +%FT%TZ)" "$HOST" "$1" "$(printf '%s' "$2" | tr '\n"' ' \047' | cut -c1-300)" > "$STATUS"
+  echo "$1: $2"
+}
+
+sync_once() {
+  cd "$VAULT" 2>/dev/null || { status error "no vault at $VAULT"; return 1; }
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { status error "$VAULT is not a git repo"; return 1; }
+  if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then status conflict "a rebase is in progress in $VAULT; resolve it by hand"; return 1; fi
+  if [ -n "$(git status --porcelain)" ]; then
+    git add -A && git commit -q -m "vault sync from $HOST" || { status error "commit failed"; return 1; }
+  fi
+  if ! out="$(git pull -q --rebase origin "$(git branch --show-current)" 2>&1)"; then
+    git rebase --abort >/dev/null 2>&1
+    status conflict "pull --rebase failed (kept local commits, nothing pushed): $out"
+    return 1
+  fi
+  if [ -n "$(git log --oneline '@{u}..' 2>/dev/null)" ]; then
+    out="$(git push -q 2>&1)" || { status error "push failed: $out"; return 1; }
+    status ok "pushed"
+  else
+    status ok "up to date"
+  fi
+}
+
+case "${1:-}" in
+  "") sync_once ;;
+  --status) cat "$STATUS" 2>/dev/null || echo "no sync yet" ;;
+  --install)
+    if [ "$(uname)" = Linux ]; then
+      printf '[Unit]\nDescription=Vault sync (git)\n\n[Service]\nType=oneshot\nUser=%s\nEnvironment=HOME=%s\nEnvironment=ALICE_VAULT=%s\nExecStart=%s\n' "$(id -un)" "$HOME" "$VAULT" "$ROOT/bin/vault-sync" | sudo tee /etc/systemd/system/vault-sync.service >/dev/null
+      printf '[Unit]\nDescription=Vault sync every 3 minutes\n\n[Timer]\nOnBootSec=1min\nOnUnitActiveSec=3min\n\n[Install]\nWantedBy=timers.target\n' | sudo tee /etc/systemd/system/vault-sync.timer >/dev/null
+      sudo systemctl daemon-reload && sudo systemctl enable --now vault-sync.timer >/dev/null && echo "installed vault-sync.timer"
+    else
+      p="$HOME/Library/LaunchAgents/com.fleet.vault-sync.plist"
+      cat > "$p" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.fleet.vault-sync</string>
+  <key>ProgramArguments</key><array><string>$ROOT/bin/vault-sync</string></array>
+  <key>EnvironmentVariables</key><dict><key>ALICE_VAULT</key><string>$VAULT</string><key>PATH</key><string>/usr/bin:/bin:/opt/homebrew/bin</string></dict>
+  <key>StartInterval</key><integer>180</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>${STATUS%.json}.log</string>
+  <key>StandardErrorPath</key><string>${STATUS%.json}.log</string>
+</dict></plist>
+EOF
+      launchctl bootout "gui/$(id -u)/com.fleet.vault-sync" 2>/dev/null; launchctl bootstrap "gui/$(id -u)" "$p" && echo "installed com.fleet.vault-sync"
+    fi ;;
+  --uninstall)
+    if [ "$(uname)" = Linux ]; then sudo systemctl disable --now vault-sync.timer 2>/dev/null; sudo rm -f /etc/systemd/system/vault-sync.{service,timer}; sudo systemctl daemon-reload
+    else launchctl bootout "gui/$(id -u)/com.fleet.vault-sync" 2>/dev/null; rm -f "$HOME/Library/LaunchAgents/com.fleet.vault-sync.plist"; fi
+    echo "removed vault sync" ;;
+  -h|--help|*) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0" ;;
+esac
