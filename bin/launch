@@ -746,7 +746,6 @@ def prepare_pi_launch(
             + f"- **Crew aboard:** {crew}\n"
             f"- **FLEET_INBOX:** `{inbox}`\n"
             f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
-            f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
             + dashboard_chat_block()
         )
@@ -759,9 +758,8 @@ def prepare_pi_launch(
             "## Resolved paths (this session)\n\n"
             f"- **ALICE_VAULT:** `{vault_path}`\n"
             f"- **FLEET_INBOX:** `{inbox}`\n"
-            f"- Alice bus (read): `{inbox / 'alice' / 'events.jsonl'}`\n"
+            f"- Alice bus (Alice reads; others write hand-offs): `{inbox / 'alice' / 'events.jsonl'}`\n"
             f"- Architect bus (read): `{inbox / 'architect' / 'events.jsonl'}`\n"
-            f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
             f"- Vault human inbox: `{vault_path / 'fleet' / 'inbox'}/`\n"
             f"- Plans: `{vault_path / 'fleet' / 'plans'}/`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
@@ -787,9 +785,9 @@ def prepare_pi_launch(
             f"- Agents: `{ROOT / 'agents'}/`, roles: `{ROOT / 'roles'}/`\n"
             f"- Ships: `{ROOT / 'fleet' / 'ships'}/`\n"
             f"- SSSF source: `{ROOT / '.claude' / 'skills' / 'sssf'}/`\n"
-            f"- Firstmate project registry (read; write only with captain yes): `{FIRSTMATE_HOME / 'data' / 'projects.md'}`\n"
+            f"- Firstmate project registry (Firstmate is retired; write only with captain yes): `{FIRSTMATE_HOME / 'data' / 'projects.md'}`\n"
             f"- Vault initiatives (read only): `{vault_path / 'fleet' / 'initiatives'}/`\n"
-            f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
+            f"- Alice bus (write hand-offs): `{inbox / 'alice' / 'events.jsonl'}`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
             + dashboard_chat_block()
         )
@@ -808,7 +806,6 @@ def prepare_pi_launch(
             "- Ships (id: path):\n" + (ship_lines or "  - none registered\n") +
             f"- Firstmate project registry (read only): `{FIRSTMATE_HOME / 'data' / 'projects.md'}`\n"
             f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
-            f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
             + dashboard_chat_block()
         )
