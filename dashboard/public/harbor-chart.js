@@ -36,6 +36,13 @@ const CONDITION_LABEL = {
 
 const STATE_LABEL = { yard: "In the yard", docked: "Docked", sailing: "Under sail" };
 
+const WEATHER_LABEL = { clear: "Clear", overcast: "Overcast", storm: "Storm" };
+
+// Fleet gauge cutoffs mirror voyage-progress.ts gaugeColor (0.40 teal, 0.15 vermilion).
+const GAUGE_DETENTS = 8;
+const GAUGE_TEAL_FRAC = 0.40;
+const GAUGE_VERMILION_FRAC = 0.15;
+
 // Six island tiles, 4×3 cells each: `.` empty, `#` sand, `g` green, `y` gold.
 const ISLAND_TILES = [
   [".##.", "#gg#", "####"], // 0 green hill
@@ -59,12 +66,14 @@ const state = {
   refreshTimer: 0,
   cssWidth: 0,
   cssHeight: 0,
-  rows: 0,
   dpr: 1,
   cell: 8, // sprite cell in CSS px, scaled with the canvas and snapped to 8
   hits: [],
   reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   fontsReady: null,
+  short: false, // all ships docked/yard: the chart shortens to harbor wall + a strip of sea
+  skyPx: 8,
+  waterRows: 0,
 };
 
 function colors() {
@@ -88,6 +97,12 @@ function colors() {
     drydockRail: v("--drydock-deep", "#8a6a3e"),
     hull: v("--hull", "#6b3f1f"),
     hullDark: v("--hull-dark", "#4a2a14"),
+    skyClear: v("--sky-clear", "#a9d3e3"),
+    skyOvercast: v("--sky-overcast", "#aeb9be"),
+    skyStorm: v("--sky-storm", "#34404a"),
+    cloud: v("--cloud", "#eef2f4"),
+    cloudGrey: v("--cloud-grey", "#97a3aa"),
+    cloudDark: v("--cloud-dark", "#26313a"),
   };
 }
 
@@ -111,10 +126,16 @@ function layout() {
   const w = state.container ? state.container.clientWidth : 0;
   state.dpr = window.devicePixelRatio || 1;
   state.cssWidth = Math.max(8 * 8, Math.floor(w / 8) * 8);
-  state.cssHeight = Math.max(3 * 8, Math.round((state.cssWidth * 7) / 16 / 8) * 8);
-  state.rows = Math.round(state.cssHeight / 8);
   // One sprite cell, scaled with the canvas and snapped to a multiple of 8.
   state.cell = Math.max(8, Math.round(state.cssWidth / (CHART_W * 8)) * 8);
+  // A 2-cell sky band on top (tall enough to read as weather), then the water
+  // area: 16:7 normally, ~half in the all-in-harbor state so a docked fleet is
+  // not a tall empty sea.
+  state.skyPx = state.cell * 2;
+  const fullWater = Math.max(3 * 8, Math.round((state.cssWidth * 7) / 16 / 8) * 8);
+  const water = state.short ? Math.max(3 * 8, Math.round(fullWater / 2 / 8) * 8) : fullWater;
+  state.waterRows = Math.round(water / 8);
+  state.cssHeight = state.skyPx + water;
   const c = state.canvas;
   c.style.width = `${state.cssWidth}px`;
   c.style.height = `${state.cssHeight}px`;
@@ -137,9 +158,9 @@ function gx(x) {
   return wallPx() + Math.round((x / CHART_W) * cols) * 8;
 }
 
-/** Chart y (0..70) → CSS px, snapped to the 8 px grid. */
+/** Chart y (0..70) → CSS px, snapped to the 8 px grid, below the sky band. */
 function gy(y) {
-  return Math.round((y / CHART_H) * state.rows) * 8;
+  return state.skyPx + Math.round((y / CHART_H) * state.waterRows) * 8;
 }
 
 /** Label font scaled with the cell, floored at 10 px so it stays readable. */
@@ -179,16 +200,51 @@ function interpolated(from, to, t) {
 
 // ------------------------------------------------------------ drawing
 
+function fmtUsd(n) {
+  return n >= 1 ? n.toFixed(2) : n > 0 ? n.toFixed(3) : "0";
+}
+
+/** The all-in-harbor state: no ship is under sail. */
+function isShort(model) {
+  return !(model.ships || []).some((s) => s.state === "sailing");
+}
+
+/** The worst sky across the fleet: storm beats overcast beats clear. */
+function worstWeather(model) {
+  let worst = "clear";
+  for (const s of model.ships || []) {
+    const w = s.weather || "clear";
+    if (w === "storm") return "storm";
+    if (w === "overcast" && worst === "clear") worst = "overcast";
+  }
+  return worst;
+}
+
+function skyColor(c, weather) {
+  if (weather === "storm") return c.skyStorm;
+  if (weather === "overcast") return c.skyOvercast;
+  return c.skyClear;
+}
+
+/** The sky band across the very top, coloured by the worst ship's weather. */
+function drawSky(c, model) {
+  const ctx = state.ctx;
+  ctx.fillStyle = skyColor(c, worstWeather(model));
+  ctx.fillRect(0, 0, state.cssWidth, state.skyPx);
+}
+
 function drawWater(c) {
   const ctx = state.ctx;
   const waterX = wallPx();
   const waterW = state.cssWidth - waterX;
+  const top = state.skyPx;
+  const h = state.cssHeight - top;
   // Flat sea with a calm stripe band (not per-row scanlines).
   ctx.fillStyle = c.sea;
-  ctx.fillRect(waterX, 0, waterW, state.cssHeight);
+  ctx.fillRect(waterX, top, waterW, h);
   ctx.globalAlpha = 0.35;
   ctx.fillStyle = c.seaDeep;
-  for (let yy = state.cell; yy < state.cssHeight; yy += state.cell * 2) {
+  for (let yy = top + state.cell; yy < state.cssHeight; yy += state.cell * 2) {
     ctx.fillRect(waterX, yy, waterW, state.cell);
   }
   ctx.globalAlpha = 1;
@@ -200,10 +256,10 @@ function drawHarbor(c, model) {
   const cell = state.cell;
   // Drydock strip: timber deck with a rail per berth so it reads as a drydock.
   ctx.fillStyle = c.drydock;
-  ctx.fillRect(0, 0, wall, state.cssHeight);
+  ctx.fillRect(0, state.skyPx, wall, state.cssHeight - state.skyPx);
   // Waterline between the dock and the sea.
   ctx.fillStyle = c.ink;
-  ctx.fillRect(wall - 1, 0, 1, state.cssHeight);
+  ctx.fillRect(wall - 1, state.skyPx, 1, state.cssHeight - state.skyPx);
   for (const s of model.ships) {
     const y = gy(s.berthPos.y);
     // A drydock cradle: two rails the yard hull sits between, plus a cleat.
@@ -337,8 +393,14 @@ function drawIsland(c, s) {
   state.hits.push({ kind: "island", ship: s, x: gx(s.island.x), y: gy(s.island.y), r: Math.max(cell * 1.5, (Math.max(w, h) * cell) / 2 + Math.round(cell / 2)) });
 }
 
-function drawHull(c, x, y, w, insetTop = 0) {
+function drawHull(c, x, y, w, insetTop = 0, tilt = 0) {
   const ctx = state.ctx;
+  if (tilt) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate((tilt * Math.PI) / 180);
+    ctx.translate(-x, -y);
+  }
   const half = w / 2;
   const topY = y - hullTop() + insetTop;
   const botY = y + hullBot();
@@ -354,6 +416,7 @@ function drawHull(c, x, y, w, insetTop = 0) {
   ctx.fillStyle = c.hullDark;
   const stripeH = Math.max(2, Math.round(state.cell / 4));
   ctx.fillRect(x - half, botY - stripeH, w, stripeH);
+  if (tilt) ctx.restore();
 }
 
 function drawSail(c, x, y, height) {
@@ -405,9 +468,45 @@ function drawWake(c, s, x, y) {
   }
 }
 
+/** A small pixel cloud above the ship, shaped by its weather. */
+function drawCloud(c, s, x, y, sailHeight) {
+  const ctx = state.ctx;
+  const cell = state.cell;
+  const weather = s.weather || "clear";
+  const cols = weather === "clear" ? 2 : 4;
+  const rows = weather === "storm" ? 2 : 1;
+  const color = weather === "storm" ? c.cloudDark : weather === "overcast" ? c.cloudGrey : c.cloud;
+  const cloudBottom = y - sailHeight - cell; // one cell above the mast/sail apex
+  const x0 = Math.max(0, Math.min(state.cssWidth - cols * cell, Math.round(x - (cols * cell) / 2)));
+  const y0 = Math.round(cloudBottom - rows * cell);
+  for (let r = 0; r < rows; r++) {
+    for (let col = 0; col < cols; col++) {
+      // Rounded top: skip the corner cells on the top row.
+      if (r === 0 && (col === 0 || col === cols - 1)) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(x0 + col * cell, y0 + r * cell, cell, cell);
+    }
+  }
+  // Storm: static rain hatching (short diagonal strokes) under the cloud.
+  if (weather === "storm") {
+    const base = y0 + rows * cell;
+    ctx.strokeStyle = c.ink;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < cols; i++) {
+      const rx = x0 + i * cell + Math.round(cell / 2);
+      ctx.moveTo(rx, base + 1);
+      ctx.lineTo(rx - Math.round(cell / 2), base + 1 + Math.round(cell * 0.75));
+    }
+    ctx.stroke();
+  }
+}
+
 function drawShip(c, s) {
   const cell = state.cell;
   const wall = wallPx();
+  const storm = s.weather === "storm";
+  const tilt = s.state === "sailing" && storm && !state.reduced ? 5 : 0;
   let x;
   let y;
   let hullW;
@@ -417,33 +516,77 @@ function drawShip(c, s) {
     x = wall / 2;
     y = gy(s.berthPos.y);
     hullW = Math.max(cell, wall - 8);
-    drawHull(c, x, y, hullW, Math.max(2, Math.round(cell / 4)));
+    drawHull(c, x, y, hullW, Math.max(2, Math.round(cell / 4)), tilt);
     sailHeight = 0;
   } else if (s.state === "docked") {
     x = gx(0);
     y = gy(s.berthPos.y);
     hullW = cell * 2;
-    drawHull(c, x, y, hullW);
+    drawHull(c, x, y, hullW, 0, tilt);
     sailHeight = cell;
   } else {
     x = gx(s.position.x);
     y = gy(s.position.y);
     hullW = cell * 3;
     drawWake(c, s, x, y);
-    drawHull(c, x, y, hullW);
+    drawHull(c, x, y, hullW, 0, tilt);
     sailHeight = cell * 2;
   }
   drawSail(c, x, y, sailHeight);
+  drawCloud(c, s, x, y, sailHeight);
   state.hits.push({ kind: "ship", ship: s, x, y, r: Math.max(cell, hullW / 2 + Math.round(cell / 2)) });
+}
+
+/** The harbor-wall fleet gauge: 8 detents of today's spend over the week's. */
+function drawFleetGauge(c, model) {
+  const ctx = state.ctx;
+  const cell = state.cell;
+  const wall = wallPx();
+  const f = model.fleet || {};
+  const week = f.spendWeek || 0;
+  const today = f.spendToday || 0;
+  const fill = week > 0 ? Math.min(1, Math.max(0, today / week)) : 0;
+  const color = fill > GAUGE_TEAL_FRAC ? c.teal : fill >= GAUGE_VERMILION_FRAC ? c.yellow : c.vermilion;
+  const lit = Math.round(fill * GAUGE_DETENTS);
+  // A vertical gauge on the narrow drydock: 8 detents stacked, lit from the
+  // bottom. Empty slots stay visible (sheet fill + ink outline) at any cell size.
+  const detW = Math.max(4, wall - 4);
+  const detH = Math.max(2, Math.round(cell / 2));
+  const gaugeH = GAUGE_DETENTS * detH + (GAUGE_DETENTS - 1);
+  const x0 = Math.max(1, Math.round((wall - detW) / 2));
+  const yBottom = state.cssHeight - Math.round(cell / 2);
+  ctx.lineWidth = 1;
+  for (let i = 0; i < GAUGE_DETENTS; i++) {
+    const y = yBottom - (i + 1) * detH - i;
+    ctx.fillStyle = i < lit ? color : c.sheet;
+    ctx.fillRect(x0, y, detW, detH);
+    ctx.strokeStyle = c.ink;
+    ctx.strokeRect(x0 + 0.5, y + 0.5, detW, detH);
+  }
+  // The figure sits beside the gauge, in the sea just off the wall's foot.
+  ctx.save();
+  ctx.font = labelFont();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "bottom";
+  ctx.fillStyle = c.ink;
+  ctx.fillText(`$${fmtUsd(today)} today`, wall + Math.round(cell / 2), yBottom);
+  ctx.restore();
 }
 
 function draw(model) {
   if (!state.ctx || !model) return;
   if (!state.container.clientWidth || document.hidden) return;
+  // The all-in-harbor state changes the canvas height, so re-layout first.
+  const short = isShort(model);
+  if (short !== state.short) {
+    state.short = short;
+    layout();
+  }
   const c = colors();
   const ctx = state.ctx;
   ctx.clearRect(0, 0, state.cssWidth, state.cssHeight);
   state.hits = [];
+  drawSky(c, model);
   drawWater(c);
   drawHarbor(c, model);
   // Routes first (they end under the island), then islands, then waypoint
@@ -459,6 +602,7 @@ function draw(model) {
     }
   }
   for (const s of model.ships) drawShip(c, s);
+  drawFleetGauge(c, model);
   buildList(model);
 }
 
@@ -478,7 +622,7 @@ function crewText(s) {
 function shipText(s) {
   const pct = Math.round(s.progress * 100);
   const bits = [
-    `${s.id}: ${STATE_LABEL[s.state] || s.state}, ${CONDITION_LABEL[s.condition] || s.condition}, ${pct}% done.`,
+    `${s.id}: ${STATE_LABEL[s.state] || s.state}, ${WEATHER_LABEL[s.weather] || s.weather || "clear"} sky, ${CONDITION_LABEL[s.condition] || s.condition}, ${pct}% done.`,
     s.voyage ? `Voyage: ${s.voyage.goal}.` : "",
     `Crew: ${crewText(s)}.`,
   ];
@@ -523,7 +667,7 @@ function hitAt(x, y) {
 function tipText(hit) {
   const s = hit.ship;
   const pct = Math.round(s.progress * 100);
-  const head = `${s.id} — ${STATE_LABEL[s.state] || s.state} · ${CONDITION_LABEL[s.condition] || s.condition} · ${pct}%`;
+  const head = `${s.id} — ${STATE_LABEL[s.state] || s.state} · ${WEATHER_LABEL[s.weather] || s.weather || "clear"} · ${CONDITION_LABEL[s.condition] || s.condition} · ${pct}%`;
   const lines = [head];
   if (s.voyage) lines.push(s.voyage.goal);
   lines.push(`Crew: ${crewText(s)}`);
