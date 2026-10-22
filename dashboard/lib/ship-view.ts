@@ -129,7 +129,7 @@ function supplyGaugeHtml(spend: number, budget: number | null): string {
   const color = gaugeColor(remaining);
   const lit = gaugeDetents(remaining);
   const detents = Array.from({ length: GAUGE_DETENTS }, (_, i) => `<span class="supply-detent${i < lit ? " is-lit" : ""}" aria-hidden="true"></span>`).join("");
-  return `<span class="supply-gauge supply-${color}" title="Budget left today">${detents}<span class="supply-figure">${usd(spend)} of ${usd(budget)}</span></span>`;
+  return `<span class="supply-gauge supply-${color}" title="Budget left today">${detents}<span class="supply-figure">${usd(budget - spend)} left</span></span>`;
 }
 
 const STATUS_LABEL: Record<CrewStatus, string> = { working: "Working", waiting: "Needs you", idle: "Idle", asleep: "Not started" };

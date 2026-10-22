@@ -128,9 +128,10 @@ function layout() {
   state.cssWidth = Math.max(8 * 8, Math.floor(w / 8) * 8);
   // One sprite cell, scaled with the canvas and snapped to a multiple of 8.
   state.cell = Math.max(8, Math.round(state.cssWidth / (CHART_W * 8)) * 8);
-  // A 1-cell sky band on top, then the water area: 16:7 normally, ~half in the
-  // all-in-harbor state so a docked fleet is not a tall empty sea.
-  state.skyPx = state.cell;
+  // A 2-cell sky band on top (tall enough to read as weather), then the water
+  // area: 16:7 normally, ~half in the all-in-harbor state so a docked fleet is
+  // not a tall empty sea.
+  state.skyPx = state.cell * 2;
   const fullWater = Math.max(3 * 8, Math.round((state.cssWidth * 7) / 16 / 8) * 8);
   const water = state.short ? Math.max(3 * 8, Math.round(fullWater / 2 / 8) * 8) : fullWater;
   state.waterRows = Math.round(water / 8);
@@ -225,7 +226,7 @@ function skyColor(c, weather) {
   return c.skyClear;
 }
 
-/** A thin sky band across the very top, coloured by the worst ship's weather. */
+/** The sky band across the very top, coloured by the worst ship's weather. */
 function drawSky(c, model) {
   const ctx = state.ctx;
   ctx.fillStyle = skyColor(c, worstWeather(model));
