@@ -37,7 +37,7 @@ step() { printf '\n== %s\n' "$1"; }
 ver() { "$@" 2>/dev/null | head -1 || true; }
 
 if [ "${1:-}" = --check ]; then
-  for c in bun node pi treehouse herdr gh op tailscale google-chrome chromium sqlite3 rg; do
+  for c in bun node pi just treehouse herdr gh op tailscale google-chrome chromium sqlite3 rg; do
     printf '%-14s %s\n' "$c" "$(have "$c" && ver "$c" --version || echo missing)"
   done
   exit 0
@@ -46,7 +46,7 @@ fi
 step "packages and security updates"
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  unattended-upgrades sqlite3 unzip ripgrep fd-find python3-venv python3-pip ffmpeg \
+  unattended-upgrades just sqlite3 unzip ripgrep fd-find python3-venv python3-pip ffmpeg \
   ca-certificates gnupg fonts-noto-color-emoji fonts-dejavu-core >/dev/null
 sudo dpkg-reconfigure -f noninteractive unattended-upgrades >/dev/null 2>&1 || true
 
