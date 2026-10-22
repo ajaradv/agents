@@ -23,7 +23,20 @@ export type GateContext = {
   inVm: boolean;
   /** Folders writes may go to besides cwd (the vault, the fleet inbox, temp). */
   writable: string[];
+  /** Test seam: is this pid the live fleet node or dashboard? */
+  isLiveService?: (pid: number) => boolean;
 };
+
+/** The live node and dashboard run as `bun run <fleet repo>/dashboard/(node|server).ts` (launchd/systemd); test copies run from a worktree or with a test port. */
+function liveServicePid(pid: number): boolean {
+  try {
+    const r = Bun.spawnSync(["ps", "-o", "command=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" });
+    const cmd = r.stdout.toString().trim();
+    return /\bbun\s+run\s+\S*\/dashboard\/(node|server)\.ts\b/.test(cmd) && !/\.treehouse\//.test(cmd);
+  } catch {
+    return false;
+  }
+}
 
 const BUILTIN = new Set(["read", "write", "edit", "bash", "grep", "find", "ls"]);
 
@@ -34,6 +47,8 @@ const SAFE_TOOLS = new Set([
   "canvas_show", "canvas_clear", "ask_captain", "notify_captain", "delegate", "ask_public", "order_step", "order_finish",
   "fleet_action", "voyage_start", "voyage_dock", "crew_change", "agent_stop", "subagent", "tool_search",
   "session_search", "memory_search", "obsidian_list_notes", "cursor_activate_skill",
+  // Crew eyes: sends screenshots from allowed folders to a vision model (dashboard/lib/look.ts checks the paths).
+  "look", "crew_request",
 ]);
 
 /** Tools whose free text reaches another agent: screened for steering. */
@@ -86,10 +101,11 @@ const inside = (p: string, root: string) => {
 };
 
 /** Commands that only read or run the project's own routine work. */
-const ROUTINE = /^(ls|pwd|cat|head|tail|wc|sort|uniq|cut|tr|diff|file|stat|du|df|which|type|echo|printf|true|date|basename|dirname|realpath|rg|grep|egrep|fd|find|tree|jq|yq|less|sed\s+-n|awk|column|env\s*$|uname|whoami|id|ps|lsof|git\s+(status|diff|log|show|branch|rev-parse|ls-files|blame|remote\s+-v|fetch|stash\s+list|add|commit|switch|checkout|restore|worktree\s+list|config\s+--get|tag\s+-l|describe|grep)|just(\s|$)|make(\s|$)|npm\s+(test|run|ci|install|ls|view)|npx\s+-y\s+(axi-axi|tasks-axi|jev-axi|gh-axi|quota-axi|chrome-devtools-axi|lavish-axi|npm-axi|pypi-axi|sqlite-axi|@andershoffmann\/obsidian-axi)(@[\d.]+)?|pnpm\s+(test|run|install|i)|bun\s+(test|run|install|x)|bun\s+[\w./-]+\.(ts|js|mjs)\b|bunx\s+tsc|node(\s|$)|python3?(\s|$)|uv\s+(run|pip\s+list|sync|lock)|uvx\s+ruff|pytest|ruff|mypy|tsc|cargo\s+(build|check|test|clippy|fmt|run)|go\s+(build|test|vet|run)|docker\s+compose\s+(ps|logs|run|build|up|down)|tasks-axi|gh-axi|quota-axi|treehouse|herdr\s+(status|session\s+list|pane\s+list)|cdt|shot|codegraph\s+(explore|node|query|callers|callees|impact|affected|files|status)|bin\/(phone-check|vault-doctor|fleet-axi|fleet-shot|fleet-look|fleet-net\s+(check|--help)|order|stamp-ship\s+--dry-run|new-agent\s+.*--dry-run|fleet-vm-image)|sleep|cd|mkdir|touch|cp|mv|ln\s+-s|command\s+-v|set\s+-[euxo]|od|md5sum|shasum|xxd|base64|gzip|gunzip|tar\s+-?[tx]|unzip\s+-l|open|npx\s+(-y\s+)?playwright|curl(?=\s)(?![^|;&]*\s(-d|--data|--data-\S+|-F|--form|-T|--upload-file|-X\s*(POST|PUT|PATCH|DELETE)))|sed\s+(-[Ei]+\s+)?['"]|sed\s+-i)\b/;
+const ROUTINE = /^(ls|pwd|cat|head|tail|wc|sort|uniq|cut|tr|diff|file|stat|du|df|which|type|echo|printf|true|date|basename|dirname|realpath|rg|grep|egrep|fd|find|tree|jq|yq|less|sed\s+-n|awk|column|env\s*$|uname|whoami|id|ps|lsof|git\s+(status|diff|log|show|branch|rev-parse|ls-files|blame|remote\s+-v|fetch|stash\s+list|add|commit|switch|checkout|restore|worktree\s+list|config\s+--get|tag\s+-l|describe|grep)|just(\s|$)|make(\s|$)|npm\s+(test|run|ci|install|ls|view)|npx\s+-y\s+(axi-axi|tasks-axi|jev-axi|gh-axi|quota-axi|chrome-devtools-axi|lavish-axi|npm-axi|pypi-axi|sqlite-axi|@andershoffmann\/obsidian-axi)(@[\d.]+)?|pnpm\s+(test|run|install|i)|bun\s+(test|run|install|x)|bun\s+[\w./-]+\.(ts|js|mjs)\b|bunx\s+tsc|node(?=\s|$)|python3?(?=\s|$)|uv\s+(run|pip\s+list|sync|lock)|uvx\s+ruff|pytest|ruff|mypy|tsc|cargo\s+(build|check|test|clippy|fmt|run)|go\s+(build|test|vet|run)|docker\s+compose\s+(ps|logs|run|build|up|down)|tasks-axi|gh-axi|quota-axi|treehouse|herdr\s+(status|session\s+list|pane\s+list)|cdt|shot|codegraph\s+(explore|node|query|callers|callees|impact|affected|files|status)|bin\/(phone-check|vault-doctor|fleet-axi|fleet-shot|fleet-look|fleet-net\s+(check|--help)|order|stamp-ship\s+--dry-run|new-agent\s+.*--dry-run|fleet-vm-image)|sleep|cd|mkdir|mktemp|touch|rm(\s+-[rfv]+)*(?=\s+[^-\s])|chmod\s+(\+x|[0-7]{3})(?=\s)|pkill\s+-f\s+["'][^"']*headless|["']?\/Applications\/(Google Chrome|Chromium)\.app\/Contents\/MacOS\/[^"']+["']?\s+--headless|cp|mv|ln\s+-s|command\s+-v|kill(\s+-(TERM|INT|15|2|9|0|KILL))?(\s+(\d+|SUBST))+(\s+[12]?>\s*\/dev\/null)?\s*$|set\s+-[euxo]|od|md5sum|shasum|xxd|base64|gzip|gunzip|tar\s+-?[tx]|unzip\s+-l|open|npx\s+(-y\s+)?playwright|curl(?=\s)(?![^|;&]*\s(-d|--data|--data-\S+|-F|--form|-T|--upload-file|-X\s*(POST|PUT|PATCH|DELETE)))|sed\s+(-[Ei]+\s+)?['"]|sed\s+-i)\b/;
 
 const DANGER: [RegExp, string][] = [
-  [/\b(curl|wget|fetch)\b[^|;&]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b|\b(curl|wget)\b[^|;&]*\|\s*(python3?|node|perl|ruby)\b|\b(ba|z)?sh\s+<\s*\(\s*(curl|wget)/, "downloads and runs code"],
+  // A local test server (loopback) is the crew's own code, and `python3 -m json.tool` only formats: neither downloads code to run.
+  [/\b(curl|wget|fetch)\b(?![^|;&]*\b(127\.0\.0\.1|localhost)\b)[^|;&]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b|\b(curl|wget)\b(?![^|;&]*\b(127\.0\.0\.1|localhost)\b)[^|;&]*\|\s*(python3?(?!\s+-m\s+json\.tool)|node|perl|ruby)\b|\b(ba|z)?sh\s+<\s*\(\s*(curl|wget)/, "downloads and runs code"],
   [/\bgit\s+push\b[^;&|]*(\s(-f|--force|--force-with-lease)\b|\s\+\S)/, "force-pushes"],
   [/\bgit\s+push\b[^;&|]*\b(main|master)\b/, "pushes to main"],
   [/(^|[\s;&|(])sudo\b/, "runs as root"],
@@ -101,6 +117,8 @@ const DANGER: [RegExp, string][] = [
   // The op CLI looks into the 1Password app's data on start, which asks the captain; agents get keys in their environment.
   [/(^|[\s;&|(])op\s+(whoami|signin|vault|item|account|document|user|group|connect|service-account|plugin|events-api)\b/, "runs the 1Password CLI"],
   [/\bchmod\s+(-R\s+)?777\s+\//, "opens permissions on system folders"],
+  // A pattern kill can take the live fleet down with a test copy (a lead ran pkill -f "bun dashboard/server.ts" on 2026-10-19): kill test servers by pid.
+  [/\b(pkill|killall)\b[^;&|]*(dashboard\/(server|node)\.ts|server\.ts|node\.ts|com\.fleet|\bbun\b)/, "may stop the live fleet services (kill your own test server by its pid)"],
   [/\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f)\b.*\b(origin\/)?(main|master)\b/, "throws away work on main"],
 ];
 
@@ -163,7 +181,7 @@ export function splitCommands(c: string): string[] {
   return out.map((x) => x.trim()).filter(Boolean);
 }
 
-const STRUCTURAL = /^(\w+=("[^"]*"|'[^']*'|\S*)|for\s+\w+\s+in\b.*|while\b.*|until\b.*|if\b.*|done|fi|esac|case\b.*|\{|\}|\(|\)|[a-z_]+\(\)\s*\{?)$/;
+const STRUCTURAL = /^(#.*|\w+=("[^"]*"|'[^']*'|\S*)|for\s+\w+\s+in\b.*|while\b.*|until\b.*|if\b.*|done|fi|esac|case\b.*|\{|\}|\(|\)|[a-z_]+\(\)\s*\{?)$/;
 
 function bashVerdict(cmd: string, ctx: GateContext): Verdict {
   const stripped = stripHeredocs(cmd);
@@ -192,6 +210,11 @@ function bashVerdict(cmd: string, ctx: GateContext): Verdict {
     return { decision: "ask", reason: "the command runs inline code" };
   }
   const segments = splitCommands(c).map(core).filter(Boolean);
+  // kill by pid is routine for a crewmate's own test servers, never for the live fleet's node or dashboard.
+  for (const seg of segments) {
+    if (!/^kill\b/.test(seg)) continue;
+    for (const pid of seg.match(/\b\d{2,7}\b/g) ?? []) if ((ctx.isLiveService ?? liveServicePid)(Number(pid))) return { decision: "stop", reason: `the command stops the live fleet service (pid ${pid})` };
+  }
   const skillScript = (seg: string) => /^(~|\/Users\/[^/]+)\/\.(agents|pi\/agent)\/skills\/[\w.-]+\/scripts\//.test(seg);
   const unknown = segments.find((s) => !STRUCTURAL.test(s) && !ROUTINE.test(s) && !skillScript(s));
   if (unknown) return { decision: "ask", reason: `not a routine command: ${unknown.slice(0, 80)}` };
@@ -199,7 +222,7 @@ function bashVerdict(cmd: string, ctx: GateContext): Verdict {
   const targets = [...c.matchAll(/>>?\s*([^\s;&|]+)/g)].map((m) => m[1]!);
   for (const seg of segments) {
     const words = seg.split(/\s+/);
-    if (["rm", "mv", "cp", "touch", "mkdir", "ln"].includes(words[0]!)) targets.push(...words.slice(1).filter((w) => w && !w.startsWith("-")));
+    if (["rm", "mv", "cp", "touch", "mkdir", "ln", "chmod"].includes(words[0]!)) targets.push(...words.slice(1).filter((w) => w && !w.startsWith("-")));
     if (words[0] === "sed" && words.some((w) => /^-[a-zA-Z]*i/.test(w))) targets.push(...words.slice(1).filter((w) => w && !w.startsWith("-") && !/^['"]/.test(w)).slice(1));
   }
   const outside = targets.find((t) => !/^\/dev\/null$/.test(t) && !writableAt(resolve(t, ctx.cwd, ctx.home), ctx));
