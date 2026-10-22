@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { syncCaptainWait, type WaitHold } from "./captain-wait.ts";
-import { firstmateTuiReachable, FM_HOME } from "./firstmate-chat.ts";
+import { firstmateTuiReachable, FM_CODE, FM_HOME } from "./firstmate-chat.ts";
 import {
   initiativesSectionHtml,
   readInitiatives,
@@ -160,10 +160,10 @@ export function _setFleetSnapshot(snap: FleetSnapshot | null, ageMs = 0): void {
 }
 
 async function takeFleetSnapshot(): Promise<FleetSnapshot> {
-  const snapshotPath = join(FM_HOME, "bin", "fm-fleet-snapshot.sh");
+  const snapshotPath = join(FM_CODE, "bin", "fm-fleet-snapshot.sh");
   try {
     const res = Bun.spawn(["bash", snapshotPath, "--json"], {
-      cwd: FM_HOME,
+      cwd: FM_CODE,
       env: { ...process.env, FM_HOME },
       stdout: "pipe",
       stderr: "pipe",

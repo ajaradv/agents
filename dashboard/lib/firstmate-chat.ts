@@ -5,7 +5,14 @@ import { readRuntime, agentPaneIsLive, FLEET_HERDR_SESSION } from "./herdr.ts";
 import { readSession, pidAlive } from "./session.ts";
 import { spawnTimed } from "./proc.ts";
 
-export const FM_HOME = join(ROOT, "fleet", "home");
+/**
+ * Firstmate (retired as the fleet's orchestrator 2026-10-22, still usable on the
+ * laptop): its private home (data, state, projects) and its code, kept apart.
+ * fleet/home is the fleet's own private folder (keys, ship overlays, models).
+ */
+export const FM_HOME = process.env.FIRSTMATE_HOME ?? join(ROOT, "fleet", "firstmate");
+/** The firstmate distro (the captain's fork, a git submodule): AGENTS.md, bin/fm-*.sh. */
+export const FM_CODE = join(ROOT, "vendor", "firstmate");
 
 export async function firstmateTuiReachable(): Promise<{
   ok: boolean;
@@ -92,7 +99,7 @@ export async function sendToFirstmateTui(text: string): Promise<{
       ms: 0,
       exitCode: 1,
       stderr:
-        "Could not resolve fm-send target (need Herdr pane or fleet/home/state/*.meta). Attach the TUI and try again.",
+        "Could not resolve fm-send target (need Herdr pane or fleet/firstmate/state/*.meta). Attach the TUI and try again.",
       stdout: "",
       timedOut: false,
     };
@@ -115,14 +122,14 @@ export type FmSendResult = {
  */
 export async function sendFmText(target: string, text: string): Promise<FmSendResult> {
   if (!realFleet()) return { ok: false, ms: 0, exitCode: 1, stderr: "Test inbox: fm-send to the captain's live panes is off.", stdout: "", timedOut: false };
-  const fmSend = join(FM_HOME, "bin", "fm-send.sh");
+  const fmSend = join(FM_CODE, "bin", "fm-send.sh");
   const env = {
     ...process.env,
     FM_HOME,
   };
   const res = await spawnTimed(["bash", fmSend, target, text], {
     timeoutMs: 60_000,
-    cwd: FM_HOME,
+    cwd: FM_CODE,
     env,
   });
   return {

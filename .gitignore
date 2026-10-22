@@ -4,6 +4,7 @@ node_modules/
 .env.*
 
 fleet/home/
+fleet/firstmate/
 fleet/inbox/
 
 # Bytecode for bin/axi_cli.py (imported by the Python scripts in bin/)

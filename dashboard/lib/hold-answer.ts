@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentPaneIsLive } from "./herdr.ts";
-import { FM_HOME } from "./firstmate-chat.ts";
+import { FM_CODE, FM_HOME } from "./firstmate-chat.ts";
 import { appendCaptainAnswers, findTaskPlanFile } from "./plan-questions.ts";
 import { aliceVault } from "./paths.ts";
 import { spawnTimed } from "./proc.ts";
@@ -46,12 +46,12 @@ export async function answerCaptainHold(
   const decision = join(dir, "decision.txt");
   try {
     await writeFile(decision, `${answer}\n`, "utf8");
-    const script = join(FM_HOME, "bin", "fm-captain-hold.sh");
+    const script = join(FM_CODE, "bin", "fm-captain-hold.sh");
     const res = await spawnTimed(
       ["bash", script, "answer", taskId, "--decision-file", decision, "--release"],
       {
         timeoutMs: 30_000,
-        cwd: FM_HOME,
+        cwd: FM_CODE,
         env: { ...process.env, FM_HOME },
       },
     );
