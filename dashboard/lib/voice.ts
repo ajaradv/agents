@@ -174,7 +174,11 @@ function startHelper(): NonNullable<typeof helper> {
 }
 
 export async function synthesize(text: string, voice: string, speed = 1.0): Promise<Uint8Array> {
-  if (!ttsAvailable()) throw new Error("Local voice is not set up. Run bin/voice-setup.");
+  if (!ttsAvailable()) {
+    // The hub has no Kokoro: borrow the laptop's while it is awake (lib/laptop.ts); otherwise the page uses the browser's voice.
+    if (process.env.FLEET_LAPTOP_URL) return (await import("./laptop.ts")).laptopTts(text, voice, speed);
+    throw new Error("Local voice is not set up. Run bin/voice-setup.");
+  }
   if (!helper) helper = startHelper();
   const h = helper;
   if (h.idle) clearTimeout(h.idle);

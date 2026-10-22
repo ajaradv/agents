@@ -100,7 +100,7 @@ if [ "$(uname)" = Linux ]; then
     printf 'User=%s\nWorkingDirectory=%s\nExecStart=%s run %s\n' "$(id -un)" "$ROOT" "$BUN" "$ROOT/$2"
     printf 'Environment=PATH=%s\nEnvironment=HOME=%s\n' "$PATH" "$HOME"
     for kv in "${@:5}"; do printf 'Environment=%s\n' "$kv"; done
-    for k in DASHBOARD_PORT FLEET_INBOX ALICE_VAULT FLEET_NODE_PORT FLEET_TAILNET_USERS; do
+    for k in DASHBOARD_PORT FLEET_INBOX ALICE_VAULT FLEET_NODE_PORT FLEET_TAILNET_USERS FLEET_LAPTOP_URL; do
       if [ -n "${!k:-}" ]; then printf 'Environment=%s=%s\n' "$k" "${!k}"; fi
     done
     printf 'Restart=always\nRestartSec=5\nStandardOutput=append:%s\nStandardError=append:%s\n\n[Install]\nWantedBy=multi-user.target\n' "$LOGS/$3" "$LOGS/$3"
