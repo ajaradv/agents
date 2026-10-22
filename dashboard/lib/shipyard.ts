@@ -1,4 +1,5 @@
 import { FM_HOME } from "./firstmate-chat.ts";
+import { deliveryFor, openDockPr, prTitle } from "./dock-delivery.ts";
 import { reviewBranch, reviewLine } from "./dock-review.ts";
 import { existsSync } from "node:fs";
 import { describeManeuver, maneuverAvailability } from "./maneuvers.ts";
@@ -290,15 +291,29 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   // Dock review (lib/dock-review.ts): how closely the captain should review the branch before merging. Advisory.
   const branchInfo = released.message.match(/^Branch (\S+) has \d+ commit\(s\) on (\S+?),/);
   const review = ship && branchInfo && commits > 0 ? await reviewBranch(ship.path, branchInfo[2]!, branchInfo[1]!).catch(() => null) : null;
+  // Land through the ship's delivery mode (lib/dock-delivery.ts): a pull request for direct-PR and no-mistakes ships.
+  let delivered = "";
+  if (ship && branchInfo && commits > 0 && deliveryFor(ship.mode) === "pr") {
+    const body = [
+      summary.trim() || "Docked voyage.",
+      ledger ? ledgerMarkdown(ledger) : "",
+      review ? `Dock review: ${reviewLine(review)}` : "",
+      ship.gates.dock.length ? `Dock gates passed on the latest commit: ${ship.gates.dock.join(", ")}.` : "This ship has no dock gates configured.",
+      `Voyage record (vault): ${v.file.split("/").slice(-3).join("/")}`,
+      "Opened by the fleet when the voyage docked. The captain reviews and merges.",
+    ].filter(Boolean).join("\n\n");
+    const pr = await openDockPr(ship.path, branchInfo[1]!, branchInfo[2]!, prTitle(v.goal), body).catch((e) => ({ ok: false, message: e instanceof Error ? e.message : String(e) }) as { ok: boolean; url?: string; message: string });
+    delivered = pr.ok ? `Pull request: ${pr.url}.` : `Delivery (${ship.mode}): ${pr.message}.`;
+  }
   // The voyage's memory is archived into its note, then discarded.
   const scratch = ship && ship.orchestrator === "lead" ? await endVoyageMemory(shipId, ship.crew.map((r) => `${shipId}-${r}`)) : "";
   let text = await readFile(v.file, "utf8");
   text = text.replace(/^status: sailing$/m, "status: docked").replace(/^started: (.*)$/m, `started: $1\nended: ${now}`);
   const note = summary.trim();
-  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "") + (review ? `\n## Dock review\n\n${reviewLine(review)}\n` : "") + (scratch ? `\n## Voyage memory (archived at dock)\n\n${scratch}\n` : "");
+  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (delivered ? `\n${delivered}\n` : "") + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "") + (review ? `\n## Dock review\n\n${reviewLine(review)}\n` : "") + (scratch ? `\n## Voyage memory (archived at dock)\n\n${scratch}\n` : "");
   await writeFile(v.file, text, "utf8");
   logShipEvent(shipId, "captain", "voyage-end", note || "Docked", { file: v.file });
-  return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}${ledger ? ` ${ledgerLine(ledger)}` : ""}${review ? ` ${reviewLine(review)}` : ""}` };
+  return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}${delivered ? ` ${delivered}` : ""}${ledger ? ` ${ledgerLine(ledger)}` : ""}${review ? ` ${reviewLine(review)}` : ""}` };
 }
 
 /** The lead's view of the ship's maneuvers, for the voyage brief. */
@@ -321,7 +336,7 @@ export function voyageBrief(ship: ShipRow, v: Voyage): string {
         ? [`Gates (checks that must pass on the latest commit): ${ship.gates.task.length ? `a task is done only after ${ship.gates.task.join(", ")} pass (they run when it is reported done)` : ""}${ship.gates.task.length && ship.gates.dock.length ? "; " : ""}${ship.gates.dock.length ? `the voyage docks only after ${ship.gates.dock.join(", ")} pass` : ""}. Commit before reporting a task done.`]
         : []),
       ...(v.worktree ?? voyageWorktree(ship.id)
-        ? [`Work happens on branch ${(v.worktree ?? voyageWorktree(ship.id))!.branch} in the voyage's own worktree (your crew's working folder); commit there and never push. The captain reviews and merges after docking. The branch name is a guess from the goal: before the first commit, rename it if the type or words are wrong, and write conventional commit messages (skill git-conventions).`]
+        ? [`Work happens on branch ${(v.worktree ?? voyageWorktree(ship.id))!.branch} in the voyage's own worktree (your crew's working folder); commit there and never push. ${deliveryFor(ship.mode) === "pr" ? `At dock the fleet pushes the branch and opens a pull request (delivery mode ${ship.mode}); the captain merges.` : "The captain reviews and merges after docking."} The branch name is a guess from the goal: before the first commit, rename it if the type or words are wrong, and write conventional commit messages (skill git-conventions).`]
         : []),
       "You are the lead: read voyage_status, plan the goal into tasks, assign them with task_add, tell me the plan in a few lines, and end your turn. Reports come back to you as crew messages.",
     ].join("\n");

@@ -93,6 +93,34 @@ export function registerChatEventBroadcaster(fn: ChatEventBroadcaster): void {
   broadcastEvent = fn;
 }
 
+/**
+ * A message from another agent whose turn failed (the process crashed, the
+ * provider errored) was simply lost. Now it is delivered once more after
+ * RETRY_MS, and if that turn fails too the sender is told (ported from
+ * Firstmate's re-rung steering inbox; vault firstmate-deep-dive R3). Turns the
+ * captain stopped are not retried, nor are the captain's own messages.
+ */
+const RETRY_MS = 90_000;
+const inTurn = new Map<string, ChatLine>();
+const retried = new Set<string>();
+
+function onTurnFailed(agentId: string, error: string): void {
+  const line = inTurn.get(agentId);
+  inTurn.delete(agentId);
+  if (!line || /abort/i.test(error)) return;
+  const key = `${agentId}|${line.ts}`;
+  if (!retried.has(key)) {
+    retried.add(key);
+    void dashLog("delivery", `${agentId}'s turn failed on a message from ${line.from}; retrying in ${RETRY_MS / 1000}s`);
+    setTimeout(() => enqueueCaptainTurn(agentId, line), RETRY_MS);
+    return;
+  }
+  retried.delete(key);
+  if (line.from !== agentId && !SYSTEM_SENDERS.has(line.from) && chatTarget(line.from)) {
+    void acceptCrewLine(line.from, "delivery", `Your message to ${agentId} was not acted on: its turn failed twice (${error.slice(0, 200)}). Send it again later, or tell the captain if it blocks your work.`).catch(() => {});
+  }
+}
+
 /** Last fact-check note per agent: at most one every 10 minutes, so a correction can never loop. */
 const factNoted = new Map<string, number>();
 
@@ -110,6 +138,8 @@ registerHostHooks({
   },
   settled: (agentId, outcome) => {
     logCrewTurn(agentId, outcome);
+    if (outcome.ok) inTurn.delete(agentId);
+    else onTurnFailed(agentId, outcome.error ?? "turn failed");
     // Alice named a closed vault task without looking (lib/fact-check.ts): one note to check and correct.
     const note = turnEnded(agentId);
     if (note && Date.now() - (factNoted.get(agentId) ?? 0) > 10 * 60_000) {
@@ -161,7 +191,7 @@ function parseChatLine(raw: string): ChatLine | null {
 export const FLEET_OFFICERS = new Set(["alice"]);
 
 /** Senders whose messages explain themselves (the order watcher, the Go gate): no "message from" prefix. */
-const SYSTEM_SENDERS = new Set(["orders", "go", "router", "budget", "fact-check"]);
+const SYSTEM_SENDERS = new Set(["orders", "go", "router", "budget", "fact-check", "delivery"]);
 
 /** A captain line written by the node on the captain's behalf (a voyage brief after their Go): saved, shown, and run. */
 export async function postCaptainLine(agentId: string, text: string): Promise<ChatLine> {
@@ -362,8 +392,12 @@ async function drainQueue(agentId: string): Promise<void> {
       if (target.kind === "firstmate") await runFirstmateTurn(line);
       else if (target.kind === "task") await runTaskTurn(agentId, line);
       else if (target.runtime === "rpc") {
+        // Which message this turn carries: a failure re-delivers it once (onTurnFailed); the captain's own are not retried.
+        if (line.from === "captain") inTurn.delete(agentId);
+        else inTurn.set(agentId, line);
         const refusal = await refusalFor(agentId);
         if (refusal) {
+          inTurn.delete(agentId); // held for the budget instead (holdRefused), not retried
           await failTurn(agentId, line, "error", 0, refusal);
           if (line.from !== "captain") await holdRefused(agentId, line, refusal);
         }
