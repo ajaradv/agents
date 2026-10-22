@@ -1,3 +1,4 @@
+import { FM_HOME } from "./firstmate-chat.ts";
 import { reviewBranch, reviewLine } from "./dock-review.ts";
 import { existsSync } from "node:fs";
 import { describeManeuver, maneuverAvailability } from "./maneuvers.ts";
@@ -142,7 +143,7 @@ export type CheckItem = { item: string; ok: boolean; required: boolean; note: st
 
 async function firstmateRegistered(shipId: string): Promise<boolean> {
   try {
-    const text = await readFile(join(ROOT, "fleet", "home", "data", "projects.md"), "utf8");
+    const text = await readFile(join(FM_HOME, "data", "projects.md"), "utf8");
     return text.split("\n").some((l) => new RegExp(`^[-*]\\s+${shipId}(\\s|$)`, "i").test(l));
   } catch {
     return false;

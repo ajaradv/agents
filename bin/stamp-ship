@@ -12,7 +12,7 @@ Steps:
   3. Run `uv run .claude/skills/sssf/scripts/install.py` in the ship. install.py
      skips existing files; --force is passed through only when you give --force.
   4. With --register, append the project to Firstmate's registry
-     (fleet/home/data/projects.md). Without it, print the line to add.
+     (fleet/firstmate/data/projects.md). Without it, print the line to add.
 
 Steps 2-4 write outside this repo. Run with --dry-run first and get a captain yes.
 With no arguments it lists the ships and templates.
@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SSSF = ROOT / ".claude" / "skills" / "sssf"
 SHIPS = ROOT / "fleet" / "ships"
 TEMPLATES = ROOT / "fleet" / "ship-templates"
-PROJECTS = ROOT / "fleet" / "home" / "data" / "projects.md"
+PROJECTS = ROOT / "fleet" / "firstmate" / "data" / "projects.md"
 ID_RE = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
 MODES = ("no-mistakes", "no-mistakes-prod-only", "no-mistakes-required", "direct-PR", "local-only")
 COPY_IGNORE = shutil.ignore_patterns("node_modules", "__pycache__", "*.pyc", ".DS_Store", "dist")

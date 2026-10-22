@@ -17,6 +17,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "agents" / "config.yaml"
 FLEET_HOME = ROOT / "fleet" / "home"
+# Firstmate (still usable on the laptop): its private home, apart from the fleet's, and its code.
+FIRSTMATE_HOME = ROOT / "fleet" / "firstmate"
+FIRSTMATE_CODE = ROOT / "vendor" / "firstmate"
 
 # Keys exported from fleet/home/.env when not already in the environment (env wins).
 ENV_ALLOWLIST = frozenset(
@@ -784,7 +787,7 @@ def prepare_pi_launch(
             f"- Agents: `{ROOT / 'agents'}/`, roles: `{ROOT / 'roles'}/`\n"
             f"- Ships: `{ROOT / 'fleet' / 'ships'}/`\n"
             f"- SSSF source: `{ROOT / '.claude' / 'skills' / 'sssf'}/`\n"
-            f"- Firstmate project registry (read; write only with captain yes): `{FLEET_HOME / 'data' / 'projects.md'}`\n"
+            f"- Firstmate project registry (read; write only with captain yes): `{FIRSTMATE_HOME / 'data' / 'projects.md'}`\n"
             f"- Vault initiatives (read only): `{vault_path / 'fleet' / 'initiatives'}/`\n"
             f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
@@ -803,15 +806,15 @@ def prepare_pi_launch(
             f"- **Repo (start cwd):** `{ROOT}`; `cd` into the project named in each request\n"
             f"- **FLEET_INBOX:** `{inbox}`\n"
             "- Ships (id: path):\n" + (ship_lines or "  - none registered\n") +
-            f"- Firstmate project registry (read only): `{FLEET_HOME / 'data' / 'projects.md'}`\n"
+            f"- Firstmate project registry (read only): `{FIRSTMATE_HOME / 'data' / 'projects.md'}`\n"
             f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
             f"- Firstmate bus (write): `{inbox / 'firstmate' / 'events.jsonl'}`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
             + dashboard_chat_block()
         )
     else:
-        home = FLEET_HOME
-        cwd = home
+        home = FIRSTMATE_HOME
+        cwd = FIRSTMATE_CODE
         os.environ["FM_HOME"] = str(home)
         path_block = (
             "## Resolved paths (this session)\n\n"

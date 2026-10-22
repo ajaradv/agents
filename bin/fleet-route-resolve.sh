@@ -45,7 +45,7 @@ KEY=${TYPESAFE_API_KEY:-}
 unset TYPESAFE_API_KEY
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FM_HOME="${FM_HOME:-$ROOT/fleet/home}"
+FM_HOME="${FM_HOME:-$ROOT/fleet/firstmate}"
 INBOX="${FLEET_INBOX:-$ROOT/fleet/inbox}"
 INBOX="${INBOX/#\~/$HOME}"
 NEVER_SEND_PATH="${ROUTE_NEVER_SEND:-$FM_HOME/config/dispatch-never-send}"
@@ -86,9 +86,9 @@ env_get() { # last KEY=value line in a dotenv file, quotes stripped, never echoe
 if ! $DRY; then
   # The service account; a plain .env file only (a 1Password mount pipe would prompt the captain).
   [ -n "$KEY" ] || KEY=$("$ROOT/bin/fleet-secrets" 2>/dev/null | awk -F= '$1 == "TYPESAFE_API_KEY" { print substr($0, index($0, "=") + 1) }')
-  [ -n "$KEY" ] || { [ -f "$FM_HOME/.env" ] && KEY=$(env_get TYPESAFE_API_KEY "$FM_HOME/.env"); }
+  [ -n "$KEY" ] || { [ -f "$ROOT/fleet/home/.env" ] && KEY=$(env_get TYPESAFE_API_KEY "$ROOT/fleet/home/.env"); }
   if [ -z "$KEY" ]; then
-    echo "route-resolve: off (TYPESAFE_API_KEY absent from the environment and $FM_HOME/.env)" >&2
+    echo "route-resolve: off (TYPESAFE_API_KEY absent from the environment and fleet/home/.env)" >&2
     exit 0
   fi
   command -v curl >/dev/null 2>&1 || die "curl required"
