@@ -165,6 +165,8 @@ async function pushNeeds() {
 }
 // A safety net for changes that arrive without a signal (notices written by the node).
 setInterval(() => void pushNeeds(), 20_000);
+// The stalled-voyage watchdog (lib/voyage-watchdog.ts): a becalmed voyage nudges its lead, then tells the captain.
+setInterval(() => void import("./lib/voyage-watchdog.ts").then((m) => m.runWatchdog()).catch((e) => console.error("[dashboard] watchdog:", e)), 60_000);
 function currentHolds() {
   const snap = lastFleetSnapshot();
   return snap ? collectCaptainHolds(snap) : [];
