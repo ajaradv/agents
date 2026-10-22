@@ -102,6 +102,13 @@ if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-cursor-sdk" ]; then
   (cd "$HOME/.pi/agent/npm" && [ -f package.json ] || echo '{"name":"pi-extensions","private":true}' > package.json; npm install --silent "${PI_EXTENSIONS[@]}" >/dev/null)
 fi
 
+# exe.dev's image ships a pi extension that asks, on an agent's first turn, whether
+# to use exe.dev's LLM integrations; a fleet agent cannot answer and exits. The
+# fleet brings its own keys: record "no" (the extension's own preference file).
+if [ -d "$HOME/.pi/agent/extensions/exe-dev" ] && [ ! -f "$HOME/.pi/agent/exe-dev-llm-integration.json" ]; then
+  printf '{\n  "version": 1,\n  "useExeIntegration": false\n}\n' > "$HOME/.pi/agent/exe-dev-llm-integration.json"
+fi
+
 step "treehouse $TREEHOUSE_VERSION and herdr $HERDR_VERSION"
 if [ "$(ver treehouse --version | grep -o '[0-9.]*$')" != "$TREEHOUSE_VERSION" ]; then
   f="treehouse-v$TREEHOUSE_VERSION-linux-$ARCH.tar.gz"
