@@ -14,6 +14,8 @@ import { hostRunning, registerHostHooks, submitToHost, type HostEvent } from "./
 import { allChatTargetIds, chatTarget } from "./chat-targets.ts";
 import { logCrewEvent, logCrewLine, logCrewTurn } from "./ship-events.ts";
 import { budgetRefusal, officerBudgetRefusal } from "./shipyard.ts";
+import { holdForBudget, releaseHeld } from "./budget-hold.ts";
+import { notifyCaptain } from "./notify.ts";
 import { dashLog } from "./log.ts";
 import { recordTurn as recordTurnMetric } from "./metrics.ts";
 import { spawnTimed } from "./proc.ts";
@@ -146,7 +148,7 @@ function parseChatLine(raw: string): ChatLine | null {
 export const FLEET_OFFICERS = new Set(["alice"]);
 
 /** Senders whose messages explain themselves (the order watcher, the Go gate): no "message from" prefix. */
-const SYSTEM_SENDERS = new Set(["orders", "go", "router"]);
+const SYSTEM_SENDERS = new Set(["orders", "go", "router", "budget"]);
 
 /** A captain line written by the node on the captain's behalf (a voyage brief after their Go): saved, shown, and run. */
 export async function postCaptainLine(agentId: string, text: string): Promise<ChatLine> {
@@ -347,8 +349,11 @@ async function drainQueue(agentId: string): Promise<void> {
       if (target.kind === "firstmate") await runFirstmateTurn(line);
       else if (target.kind === "task") await runTaskTurn(agentId, line);
       else if (target.runtime === "rpc") {
-        const refusal = target.ship ? await budgetRefusal(target.ship, agentId) : officerBudgetRefusal(agentId, target.dailyBudgetUsd);
-        if (refusal) await failTurn(agentId, line, "error", 0, refusal);
+        const refusal = await refusalFor(agentId);
+        if (refusal) {
+          await failTurn(agentId, line, "error", 0, refusal);
+          if (line.from !== "captain") await holdRefused(agentId, line, refusal);
+        }
         else if (line.kind === "crew" && SYSTEM_SENDERS.has(line.from)) {
           // The order watcher's brief and Go results explain themselves.
           await submitToHost(agentId, line);
@@ -473,6 +478,51 @@ async function pollOnce(): Promise<void> {
   }
 }
 
+/** The daily-budget check before a live agent's turn: a crewmate's ship budget, or an officer's daily_budget_usd. */
+async function refusalFor(agentId: string): Promise<string | null> {
+  const target = chatTarget(agentId);
+  if (!target) return null;
+  return target.ship ? budgetRefusal(target.ship, agentId) : officerBudgetRefusal(agentId, target.dailyBudgetUsd);
+}
+
+/**
+ * A message from another agent (or an order) was refused over budget: hold it
+ * for delivery when the budget allows (lib/budget-hold.ts), tell the sender so
+ * it does not wait on a reply that is not coming, and tell the captain once a
+ * day per agent, with the way to unblock it.
+ */
+async function holdRefused(agentId: string, line: ChatLine, refusal: string): Promise<void> {
+  const { fresh, tellCaptain } = holdForBudget(agentId, line);
+  if (!fresh) return;
+  const target = chatTarget(agentId);
+  const sender = line.from;
+  if (sender !== agentId && !SYSTEM_SENDERS.has(sender) && chatTarget(sender)) {
+    await acceptCrewLine(
+      sender,
+      "budget",
+      `Your message to ${agentId} was not delivered yet: ${refusal} It is held and goes through automatically when its budget allows (tomorrow, or as soon as the captain raises it). Do not resend it. Carry on with other work, and tell the captain if it blocks the voyage.`,
+    ).catch(() => {});
+  }
+  if (tellCaptain) {
+    notifyCaptain({
+      from: agentId,
+      kind: "blocked",
+      summary: `${agentId} is out of budget for today; a message from ${sender} is waiting`,
+      detail: `${refusal}\n\nThe message is held and delivered automatically when the budget allows: tomorrow, or within a minute of raising it${target?.ship ? ` on the ${target.ship} deck` : ""}.`,
+      ref: target?.ship ?? agentId,
+    });
+  }
+}
+
+/** Deliver held messages whose agent is under budget again (checked every minute). */
+async function releaseBudgetHolds(): Promise<void> {
+  const released = await releaseHeld(refusalFor, async (h) => {
+    const line = (await readCaptainChat(h.agent, 200)).find((l) => l.ts === h.ts);
+    if (line) enqueueCaptainTurn(h.agent, line);
+  });
+  if (released.length) void dashLog("budget", `delivered ${released.length} held message(s): ${released.map((h) => `${h.from}→${h.agent}`).join(", ")}`);
+}
+
 /** Call after chat targets have loaded once, so first-sight offsets are taken at boot. */
 export function startChatBridge(): void {
   const tick = () => {
@@ -480,4 +530,5 @@ export function startChatBridge(): void {
   };
   tick();
   setInterval(tick, POLL_MS);
+  setInterval(() => void releaseBudgetHolds().catch((e) => console.error("[dashboard] budget holds:", e)), 60_000);
 }
