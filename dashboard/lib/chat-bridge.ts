@@ -276,6 +276,17 @@ async function finishFmSend(
 async function runFirstmateTurn(captainLine: ChatLine): Promise<void> {
   const agentId = "firstmate";
   await dashLog("chat-turn", `start ${agentId} (fm-send)`);
+  // On the hub Firstmate runs on the captain's laptop: reach it through the laptop worker (lib/laptop.ts).
+  if (process.env.FLEET_LAPTOP_URL) {
+    const t0 = Date.now();
+    const r = await (await import("./laptop.ts")).laptopFirstmateSend(captainLine.text);
+    if (!r.ok) {
+      await failTurn(agentId, captainLine, "error", 0, `Firstmate runs on your laptop and could not be reached (${r.detail}). Start it there, or ask Alice.`);
+      return;
+    }
+    await finishFmSend(agentId, captainLine, { ok: true, ms: Date.now() - t0, exitCode: 0, stderr: "", stdout: "", timedOut: false }, "Sent to Firstmate on your laptop. Its reply shows here when it writes back.");
+    return;
+  }
   const reachable = await firstmateTuiReachable();
   if (!reachable.ok) {
     await failTurn(agentId, captainLine, "error", 0, reachable.reason ?? "TUI off");

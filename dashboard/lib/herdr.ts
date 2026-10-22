@@ -2,6 +2,9 @@ import { join } from "node:path";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { fleetInboxRoot, ROOT } from "./paths.ts";
 import { dashLog } from "./log.ts";
+
+/** Herdr commands whose last call failed (their repeats stay out of the log). */
+const failing = new Set<string>();
 import { spawnTimed } from "./proc.ts";
 
 export const FLEET_HERDR_SESSION = "fleet";
@@ -101,10 +104,15 @@ export function herdrExec(
       timeoutMs,
       env: herdrEnv(),
     });
-    await dashLog(
-      "herdr",
-      `${args.slice(0, 4).join(" ")} ${res.ms}ms exit=${res.exitCode} timedOut=${res.timedOut}`,
-    );
+    // Routine polls were 93% of the hub's log (2026-10-22): log slow calls, timeouts, and a
+    // command's first failure in a row, not every successful or repeated-failing poll.
+    const cmd = args.slice(0, 4).join(" ");
+    const failed = res.exitCode !== 0 || res.timedOut;
+    if (res.timedOut || res.ms > 3000 || (failed && !failing.has(cmd))) {
+      await dashLog("herdr", `${cmd} ${res.ms}ms exit=${res.exitCode} timedOut=${res.timedOut}${failed ? " (repeats are not logged until it succeeds)" : ""}`);
+    }
+    if (failed) failing.add(cmd);
+    else failing.delete(cmd);
     return {
       stdout: res.stdout,
       stderr: res.stderr,
