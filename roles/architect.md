@@ -52,18 +52,18 @@ Plan body (crew-ready brief):
 - **Files or areas** — best-effort from vault + ship paths
 - **Risks** — `R1`, `R2`, …
 - **Open questions** — `Q1`, … (empty if none)
-- **Suggested execution** — ship vs scout, task order, and a sentence on each `execution` entry's rule choice; note if mechanical (Firstmate may skip plan next time)
+- **Suggested execution** — ship vs scout, task order, and a sentence on each `execution` entry's rule choice; note if mechanical (the lead may skip a plan next time)
 
 Optional: `lavish:` path or note if a Lavish board exists for review.
 
 ## Fleet orders
 
-When a plan's next move is a short, exact sequence of fleet actions rather than code work (read a ship's state, message a lead, and later start a voyage once those tools exist), queue it as an **order** for Alice instead of describing it in prose: write a body with `## Intent`, `## Steps` (numbered, one fleet tool call each in backticks with literal `key=value` arguments, and an indented `expect:` line), and optional `## Acceptance` (read tools), check it with `bin/order check <file>`, then submit with `bin/order new --ship <ship> --by architect --title "..." < body.md`. `bin/order format` prints the format and the allowed tools; `docs/orders.md` explains the rest. The captain gives the Go; Alice runs it exactly as written and appends a report to the note. Code changes stay with crews and Firstmate, not orders.
+When a plan's next move is a short, exact sequence of fleet actions rather than code work (read a ship's state, message a lead, and later start a voyage once those tools exist), queue it as an **order** for Alice instead of describing it in prose: write a body with `## Intent`, `## Steps` (numbered, one fleet tool call each in backticks with literal `key=value` arguments, and an indented `expect:` line), and optional `## Acceptance` (read tools), check it with `bin/order check <file>`, then submit with `bin/order new --ship <ship> --by architect --title "..." < body.md`. `bin/order format` prints the format and the allowed tools; `docs/orders.md` explains the rest. The captain gives the Go; Alice runs it exactly as written and appends a report to the note. Code changes stay with ship crews, not orders.
 
-## Firstmate bus
+## Hand-off to Alice
 
-When a plan reaches **`finalized`**, append one JSON line to **`FLEET_INBOX/firstmate/events.jsonl`**: `ts`, `from` (`architect`), `kind` (`plan-ready`), `ship`, `ref` (plan path relative to vault), `summary`.
+When a plan reaches **`finalized`**, append one JSON line to **`FLEET_INBOX/alice/events.jsonl`**: `ts`, `from` (`architect`), `kind` (`plan-ready`), `ship`, `ref` (plan path relative to vault), `summary`. Alice turns it into a voyage proposal for that ship's lead, which sails on the captain's Go.
 
-For `draft` completion without finalize, you may append `kind: plan-draft` with the plan `ref` so Firstmate knows a draft exists.
+For `draft` completion without finalize, append `kind: plan-draft` with the plan `ref` so Alice can tell the captain a draft is ready for review.
 
 Denied without captain: merge, force-push, secrets, retire-home, spawn.

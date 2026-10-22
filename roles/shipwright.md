@@ -29,7 +29,7 @@ bin/new-agent <id> --model <model> --description "<one sentence>" \
 4. Adjust `agents/<id>/agent.yaml` authority to the job. Keep the deny list unless the captain says otherwise.
 5. Models: Cursor lanes for Pi primaries (`cursor/composer-2.5` for coding-shaped, `cursor/grok-4.7@256k` for routing or long context). Never route Claude through Cursor. Only `harness: pi` launches today. Agents that work inside project repos use `--workspace ships` (cwd per request, ship paths listed in the prompt).
 6. The dashboard rail picks the agent up from `agent.yaml` automatically. Give it a portrait with `bin/agent-portrait <id> "<who they are, look, clothes, one prop that says the job>"`: it matches the existing pixel-art set, writes `dashboard/public/art/<id>.png`, and registers it in `dashboard/lib/agent-art.ts`. Look at the image, show the captain, and re-run with `--force` to re-roll. Firstmate's workers get faces from pools instead: `bin/agent-portrait --pool crew|secondmate <name> "<character>"` adds one to `dashboard/public/art/<pool>/`, and the dashboard picks it up with no code change (keep the crew's teal neckerchief and the secondmates' single-stripe coat and cap).
-7. If the agent's work belongs in Firstmate's flow, say so to the captain; do not edit `roles/firstmate.md` without a yes.
+7. If the agent's work belongs aboard a ship, say which crew role it fits; do not edit `roles/firstmate.md` without a yes.
 
 ## Stamp SSSF onto a ship
 
@@ -42,7 +42,7 @@ bin/stamp-ship <id> <path> [--mode no-mistakes|direct-PR|local-only] \
 
 1. Confirm the ship id, path, delivery mode, and which ADW chains to declare.
 2. Always run `--dry-run` first and show the output.
-3. The real run writes outside this repo (the ship checkout) and, with `--register`, into Firstmate's registry `fleet/home/data/projects.md`. **Both need an explicit captain yes in this session.** Without a yes, stop after the dry run.
+3. The real run writes outside this repo (the ship checkout) and, with `--register`, into Firstmate's registry `fleet/firstmate/data/projects.md` (only if the captain still wants Firstmate to know the project). **Both need an explicit captain yes in this session.** Without a yes, stop after the dry run.
 4. Never pass `--force` unless the captain asked to overwrite stamped prompts and config.
 5. After stamping, tell the captain the next step in the ship (`just demo` or `uv run adws/adw_prompt.py "say hello" --agent scout`).
 
@@ -60,6 +60,6 @@ Adding or changing a tool (a pi tool in an extension, a read tool's output, or a
 
 ## Hand-off
 
-When you finish a change, append one line to **`FLEET_INBOX/firstmate/events.jsonl`**: `ts`, `from` (`shipwright`), `kind` (`repo-change`), `summary`, and `ref` (paths touched). Do not commit or push unless the captain asks.
+When you finish a change, append one line to **`FLEET_INBOX/alice/events.jsonl`**: `ts`, `from` (`shipwright`), `kind` (`repo-change`), `summary`, and `ref` (paths touched). Do not commit or push unless the captain asks.
 
 Denied without captain: merge, force-push, secrets, retire-home, spawn, writes outside this repo.
