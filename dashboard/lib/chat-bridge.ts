@@ -16,6 +16,7 @@ import { logCrewEvent, logCrewLine, logCrewTurn } from "./ship-events.ts";
 import { budgetRefusal, officerBudgetRefusal } from "./shipyard.ts";
 import { holdForBudget, releaseHeld } from "./budget-hold.ts";
 import { notifyCaptain } from "./notify.ts";
+import { agentSaid, toolUsed, turnEnded, turnStarted } from "./fact-check.ts";
 import { dashLog } from "./log.ts";
 import { recordTurn as recordTurnMetric } from "./metrics.ts";
 import { spawnTimed } from "./proc.ts";
@@ -92,17 +93,29 @@ export function registerChatEventBroadcaster(fn: ChatEventBroadcaster): void {
   broadcastEvent = fn;
 }
 
+/** Last fact-check note per agent: at most one every 10 minutes, so a correction can never loop. */
+const factNoted = new Map<string, number>();
+
 registerHostHooks({
   line: (agentId, line) => {
     logCrewLine(agentId, line);
     emitOwn(agentId, line);
+    if (line.from === agentId && line.kind === "chat" && !line.step) agentSaid(agentId, line.text);
   },
   event: (agentId, ev) => {
     logCrewEvent(agentId, ev);
     broadcastEvent(agentId, ev);
+    if (ev.kind === "running" && ev.running) turnStarted(agentId);
+    if (ev.kind === "activity" && ev.text) toolUsed(agentId, ev.text);
   },
   settled: (agentId, outcome) => {
     logCrewTurn(agentId, outcome);
+    // Alice named a closed vault task without looking (lib/fact-check.ts): one note to check and correct.
+    const note = turnEnded(agentId);
+    if (note && Date.now() - (factNoted.get(agentId) ?? 0) > 10 * 60_000) {
+      factNoted.set(agentId, Date.now());
+      void acceptCrewLine(agentId, "fact-check", note).catch(() => {});
+    }
     // Fleet metrics (lib/metrics.ts): every turn, tagged with its ship's voyage under sail.
     recordTurnMetric({ agent: agentId, ship: chatTarget(agentId)?.ship, model: outcome.model, ok: outcome.ok, ms: outcome.ms, cost: outcome.cost, tokens: outcome.tokens, cacheRead: outcome.cacheRead, prompt: outcome.prompt, error: outcome.error });
     recordTurn(agentId, {
@@ -148,7 +161,7 @@ function parseChatLine(raw: string): ChatLine | null {
 export const FLEET_OFFICERS = new Set(["alice"]);
 
 /** Senders whose messages explain themselves (the order watcher, the Go gate): no "message from" prefix. */
-const SYSTEM_SENDERS = new Set(["orders", "go", "router", "budget"]);
+const SYSTEM_SENDERS = new Set(["orders", "go", "router", "budget", "fact-check"]);
 
 /** A captain line written by the node on the captain's behalf (a voyage brief after their Go): saved, shown, and run. */
 export async function postCaptainLine(agentId: string, text: string): Promise<ChatLine> {
