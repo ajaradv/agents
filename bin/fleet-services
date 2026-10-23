@@ -28,6 +28,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUFFIX="${FLEET_SERVICE_SUFFIX:-}"
 LABEL_NODE="com.fleet.node${SUFFIX:+.$SUFFIX}"
 LABEL_DASH="com.fleet.dashboard${SUFFIX:+.$SUFFIX}"
+LABEL_BROWSER="com.fleet.browser${SUFFIX:+.$SUFFIX}"
 AGENTS_DIR="$HOME/Library/LaunchAgents"
 INBOX="${FLEET_INBOX:-$ROOT/fleet/inbox}"
 LOGS="$INBOX/.node"
@@ -95,6 +96,7 @@ if [ "$(uname)" = Linux ]; then
   UNITS=/etc/systemd/system
   U_NODE="fleet-node${SUFFIX:+-$SUFFIX}"
   U_DASH="fleet-dashboard${SUFFIX:+-$SUFFIX}"
+  U_BROWSER="fleet-browser${SUFFIX:+-$SUFFIX}"
   unit() { # name, script, log, description, [KEY=VALUE ...]
     printf '[Unit]\nDescription=%s\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\n' "$4"
     printf 'User=%s\nWorkingDirectory=%s\nExecStart=%s run %s\n' "$(id -un)" "$ROOT" "$BUN" "$ROOT/$2"
@@ -112,19 +114,20 @@ if [ "$(uname)" = Linux ]; then
       mkdir -p "$LOGS"
       unit "$U_NODE" dashboard/node.ts node.log "Fleet node (agents, routines, orders)" | sudo tee "$UNITS/$U_NODE.service" >/dev/null
       unit "$U_DASH" dashboard/server.ts dashboard.log "Fleet dashboard" FLEET_NODE_SPAWN=0 | sudo tee "$UNITS/$U_DASH.service" >/dev/null
+      unit "$U_BROWSER" dashboard/browser.ts browser.log "Fleet shared browser (one Chrome for every screenshot)" | sudo tee "$UNITS/$U_BROWSER.service" >/dev/null
       sc daemon-reload
       # restart, not just enable --now: a running service would keep its old settings (FLEET_LAPTOP_URL on 2026-10-22).
-      for u in "$U_NODE" "$U_DASH"; do sc enable "$u.service" >/dev/null 2>&1; sc restart "$u.service" && echo "started $u"; done
+      for u in "$U_NODE" "$U_DASH" "$U_BROWSER"; do sc enable "$u.service" >/dev/null 2>&1; sc restart "$u.service" && echo "started $u"; done
       ;;
     uninstall)
-      for u in "$U_DASH" "$U_NODE"; do sc disable --now "$u.service" 2>/dev/null; sudo rm -f "$UNITS/$u.service"; echo "removed $u"; done
+      for u in "$U_BROWSER" "$U_DASH" "$U_NODE"; do sc disable --now "$u.service" 2>/dev/null; sudo rm -f "$UNITS/$u.service"; echo "removed $u"; done
       sc daemon-reload
       ;;
     restart)
-      for u in "$U_NODE" "$U_DASH"; do sc restart "$u.service" && echo "restarted $u"; done
+      for u in "$U_NODE" "$U_DASH" "$U_BROWSER"; do sc restart "$u.service" && echo "restarted $u"; done
       ;;
     status)
-      for u in "$U_NODE" "$U_DASH"; do
+      for u in "$U_NODE" "$U_DASH" "$U_BROWSER"; do
         if sc is-active --quiet "$u.service"; then echo "$u: running (pid $(sc show -p MainPID --value "$u.service"))"
         elif [ -f "$UNITS/$u.service" ]; then echo "$u: installed, not running"
         else echo "$u: not installed"; fi
@@ -147,7 +150,7 @@ case "${1:-}" in
     mkdir -p "$AGENTS_DIR" "$LOGS"
     # launchd owns the node: the dashboard job never starts one itself (FLEET_NODE_SPAWN=0),
     # so the two can never race for the port at login or after a restart.
-    for pair in "$LABEL_NODE:dashboard/node.ts:node.log:" "$LABEL_DASH:dashboard/server.ts:dashboard.log:FLEET_NODE_SPAWN=0"; do
+    for pair in "$LABEL_NODE:dashboard/node.ts:node.log:" "$LABEL_DASH:dashboard/server.ts:dashboard.log:FLEET_NODE_SPAWN=0" "$LABEL_BROWSER:dashboard/browser.ts:browser.log:"; do
       IFS=: read -r label script log extra <<<"$pair"
       plist "$label" "$script" "$log" ${extra:+"$extra"} > "$AGENTS_DIR/$label.plist"
       plutil -lint -s "$AGENTS_DIR/$label.plist" || die "bad plist for $label"
@@ -157,17 +160,17 @@ case "${1:-}" in
     done
     ;;
   uninstall)
-    for label in "$LABEL_DASH" "$LABEL_NODE"; do
+    for label in "$LABEL_BROWSER" "$LABEL_DASH" "$LABEL_NODE"; do
       stop_job "$label"
       rm -f "$AGENTS_DIR/$label.plist"
       echo "removed $label"
     done
     ;;
   restart)
-    for label in "$LABEL_NODE" "$LABEL_DASH"; do launchctl kickstart -k "$DOMAIN/$label" && echo "restarted $label"; done
+    for label in "$LABEL_NODE" "$LABEL_DASH" "$LABEL_BROWSER"; do launchctl kickstart -k "$DOMAIN/$label" && echo "restarted $label"; done
     ;;
   status)
-    for label in "$LABEL_NODE" "$LABEL_DASH"; do
+    for label in "$LABEL_NODE" "$LABEL_DASH" "$LABEL_BROWSER"; do
       if launchctl print "$DOMAIN/$label" >/dev/null 2>&1; then
         pid=$(launchctl print "$DOMAIN/$label" | awk '/^\tpid = /{print $3}')
         echo "$label: running${pid:+ (pid $pid)}"
