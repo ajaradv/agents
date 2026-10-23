@@ -18,3 +18,13 @@ describe("shipyard", () => {
     expect(text).toContain("ask_captain");
   });
 });
+
+describe("where a voyage sails", () => {
+  test("a Gondolin ship never sails on a Linux hub; elsewhere the hub is the fallback", async () => {
+    const { sailHost } = await import("./shipyard.ts");
+    expect(await sailHost({ id: "pochteca", isolation: "vm" }, "hub", "linux")).toMatchObject({ ok: false, message: expect.stringContaining("Gondolin") });
+    expect(await sailHost({ id: "pochteca", isolation: "vm" }, "hub", "darwin")).toMatchObject({ ok: true });
+    expect(await sailHost({ id: "kinwork", isolation: "host" }, undefined, "linux")).toMatchObject({ ok: true });
+    expect(await sailHost({ id: "kinwork", isolation: "host" }, "moon", "linux")).toMatchObject({ ok: false });
+  });
+});
