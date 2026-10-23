@@ -226,13 +226,16 @@ export const SAIL_ON = ["hub", "laptop"] as const;
  * allows laptop voyages and the laptop is up. Not asked: the ship's `sail_on:
  * laptop` preference when the laptop can take it, else the hub.
  */
-export async function sailHost(ship: Pick<ShipRow, "id">, requested?: string): Promise<{ ok: true; host: ShipHost } | { ok: false; message: string }> {
+export async function sailHost(ship: Pick<ShipRow, "id" | "isolation">, requested?: string, platform: string = process.platform): Promise<{ ok: true; host: ShipHost } | { ok: false; message: string }> {
   const want = requested || (readShipConfig(ship.id)?.sail_on === "laptop" ? "prefer-laptop" : "hub");
-  if (want === "hub" || want === "local") return { ok: true, host: localHost };
-  if (want !== "laptop" && want !== "prefer-laptop") return { ok: false, message: `Sail on the hub or the laptop, not ${want}.` };
+  if (want !== "hub" && want !== "local" && want !== "laptop" && want !== "prefer-laptop") return { ok: false, message: `Sail on the hub or the laptop, not ${want}.` };
+  // A crew in Gondolin VMs needs macOS: on a Linux hub, only the laptop can take the voyage.
+  const hubCan = ship.isolation !== "vm" || platform === "darwin";
+  if (want === "hub" || want === "local") return hubCan ? { ok: true, host: localHost } : { ok: false, message: `${ship.id}'s crew works in Gondolin VMs, which this hub cannot run: sail it on the laptop.` };
   const can = await laptopSailable();
   if (can.ok) return { ok: true, host: shipHost("laptop") };
-  return want === "laptop" ? { ok: false, message: `${ship.id} cannot sail on the laptop: ${can.why}.` } : { ok: true, host: localHost };
+  if (want === "laptop") return { ok: false, message: `${ship.id} cannot sail on the laptop: ${can.why}.` };
+  return hubCan ? { ok: true, host: localHost } : { ok: false, message: `${ship.id} sails only on the laptop (its crew works in Gondolin VMs), and ${can.why}.` };
 }
 
 export async function startVoyage(shipId: string, goal: string, to: string, on?: string): Promise<{ ok: boolean; message: string; voyage?: Voyage }> {
