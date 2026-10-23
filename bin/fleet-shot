@@ -70,7 +70,8 @@ const bin = chrome();
 if (!bin) fail("no Chrome or Chromium found", "install Google Chrome, or set CHROME_PATH");
 
 const views = args.includes("--both") ? ["desktop", "mobile"] : args.includes("--mobile") ? ["mobile"] : ["desktop"];
-const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "");
+// The second alone collided: crewmates shooting at once overwrote each other's files.
+const stamp = `${new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${process.pid}`;
 const shots: { viewport: string; path: string; kb: number; ms: number }[] = [];
 
 /**
@@ -126,13 +127,39 @@ async function capture(width: number, mobile: boolean, path: string): Promise<st
   }
 }
 
+/**
+ * The shared browser (dashboard/browser.ts): one Chrome per host, a private
+ * context per shot. Returns null on success, an error string, or "unavailable"
+ * when the service is not running (then this script starts its own Chrome).
+ */
+async function viaShared(width: number, mobile: boolean, path: string): Promise<string | null> {
+  const port = process.env.FLEET_BROWSER_PORT || "8789";
+  let res: Response;
+  try {
+    res = await fetch(`http://127.0.0.1:${port}/shot`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, width, height, mobile, wait }),
+      signal: AbortSignal.timeout(wait + 90_000),
+    });
+  } catch (e) {
+    return e instanceof Error && e.name === "TimeoutError" ? "the shared browser timed out" : "unavailable";
+  }
+  if (!res.ok) return String(((await res.json().catch(() => ({}))) as { message?: string }).message ?? `HTTP ${res.status}`);
+  await Bun.write(path, new Uint8Array(await res.arrayBuffer()));
+  return null;
+}
+
+let shared = 0;
 for (const view of views) {
   const width = view === "mobile" ? 390 : 1440;
   const path = join(dir, `shot-${stamp}-${view}.png`);
   const t0 = Date.now();
-  const error = await capture(width, view === "mobile", path);
+  let error = await viaShared(width, view === "mobile", path);
+  if (error === null) shared++;
+  if (error === "unavailable") error = await capture(width, view === "mobile", path);
   if (error || !existsSync(path)) fail(`the ${view} shot failed: ${error ?? "no image"}`, "check the URL loads (curl -sI it), then try again with a longer --wait", 1);
   shots.push({ viewport: `${view} ${width}x${height}`, path, kb: Math.round(statSync(path).size / 1024), ms: Date.now() - t0 });
 }
-out({ result: `${shots.length} screenshot(s) of ${url}`, shots, help: [`bin/fleet-look ${shots[0]!.path} "<what to check>"`, "crew: the look tool with these paths"] });
+out({ result: `${shots.length} screenshot(s) of ${url}`, browser: shared ? "shared" : "own", shots, help: [`bin/fleet-look ${shots[0]!.path} "<what to check>"`, "crew: the look tool with these paths"] });
 process.exit(0);
