@@ -43,7 +43,7 @@ export const nodePublicUrl = () => (process.env.FLEET_NODE_PUBLIC_URL ?? "").rep
 
 /** Can a voyage sail on the laptop right now: the captain allows it, the worker is up, the node is reachable. */
 export async function laptopSailable(): Promise<{ ok: boolean; why: string }> {
-  if (!laptopVoyages().on) return { ok: false, why: "laptop voyages are off (Harbor)" };
+  if (!laptopVoyages().on) return { ok: false, why: "laptop voyages are off in the Harbor" };
   if (!nodePublicUrl()) return { ok: false, why: "the hub's node has no tailnet address (FLEET_NODE_PUBLIC_URL)" };
   if (!(await laptopCan("ship-host"))) return { ok: false, why: "the laptop is not available" };
   return { ok: true, why: "" };
