@@ -13,6 +13,7 @@ import { agentKeyEnv } from "./fleet-env.ts";
 import { dashLog } from "./log.ts";
 import { notifyCaptain } from "./notify.ts";
 import { recordToolFailure } from "./tool-failures.ts";
+import { LINK_LOST } from "./laptop-host.ts";
 import { localHost, type RpcProc } from "./ship-host.ts";
 import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 import { toolFailed } from "../../extensions/cache-watch.ts";
@@ -465,7 +466,8 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
   // Crewmates call back into the fleet node (extensions/crew.ts) and prove
   // who they are with FLEET_CREW_TOKEN, never with a name in the request.
   const ship = chatTarget(agentId)?.ship;
-  const proc = (ship ? voyageHost(ship) : localHost).launchRpc(agentId, { ...keys, FLEET_DASHBOARD_URL: `http://127.0.0.1:${NODE_PORT}`, FLEET_CREW_TOKEN: crewToken });
+  const host = ship ? voyageHost(ship) : localHost;
+  const proc = host.launchRpc(agentId, { ...keys, FLEET_DASHBOARD_URL: `http://127.0.0.1:${NODE_PORT}`, FLEET_CREW_TOKEN: crewToken }, { ship, worktree: ship ? voyageWorktree(ship) : null });
   const p: AgentProc = {
     id: agentId,
     proc,
@@ -500,6 +502,15 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
     for (const [, resolve] of p.pending) resolve({ success: false, error: "agent process exited" });
     p.pending.clear();
     await dashLog("agent-host", `exit ${agentId} code=${code}`);
+    // The link to a remote host dropped (the laptop slept or went offline): away, not crashed.
+    // Its session stays there; the next message (or the watchdog's nudge) starts it again.
+    if (code === LINK_LOST) {
+      hooks.event(agentId, { kind: "running", running: false });
+      hooks.event(agentId, { kind: "stream", text: "" });
+      hooks.event(agentId, { kind: "notice", text: `Lost the link to ${host.label} (asleep or offline): this crewmate is away${p.running ? " and its turn stopped" : ""}. It picks up from its session when ${host.label} is back.`, level: "warning" });
+      if (p.running) hooks.settled(agentId, { ok: true, ms: Date.now() - p.startedAt, cost: 0, tokens: 0 });
+      return;
+    }
     const expected = code === 0 || code === 143 || code === null;
     // A dock returns the voyage worktree, and treehouse ends the processes inside it: that is
     // the voyage ending, not a crash (the lead that asked for the dock was mid-turn).

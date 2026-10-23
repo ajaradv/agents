@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { fleetInboxRoot } from "./paths.ts";
 
 /**
@@ -29,7 +29,7 @@ const PROJECT_HEADER = (ship: string) =>
   `# ${ship}: project memory\n\nShared by the crew and kept across voyages. Lasting knowledge only: conventions, commands, gotchas, decisions the next voyage needs. Keep it short; prune what is no longer true.\n\n`;
 
 /** Fresh session ids for crewmates (bin/launch reads fleet/inbox/<id>/sessions/current). */
-async function freshSession(agent: string): Promise<void> {
+export async function freshSession(agent: string): Promise<void> {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "").replace("T", "-").toLowerCase();
   const dir = join(fleetInboxRoot(), agent, "sessions");
   await mkdir(dir, { recursive: true });
@@ -65,6 +65,41 @@ export async function startVoyageMemory(ship: string, v: { goal: string; branch?
     await clearTransient(agent);
     await freshSession(agent);
   }
+}
+
+/**
+ * Crew memory as files relative to the inbox, for a ship host that keeps its
+ * own (lib/ship-host.ts putMemory): the ship's and the crewmates' memory notes
+ * and current session ids.
+ */
+export async function memoryFiles(ship: string, crew: string[]): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const add = async (rel: string) => {
+    try {
+      out[rel] = await readFile(join(fleetInboxRoot(), rel), "utf8");
+    } catch {
+      /* none */
+    }
+  };
+  for (const dir of [`ships/${ship}/memory`, ...crew.map((a) => `${a}/memory`)]) {
+    for (const n of await readdir(join(fleetInboxRoot(), dir)).catch(() => [] as string[])) if (n.endsWith(".md")) await add(`${dir}/${n}`);
+  }
+  for (const a of crew) await add(`${a}/sessions/current`);
+  return out;
+}
+
+/** Bring back memory a remote host kept (its notes only; sessions stay where they ran). */
+export async function writeMemoryFiles(files: Record<string, string>): Promise<void> {
+  for (const [rel, text] of Object.entries(files)) {
+    if (!/^(ships\/)?[a-z][\w-]*\/memory\/[a-z][\w-]*\.md$/.test(rel)) continue;
+    await mkdir(dirname(join(fleetInboxRoot(), rel)), { recursive: true });
+    await writeFile(join(fleetInboxRoot(), rel), text, "utf8");
+  }
+}
+
+/** The voyage-scoped memory files a remote host should drop at dock (empty text removes). */
+export function voyageMemoryCleared(ship: string, crew: string[]): Record<string, string> {
+  return Object.fromEntries([`ships/${ship}/memory/voyage.md`, ...crew.flatMap((a) => [`${a}/memory/plan.md`, `${a}/memory/state.md`])].map((rel) => [rel, ""]));
 }
 
 /** At dock: the voyage scratchpad's text (for the vault note), then the voyage-scoped memory is gone. */

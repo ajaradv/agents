@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { laptopHost } from "./laptop-host.ts";
 import { ROOT } from "./paths.ts";
 import { spawnTimed, type SpawnResult } from "./proc.ts";
 
@@ -8,10 +9,10 @@ import { spawnTimed, type SpawnResult } from "./proc.ts";
  * fleet/plans/feature/remote-ship-hosts, H1). Everything a voyage does in the
  * repo goes through a ship host: leasing and returning the worktree, git state
  * for gates and the dock review, checks, the dock's push and pull request, and
- * starting a crewmate's pi with its RPC stream. Today there is one backend,
- * **local** (the machine the node runs on); the laptop (H2) and an exe.dev VM
- * per voyage (H3) plug in behind the same interface, and so can short-lived
- * helper agents that run where the heavy tools are.
+ * starting a crewmate's pi with its RPC stream. Backends: **local** (the
+ * machine the node runs on) and **laptop** (lib/laptop-host.ts, H2); an
+ * exe.dev VM per voyage (H3) plugs in behind the same interface, and so can
+ * short-lived helper agents that run where the heavy tools are.
  *
  * Paths are the host's own: a worktree path means a folder on that host.
  */
@@ -30,6 +31,9 @@ export type RpcProc = {
   kill(signal?: "SIGTERM" | "SIGKILL"): void;
 };
 
+/** What a host needs to start a crewmate: its ship and the voyage's worktree there. */
+export type LaunchCtx = { ship?: string; worktree?: { path: string; branch: string; base: string; leaseId?: string } | null };
+
 export interface ShipHost {
   kind: HostKind;
   /** For messages and the voyage record: "this machine", "the laptop", a VM name. */
@@ -38,8 +42,16 @@ export interface ShipHost {
   exec(cmd: string[], opts: ExecOpts): Promise<SpawnResult>;
   /** Whether a folder on this host is a git checkout (a .git folder or a linked worktree's .git file). */
   hasRepo(path: string): Promise<boolean>;
+  /** The ship's repo on this host (paths differ between machines); "" when it has none. */
+  repoPath(ship: { id: string; path: string }): Promise<string>;
   /** Start `bin/launch rpc <agent>` on this host with the given environment added. */
-  launchRpc(agentId: string, env: Record<string, string>): RpcProc;
+  launchRpc(agentId: string, env: Record<string, string>, ctx: LaunchCtx): RpcProc;
+  /** A remote host keeps crew memory itself: the hub sends it at voyage start (relative paths under the inbox)... */
+  putMemory?(files: Record<string, string>): Promise<void>;
+  /** ...and reads it back at dock or when the voyage moves. */
+  getMemory?(ship: string, agents: string[]): Promise<Record<string, string>>;
+  /** Whether a new voyage may sail here now. */
+  available(): Promise<boolean>;
 }
 
 export const localHost: ShipHost = {
@@ -47,7 +59,9 @@ export const localHost: ShipHost = {
   label: "this machine",
   exec: (cmd, opts) => spawnTimed(cmd, opts),
   hasRepo: async (path) => Boolean(path) && existsSync(join(path, ".git")),
-  launchRpc(agentId, env) {
+  repoPath: async (ship) => ship.path,
+  available: async () => true,
+  launchRpc(agentId, env, _ctx) {
     const proc = Bun.spawn(["python3", join(ROOT, "bin/launch"), "rpc", agentId], {
       cwd: ROOT,
       stdin: "pipe",
@@ -66,23 +80,25 @@ export const localHost: ShipHost = {
   },
 };
 
-const backends: Partial<Record<HostKind, ShipHost>> = { local: localHost };
+const defaults = (): Partial<Record<HostKind, ShipHost>> => ({ local: localHost, laptop: laptopHost });
+let backends = defaults();
 
-/** Plug in a backend (H2: the laptop; tests: a fake). Passing null removes it. */
+/** Replace a backend (tests: a fake). Passing null restores the default. */
 export function setShipHost(kind: HostKind, host: ShipHost | null): void {
   if (host) backends[kind] = host;
-  else if (kind !== "local") delete backends[kind];
-  else backends.local = localHost;
+  else backends = { ...backends, [kind]: defaults()[kind] };
 }
 
-/** The backend for a host name; anything unknown or not plugged in is the local machine. */
+/** The backend for a host name; none (records from before hosts) is the local machine. */
 export function shipHost(kind: string | undefined): ShipHost {
   return backends[(kind ?? "local") as HostKind] ?? backends.local!;
 }
 
-/** Hosts a voyage can sail on right now (the "Sail on" choice, H2). */
-export function availableHosts(): HostKind[] {
-  return (Object.keys(backends) as HostKind[]).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b)));
+/** Hosts a new voyage can sail on right now (the "Sail on" choice). */
+export async function availableHosts(): Promise<HostKind[]> {
+  const out: HostKind[] = [];
+  for (const kind of ["local", "laptop", "vm"] as HostKind[]) if (backends[kind] && (await backends[kind]!.available())) out.push(kind);
+  return out;
 }
 
 /** git on a host: ok when it exited 0 in time, with its output (stdout, else stderr) trimmed. */

@@ -42,4 +42,11 @@ describe("the stalled-voyage watchdog", () => {
     expect(watchdogStep([ship({ hasLead: false })], lone, NUDGE_AFTER_MS)).toEqual([expect.objectContaining({ kind: "tell" })]);
     expect(watchdogStep([ship({ condition: "docked", voyage: null })], new Map(), NUDGE_AFTER_MS)).toEqual([]);
   });
+  test("a voyage on an away laptop waits: no nudge, and the clock starts again when it is back", () => {
+    const st: WatchState = new Map();
+    watchdogStep([ship()], st, 0);
+    expect(watchdogStep([ship({ away: true })], st, NUDGE_AFTER_MS)).toEqual([]);
+    expect(watchdogStep([ship()], st, NUDGE_AFTER_MS + MIN)).toEqual([]);
+    expect(watchdogStep([ship()], st, 2 * NUDGE_AFTER_MS + MIN)).toEqual([expect.objectContaining({ kind: "nudge" })]);
+  });
 });

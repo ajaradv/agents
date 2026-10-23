@@ -65,3 +65,24 @@ Voyage worktrees branch from the repo's default branch (`origin/HEAD`, else
 `base_branch: fleet-reliability`; the voyage then starts from
 `origin/<branch>` (or the local branch when the remote lacks it). Without it,
 crews build on a stale main and their branch conflicts at merge.
+
+## Where a voyage sails
+
+On the hub, a voyage can sail on the hub or on the captain's laptop (Set a
+course's "Sail on", or `voyage_start` with `on: laptop`). The laptop is offered
+only while **Laptop voyages** is on in the Harbor and the laptop is awake. A
+laptop voyage keeps its worktree, checks, and crew's pi on the laptop and
+reports to the hub as usual. `sail_on: laptop` (overlay) makes the laptop the
+default when it can take the voyage, else the hub. Turning Laptop voyages off
+(closing the laptop for the day) sends new voyages to the hub; the Harbor lists
+open laptop voyages with **Move to hub** (the branch is pushed from the laptop
+and the hub carries on). A crew in Gondolin VMs stays on the laptop and waits
+while it sleeps.
+
+The laptop decides what the hub may run there (`dashboard/lib/hosted.ts`): git
+and treehouse in the ship's repo and worktrees, `gh pr`, and only the checks in
+the laptop's own ship config. Security settings (isolation, env, VM allowlist,
+checks) are the laptop's; from the hub it takes only crew, models, budgets,
+gates, maneuvers, and the base branch. Setup: the hub's
+`~/.config/fleet/services.env` needs `FLEET_LAPTOP_URL` and
+`FLEET_NODE_PUBLIC_URL` (the node published with Tailscale Serve).

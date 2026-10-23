@@ -14,9 +14,10 @@ import { aliceVault, ROOT } from "./paths.ts";
 import { spawnTimed } from "./proc.ts";
 import { logShipEvent, shipTurnTotals } from "./ship-log.ts";
 import { describeGates, gateStatus } from "./gates.ts";
-import { endVoyageMemory, startVoyageMemory } from "./crew-memory.ts";
+import { endVoyageMemory, freshSession as freshCrewSession, memoryFiles, startVoyageMemory, voyageMemoryCleared, writeMemoryFiles } from "./crew-memory.ts";
+import { laptopSailable } from "./laptop-host.ts";
 import { ledgerLine, ledgerMarkdown, recordVoyageDock, recordVoyageStart, voyageId, voyageLedger } from "./metrics.ts";
-import { hostRunner } from "./ship-host.ts";
+import { hostRunner, localHost, shipHost, type ShipHost } from "./ship-host.ts";
 import { leaseVoyageWorktree, releaseVoyageWorktree, usesVoyageWorktrees, voyageHost, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
 
 /**
@@ -217,9 +218,29 @@ function yamlStr(s: string): string {
   return JSON.stringify(s);
 }
 
-export async function startVoyage(shipId: string, goal: string, to: string): Promise<{ ok: boolean; message: string; voyage?: Voyage }> {
+/** Where a voyage can sail: "hub" (this machine) or "laptop" (lib/laptop-host.ts), as the Set a course form and voyage_start name them. */
+export const SAIL_ON = ["hub", "laptop"] as const;
+
+/**
+ * The ship host for a new voyage. Asked for the laptop: only while the captain
+ * allows laptop voyages and the laptop is up. Not asked: the ship's `sail_on:
+ * laptop` preference when the laptop can take it, else the hub.
+ */
+export async function sailHost(ship: Pick<ShipRow, "id">, requested?: string): Promise<{ ok: true; host: ShipHost } | { ok: false; message: string }> {
+  const want = requested || (readShipConfig(ship.id)?.sail_on === "laptop" ? "prefer-laptop" : "hub");
+  if (want === "hub" || want === "local") return { ok: true, host: localHost };
+  if (want !== "laptop" && want !== "prefer-laptop") return { ok: false, message: `Sail on the hub or the laptop, not ${want}.` };
+  const can = await laptopSailable();
+  if (can.ok) return { ok: true, host: shipHost("laptop") };
+  return want === "laptop" ? { ok: false, message: `${ship.id} cannot sail on the laptop: ${can.why}.` } : { ok: true, host: localHost };
+}
+
+export async function startVoyage(shipId: string, goal: string, to: string, on?: string): Promise<{ ok: boolean; message: string; voyage?: Voyage }> {
   const ship = await findShip(shipId);
   if (!ship) return { ok: false, message: `No ship named ${shipId}.` };
+  const where = await sailHost(ship, on);
+  if (!where.ok) return { ok: false, message: where.message };
+  const host = where.host;
   const g = goal.trim().replace(/\s+/g, " ");
   if (g.length < 4) return { ok: false, message: "Give the voyage a goal." };
   if (await openVoyage(shipId)) return { ok: false, message: `${shipId} is already under sail. Dock it before setting a new course.` };
@@ -231,8 +252,8 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
   await mkdir(voyageDir(shipId), { recursive: true });
   // Fleet-crewed ships work in a leased worktree on a crew/ branch, never in the captain's checkout.
   let worktree: VoyageWorktree | undefined;
-  if (usesVoyageWorktrees(ship)) {
-    const lease = await leaseVoyageWorktree(ship, slug, g);
+  if (usesVoyageWorktrees(ship, host)) {
+    const lease = await leaseVoyageWorktree(ship, slug, g, host);
     if ("message" in lease) return { ok: false, message: lease.message };
     worktree = lease.worktree;
   }
@@ -249,6 +270,7 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
       `orchestrator: ${ship.orchestrator}`,
       `crew: [${crew.join(", ")}]`,
       ...(worktree ? [`branch: ${worktree.branch}`, `worktree: ${yamlStr(worktree.path)}`] : []),
+      `host: ${host.kind === "local" ? "hub" : host.kind}`,
       `started: ${now.toISOString()}`,
       "---",
       "",
@@ -258,7 +280,7 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
       "",
       "## Log",
       "",
-      `- ${now.toISOString()} set sail; goal sent to ${to}${worktree ? `; work on branch ${worktree.branch} (from ${worktree.base}) in ${worktree.path}` : ""}`,
+      `- ${now.toISOString()} set sail${host.kind === "local" ? "" : ` on ${host.label}`}; goal sent to ${to}${worktree ? `; work on branch ${worktree.branch} (from ${worktree.base}) in ${worktree.path}` : ""}`,
       "",
     ].join("\n"),
     "utf8",
@@ -267,8 +289,12 @@ export async function startVoyage(shipId: string, goal: string, to: string): Pro
   const voyage: Voyage = { file, ship: shipId, status: "sailing", goal: g, to, started: now.toISOString(), ...(worktree ? { worktree } : {}) };
   recordVoyageStart({ id: voyageId(file), ship: shipId, goal: g, to, branch: worktree?.branch, worktree: worktree?.path, started: now.toISOString() });
   // Tiered crew memory (lib/crew-memory.ts): a fresh voyage scratchpad, fresh crew sessions, no leftovers.
-  if (ship.orchestrator === "lead") await startVoyageMemory(shipId, { goal: g, branch: worktree?.branch, worktree: worktree?.path, record: file }, crew);
-  return { ok: true, message: `${shipId} set sail.`, voyage };
+  if (ship.orchestrator === "lead") {
+    await startVoyageMemory(shipId, { goal: g, branch: worktree?.branch, worktree: worktree?.path, record: file }, crew);
+    // A remote host keeps the crew's memory where the crew runs.
+    if (host.putMemory) await host.putMemory(await memoryFiles(shipId, crew)).catch((e) => logShipEvent(shipId, "helm", "notice", `Crew memory did not reach ${host.label}: ${e instanceof Error ? e.message : String(e)}`));
+  }
+  return { ok: true, message: `${shipId} set sail${host.kind === "local" ? "" : ` on ${host.label}`}.`, voyage };
 }
 
 export async function dockVoyage(shipId: string, summary: string): Promise<{ ok: boolean; message: string }> {
@@ -280,8 +306,9 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
     const gates = await gateStatus(ship, "dock");
     if (!gates.green) return { ok: false, message: `${shipId} cannot dock yet: ${describeGates(gates)} Run the gates (Run gates on the deck, or ask the lead), then dock again.` };
   }
-  // The ship host holding the voyage's repo (lib/ship-host.ts): read before the release drops the record.
+  // The ship host holding the voyage's repo (lib/ship-host.ts), and the repo there: read before the release drops the record.
   const host = voyageHost(shipId);
+  const repo = voyageWorktree(shipId)?.repo ?? ship?.path ?? "";
   // Return the voyage's worktree: uncommitted work keeps the voyage open.
   const released = ship ? await releaseVoyageWorktree(ship) : { ok: true, message: "" };
   if (!released.ok) return { ok: false, message: released.message };
@@ -293,7 +320,7 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   const ledger = voyageLedger(id);
   // Dock review (lib/dock-review.ts): how closely the captain should review the branch before merging. Advisory.
   const branchInfo = released.message.match(/^Branch (\S+) has \d+ commit\(s\) on (\S+?),/);
-  const review = ship && branchInfo && commits > 0 ? await reviewBranch(ship.path, branchInfo[2]!, branchInfo[1]!, undefined, host).catch(() => null) : null;
+  const review = ship && branchInfo && commits > 0 ? await reviewBranch(repo, branchInfo[2]!, branchInfo[1]!, undefined, host).catch(() => null) : null;
   // Land through the ship's delivery mode (lib/dock-delivery.ts): a pull request for direct-PR and no-mistakes ships.
   let delivered = "";
   if (ship && branchInfo && commits > 0 && deliveryFor(ship.mode) === "pr") {
@@ -305,11 +332,17 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
       `Voyage record (vault): ${v.file.split("/").slice(-3).join("/")}`,
       "Opened by the fleet when the voyage docked. The captain reviews and merges.",
     ].filter(Boolean).join("\n\n");
-    const pr = await openDockPr(ship.path, branchInfo[1]!, branchInfo[2]!, prTitle(v.goal), body, hostRunner(host)).catch((e) => ({ ok: false, message: e instanceof Error ? e.message : String(e) }) as { ok: boolean; url?: string; message: string });
+    const pr = await openDockPr(repo, branchInfo[1]!, branchInfo[2]!, prTitle(v.goal), body, hostRunner(host)).catch((e) => ({ ok: false, message: e instanceof Error ? e.message : String(e) }) as { ok: boolean; url?: string; message: string });
     delivered = pr.ok ? `Pull request: ${pr.url}.` : `Delivery (${ship.mode}): ${pr.message}.`;
   }
   // The voyage's memory is archived into its note, then discarded.
-  const scratch = ship && ship.orchestrator === "lead" ? await endVoyageMemory(shipId, ship.crew.map((r) => `${shipId}-${r}`)) : "";
+  const crewIds = ship ? ship.crew.map((r) => `${shipId}-${r}`) : [];
+  // A remote host kept the crew's memory: bring it back first, then clear the voyage's part there.
+  if (ship?.orchestrator === "lead" && host.getMemory) {
+    await host.getMemory(shipId, crewIds).then(writeMemoryFiles).catch((e) => logShipEvent(shipId, "helm", "notice", `Crew memory on ${host.label} was not brought back: ${e instanceof Error ? e.message : String(e)}`));
+    await host.putMemory?.(voyageMemoryCleared(shipId, crewIds)).catch(() => {});
+  }
+  const scratch = ship && ship.orchestrator === "lead" ? await endVoyageMemory(shipId, crewIds) : "";
   let text = await readFile(v.file, "utf8");
   text = text.replace(/^status: sailing$/m, "status: docked").replace(/^started: (.*)$/m, `started: $1\nended: ${now}`);
   const note = summary.trim();
@@ -317,6 +350,45 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   await writeFile(v.file, text, "utf8");
   logShipEvent(shipId, "captain", "voyage-end", note || "Docked", { file: v.file });
   return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}${delivered ? ` ${delivered}` : ""}${ledger ? ` ${ledgerLine(ledger)}` : ""}${review ? ` ${reviewLine(review)}` : ""}` };
+}
+
+/**
+ * Move an open laptop voyage to the hub (the captain is closing the laptop for
+ * the day): the crew stops, the voyage branch is pushed from the laptop, the
+ * crew's memory comes back, the laptop's worktree is returned, and a hub
+ * worktree carries on from the pushed branch. Crew sessions start fresh on the
+ * hub; their plan and state notes carry the voyage. Uncommitted work on the
+ * laptop keeps the voyage where it is.
+ */
+export async function moveVoyageToHub(shipId: string, stop: (agentId: string) => Promise<void>): Promise<{ ok: boolean; message: string }> {
+  const ship = await findShip(shipId);
+  const v = await openVoyage(shipId);
+  const w = voyageWorktree(shipId);
+  if (!ship || !v || !w) return { ok: false, message: `${shipId} has no open voyage with a worktree.` };
+  if ((w.host ?? "local") === "local") return { ok: false, message: `${shipId}'s voyage is already on the hub.` };
+  if (ship.isolation === "vm" && process.platform !== "darwin") return { ok: false, message: `${shipId}'s crew works in Gondolin VMs, which the hub cannot run; leave the voyage on the laptop (it waits while the laptop sleeps).` };
+  const from = voyageHost(shipId);
+  const crewIds = ship.crew.map((r) => `${shipId}-${r}`);
+  for (const id of crewIds) await stop(id);
+  const branch = (await from.exec(["git", "branch", "--show-current"], { timeoutMs: 15_000, cwd: w.path })).stdout.trim() || w.branch;
+  const dirty = (await from.exec(["git", "status", "--porcelain"], { timeoutMs: 30_000, cwd: w.path }));
+  if (dirty.exitCode !== 0) return { ok: false, message: `${from.label} did not answer (${dirty.stderr.slice(0, 160)}); the voyage stays there.` };
+  if (dirty.stdout.trim()) return { ok: false, message: `${shipId}'s worktree on ${from.label} has uncommitted work; have the crew commit it, then move the voyage.` };
+  const push = await from.exec(["git", "push", "-u", "origin", branch], { timeoutMs: 120_000, cwd: w.path });
+  if (push.exitCode !== 0) return { ok: false, message: `Could not push ${branch} from ${from.label}: ${(push.stderr || push.stdout).split("\n").pop()?.slice(0, 160)}` };
+  if (from.getMemory) await writeMemoryFiles(await from.getMemory(shipId, crewIds)).catch(() => {});
+  const released = await releaseVoyageWorktree(ship);
+  if (!released.ok) return { ok: false, message: `The branch is pushed, but ${from.label}'s worktree was not returned: ${released.message}` };
+  const slug = v.file.split("/").pop()!.replace(/^\d{4}-\d{2}-\d{2}-/, "").replace(/\.md$/, "");
+  const lease = await leaseVoyageWorktree(ship, slug, v.goal, localHost, { branch, base: w.base });
+  if (!lease.ok) return { ok: false, message: `${branch} is pushed and the laptop's worktree returned, but the hub could not take the voyage: ${lease.message} Start it again on the laptop, or lease a worktree by hand.` };
+  for (const id of crewIds) await freshCrewSession(id);
+  const now = new Date().toISOString();
+  let text = await readFile(v.file, "utf8");
+  text = text.replace(/^host: .*$/m, "host: hub").replace(/^worktree: .*$/m, `worktree: ${yamlStr(lease.worktree.path)}`);
+  await writeFile(v.file, text.trimEnd() + `\n- ${now} moved from ${from.label} to the hub; branch ${branch} pushed and checked out in ${lease.worktree.path}\n`, "utf8");
+  logShipEvent(shipId, "captain", "voyage-move", `Voyage moved from ${from.label} to the hub (branch ${branch})`, { branch, worktree: lease.worktree.path });
+  return { ok: true, message: `${shipId}'s voyage moved to the hub: ${branch} pushed from ${from.label} and checked out here. The crew starts fresh sessions; their plan and notes carry on.` };
 }
 
 /** The lead's view of the ship's maneuvers, for the voyage brief. */
