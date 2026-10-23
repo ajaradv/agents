@@ -4,7 +4,7 @@ import { readSecret } from "./secret-store.ts";
  * The captain's laptop as an occasional worker for the always-on hub
  * (vault plan fleet/plans/ops/exe-dev-hub-setup.md). The hub runs the fleet;
  * when the laptop is awake it lends what only it has: Kokoro voices (fast on
- * the M2 Max) and Firstmate's TUI. Asleep or offline, the hub carries on
+ * the M2 Max), Firstmate's TUI, and memory for heavy tools (screenshots). Asleep or offline, the hub carries on
  * without it (the browser's voice; Firstmate wakes wait).
  *
  * The laptop side is dashboard/worker.ts, reachable only on the tailnet
@@ -84,5 +84,26 @@ export async function laptopFirstmateSend(text: string): Promise<{ ok: boolean; 
   } catch (e) {
     cached = null;
     return { ok: false, detail: `laptop: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/**
+ * A screenshot taken by the laptop's Chrome (bin/fleet-shot --on laptop|auto):
+ * PNG bytes, or why not. The page must be reachable from the laptop.
+ */
+export async function laptopShot(o: { url: string; width: number; height: number; mobile: boolean; wait: number }): Promise<{ ok: true; png: Uint8Array } | { ok: false; message: string }> {
+  if (!(await laptopCan("browser"))) return { ok: false, message: "the laptop is not available for screenshots" };
+  try {
+    const r = await fetchImpl(`${URL_ENV()}/shot`, {
+      method: "POST",
+      headers: { ...(await headers()), "Content-Type": "application/json" },
+      body: JSON.stringify(o),
+      signal: AbortSignal.timeout(o.wait + 90_000),
+    });
+    if (!r.ok) return { ok: false, message: `laptop: ${((await r.json().catch(() => ({}))) as { message?: string }).message ?? `HTTP ${r.status}`}` };
+    return { ok: true, png: new Uint8Array(await r.arrayBuffer()) };
+  } catch (e) {
+    cached = null;
+    return { ok: false, message: `laptop: ${e instanceof Error ? e.message : String(e)}` };
   }
 }

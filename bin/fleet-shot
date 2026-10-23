@@ -3,29 +3,36 @@
 // Chrome: a hard timeout, a throwaway profile, and nothing left running. For
 // any agent checking UI work (then bin/fleet-look or the crew `look` tool asks
 // a vision model about the image). macOS and Linux; CHROME_PATH to override.
+// On the hub, a shot can borrow the laptop's memory while it is awake (--on).
 //
-//   bin/fleet-shot <url> [--mobile|--both] [--height N] [--wait ms] [--out dir]
+//   bin/fleet-shot <url> [--mobile|--both] [--height N] [--wait ms] [--out dir] [--on auto|here|laptop]
+//   bin/fleet-shot --clear [--days N]
 //
 // Output is TOON (docs/tool-standards.md): the image paths, sizes, and timing.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encode } from "@toon-format/toon";
+import { clearShots, shotsDir } from "../dashboard/lib/shots.ts";
 
 const HELP = `command: fleet-shot
 summary: Screenshot a page at desktop and/or phone size with headless Chrome (hard timeout, nothing left running)
-usage: bin/fleet-shot <url> [--mobile|--both] [--height N] [--wait ms] [--out dir]
-flags[6]{flag,default,description}:
+usage: bin/fleet-shot <url> [--mobile|--both] [--height N] [--wait ms] [--out dir] [--on auto|here|laptop] | --clear [--days N]
+flags[9]{flag,default,description}:
   --mobile,,phone size only (390 wide)
   --both,,desktop (1440 wide) and phone
   --height,1000,viewport height in pixels (taller captures more of a long page)
   --wait,4000,milliseconds for the page's scripts to run before the shot
-  --out,$TMPDIR/fleet-shots,folder for the PNGs
+  --out,$TMPDIR/fleet-shots,folder for the PNGs (FLEET_SHOTS_DIR)
+  --on,auto,"where Chrome runs: auto (the laptop when it is available and the URL is not loopback, else here), here, or laptop (FLEET_SHOT_ON)"
+  --clear,,delete the screenshots in the folder (the files only; agents keep what they looked at)
+  --days,0,with --clear: only screenshots older than N days
   --help,,show this help
-examples[3]:
+examples[4]:
   bin/fleet-shot http://127.0.0.1:8797/harbor
   bin/fleet-shot http://127.0.0.1:8797/ships/fleet --both --height 1600
   bin/fleet-shot http://localhost:5173 --mobile
+  bin/fleet-shot --clear
 help[1]: bin/fleet-shot <url> --both, then bin/fleet-look <paths> "<question>"`;
 
 const args = process.argv.slice(2);
@@ -42,17 +49,29 @@ if (!args.length || args.includes("--help") || args[0] === "-h") {
   console.log(HELP);
   process.exit(0);
 }
-const KNOWN = ["--mobile", "--both", "--height", "--wait", "--out"];
+const KNOWN = ["--mobile", "--both", "--height", "--wait", "--out", "--on", "--clear", "--days"];
 for (const a of args) if (a.startsWith("--") && !KNOWN.includes(a)) fail(`unknown flag ${a}`, `valid flags: ${KNOWN.join(", ")}, --help`);
 const value = (f: string) => {
   const i = args.indexOf(f);
   return i >= 0 ? args[i + 1] : undefined;
 };
+if (args.includes("--clear")) {
+  const days = Math.max(0, Number(value("--days") ?? 0) || 0);
+  const folder = value("--out") ?? shotsDir();
+  const r = clearShots(days, folder);
+  out({ result: `deleted ${r.files} screenshot(s)${days ? ` older than ${days} day(s)` : ""}`, freed_kb: Math.round(r.bytes / 1024), folder });
+  process.exit(0);
+}
 const url = args.find((a, i) => !a.startsWith("--") && !KNOWN.includes(args[i - 1] ?? ""));
 if (!url || !/^(https?:\/\/|file:\/\/)/.test(url)) fail("give a page URL (http, https, or file)", "bin/fleet-shot http://127.0.0.1:8797/harbor");
 const height = Math.min(8000, Math.max(300, Number(value("--height") ?? 1000) || 1000));
 const wait = Math.min(30_000, Math.max(0, Number(value("--wait") ?? 4000) || 0));
-const dir = value("--out") ?? join(process.env.TMPDIR ?? tmpdir(), "fleet-shots");
+const dir = value("--out") ?? shotsDir();
+const on = value("--on") ?? process.env.FLEET_SHOT_ON ?? "auto";
+if (!["auto", "here", "laptop"].includes(on)) fail(`--on ${on}: use auto, here, or laptop`, "bin/fleet-shot <url> --on laptop");
+// The laptop's Chrome cannot load this machine's loopback or file URLs.
+const loopback = /^file:|^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\])/i.test(url);
+if (on === "laptop" && loopback) fail("the laptop cannot open a loopback or file URL on this machine", "use the page's tailnet address (https://<host>.<tailnet>.ts.net/...), or --on here");
 mkdirSync(dir, { recursive: true });
 
 function chrome(): string | null {
@@ -67,7 +86,8 @@ function chrome(): string | null {
   return candidates.find((c) => c && existsSync(c)) ?? null;
 }
 const bin = chrome();
-if (!bin) fail("no Chrome or Chromium found", "install Google Chrome, or set CHROME_PATH");
+const tryLaptop = on === "laptop" || (on === "auto" && !loopback && Boolean(process.env.FLEET_LAPTOP_URL));
+if (!bin && !tryLaptop) fail("no Chrome or Chromium found", "install Google Chrome, or set CHROME_PATH");
 
 const views = args.includes("--both") ? ["desktop", "mobile"] : args.includes("--mobile") ? ["mobile"] : ["desktop"];
 // The second alone collided: crewmates shooting at once overwrote each other's files.
@@ -150,16 +170,39 @@ async function viaShared(width: number, mobile: boolean, path: string): Promise<
   return null;
 }
 
-let shared = 0;
+/** The laptop's Chrome through its worker (lib/laptop.ts); null on success, else why not. */
+async function viaLaptop(width: number, mobile: boolean, path: string): Promise<string | null> {
+  const { laptopShot } = await import("../dashboard/lib/laptop.ts");
+  const r = await laptopShot({ url: url!, width, height, mobile, wait });
+  if (!r.ok) return r.message;
+  await Bun.write(path, r.png);
+  return null;
+}
+
+let used = "own";
+const notes: string[] = [];
 for (const view of views) {
   const width = view === "mobile" ? 390 : 1440;
   const path = join(dir, `shot-${stamp}-${view}.png`);
   const t0 = Date.now();
-  let error = await viaShared(width, view === "mobile", path);
-  if (error === null) shared++;
+  let error: string | null = "unavailable";
+  if (tryLaptop) {
+    error = await viaLaptop(width, view === "mobile", path);
+    if (error === null) used = "laptop";
+    else if (on === "laptop") fail(`the ${view} shot on the laptop failed: ${error}`, "check the laptop is awake (bin/laptop-worker --status), or --on here", 1);
+    else {
+      notes.push(`laptop not used: ${error}`);
+      error = "unavailable";
+    }
+  }
+  if (error === "unavailable" && !bin) fail("no Chrome or Chromium here, and the laptop is not available", "install Google Chrome, set CHROME_PATH, or wake the laptop", 1);
+  if (error === "unavailable") {
+    error = await viaShared(width, view === "mobile", path);
+    if (error === null) used = "shared";
+  }
   if (error === "unavailable") error = await capture(width, view === "mobile", path);
   if (error || !existsSync(path)) fail(`the ${view} shot failed: ${error ?? "no image"}`, "check the URL loads (curl -sI it), then try again with a longer --wait", 1);
   shots.push({ viewport: `${view} ${width}x${height}`, path, kb: Math.round(statSync(path).size / 1024), ms: Date.now() - t0 });
 }
-out({ result: `${shots.length} screenshot(s) of ${url}`, browser: shared ? "shared" : "own", shots, help: [`bin/fleet-look ${shots[0]!.path} "<what to check>"`, "crew: the look tool with these paths"] });
+out({ result: `${shots.length} screenshot(s) of ${url}`, browser: used, ...(notes.length ? { note: notes[0] } : {}), shots, help: [`bin/fleet-look ${shots[0]!.path} "<what to check>"`, "crew: the look tool with these paths"] });
 process.exit(0);

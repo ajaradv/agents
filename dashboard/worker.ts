@@ -5,12 +5,15 @@
  * - GET  /health      capabilities right now: "tts" (Kokoro is set up), "firstmate" (its TUI answers)
  * - POST /tts         {text, voice, speed} → WAV (lib/voice.ts synthesize, the M2 Max's Kokoro)
  * - POST /firstmate   {text} → typed into Firstmate's TUI (lib/firstmate-chat.ts)
+ * - POST /shot        {url, width, height, mobile, wait} → PNG (browser.ts: Chrome here, started
+ *                     on demand and stopped when idle), so screenshots use the laptop's memory
  *
  * Listens on 127.0.0.1 only; Tailscale Serve publishes it to the tailnet
  * (bin/laptop-worker --install). Every request needs the shared token
  * (secret "laptop-worker-token", the Keychain here, a 0600 file on the hub).
  */
 import { timingSafeEqual } from "node:crypto";
+import { chromeBin, Gate, MAX_JOBS, shotResponse } from "./browser.ts";
 import { firstmateTuiReachable, sendToFirstmateTui } from "./lib/firstmate-chat.ts";
 import { readSecret } from "./lib/secret-store.ts";
 import { synthesize, ttsAvailable } from "./lib/voice.ts";
@@ -29,14 +32,17 @@ async function capabilities(): Promise<string[]> {
   const caps: string[] = [];
   if (ttsAvailable()) caps.push("tts");
   if ((await firstmateTuiReachable().catch(() => ({ ok: false }))).ok) caps.push("firstmate");
+  if (chromeBin()) caps.push("browser");
   return caps;
 }
 
 if (import.meta.main) {
   let token = await readSecret("laptop-worker-token");
+  const shots = new Gate(MAX_JOBS);
   Bun.serve({
     hostname: "127.0.0.1",
     port: PORT,
+    idleTimeout: 120,
     async fetch(req) {
       if (!token) token = await readSecret("laptop-worker-token");
       if (!authorized(req.headers.get("authorization"), token)) return new Response("unauthorized", { status: 401 });
@@ -59,6 +65,7 @@ if (import.meta.main) {
         const r = await sendToFirstmateTui(text);
         return Response.json({ ok: r.ok, detail: r.ok ? "fm-send" : (r.stderr || r.stdout || "TUI not reachable").trim().slice(0, 400) });
       }
+      if (path === "/shot" && req.method === "POST") return shotResponse(req, shots);
       return new Response("not found", { status: 404 });
     },
   });

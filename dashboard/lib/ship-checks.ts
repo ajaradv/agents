@@ -1,10 +1,10 @@
 import { jevAsk } from "./jev.ts";
 import { redact } from "./redact.ts";
 import { readShips } from "./fleet-layers.ts";
-import { spawnTimed } from "./proc.ts";
+import { localHost, type ShipHost } from "./ship-host.ts";
 import { recordRun } from "./metrics.ts";
 import { logShipEvent } from "./ship-log.ts";
-import { voyageWorktree } from "./voyage-worktree.ts";
+import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 
 /**
  * Host checks (R4): a crewmate whose tools run in a VM cannot run Docker, and
@@ -24,9 +24,9 @@ export function tail(text: string, max = OUTPUT_MAX): string {
 }
 
 /** The commit a folder is on and whether it has uncommitted changes (ignored files do not count). */
-export async function treeState(cwd: string): Promise<{ commit: string; dirty: boolean }> {
-  const head = await spawnTimed(["git", "rev-parse", "HEAD"], { timeoutMs: 15_000, cwd });
-  const status = await spawnTimed(["git", "status", "--porcelain"], { timeoutMs: 30_000, cwd });
+export async function treeState(cwd: string, host: ShipHost = localHost): Promise<{ commit: string; dirty: boolean }> {
+  const head = await host.exec(["git", "rev-parse", "HEAD"], { timeoutMs: 15_000, cwd });
+  const status = await host.exec(["git", "status", "--porcelain"], { timeoutMs: 30_000, cwd });
   return { commit: head.exitCode === 0 ? head.stdout.trim() : "", dirty: status.exitCode !== 0 || status.stdout.trim().length > 0 };
 }
 
@@ -76,10 +76,12 @@ export async function runCheck(shipId: string, from: string, name: string): Prom
   try {
     // In the voyage's worktree when one is open (the crew's work), else the repo.
     // A login shell, so the captain's PATH (just, docker, uv) resolves as in a terminal.
+    // On the voyage's ship host (lib/ship-host.ts), where the worktree is.
     const cwd = voyageWorktree(shipId)?.path ?? ship.path;
+    const host = voyageHost(shipId);
     // What code this run checks: gates count only runs on the current commit with a clean tree.
-    const { commit, dirty } = await treeState(cwd);
-    const res = await spawnTimed(["/bin/zsh", "-lc", cmd], { timeoutMs: TIMEOUT_MS, cwd, env: { ...process.env, CI: "1" } });
+    const { commit, dirty } = await treeState(cwd, host);
+    const res = await host.exec(["/bin/zsh", "-lc", cmd], { timeoutMs: TIMEOUT_MS, cwd, env: { ...process.env, CI: "1" } });
     const secs = Math.round((Date.now() - started) / 1000);
     const passed = !res.timedOut && res.exitCode === 0;
     const verdict = res.timedOut ? `timed out after ${secs}s` : passed ? `passed in ${secs}s` : `failed (exit ${res.exitCode}) in ${secs}s`;

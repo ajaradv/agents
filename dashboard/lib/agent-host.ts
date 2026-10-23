@@ -13,9 +13,10 @@ import { agentKeyEnv } from "./fleet-env.ts";
 import { dashLog } from "./log.ts";
 import { notifyCaptain } from "./notify.ts";
 import { recordToolFailure } from "./tool-failures.ts";
-import { voyageWorktree } from "./voyage-worktree.ts";
+import { localHost, type RpcProc } from "./ship-host.ts";
+import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 import { toolFailed } from "../../extensions/cache-watch.ts";
-import { fleetInboxRoot, NODE_PORT, ROOT } from "./paths.ts";
+import { fleetInboxRoot, NODE_PORT } from "./paths.ts";
 
 /**
  * Agent host: one long-lived `pi --mode rpc` process per agent with
@@ -101,7 +102,7 @@ type Dialog = { method: string; lineTs: string; timer?: ReturnType<typeof setTim
 
 type AgentProc = {
   id: string;
-  proc: ReturnType<typeof Bun.spawn>;
+  proc: RpcProc;
   nextId: number;
   pending: Map<string, (r: Record<string, unknown>) => void>;
   running: boolean;
@@ -159,9 +160,8 @@ function send(p: AgentProc, cmd: Record<string, unknown>): Promise<Record<string
   return new Promise((resolve) => {
     p.pending.set(id, resolve);
     try {
-      const sink = p.proc.stdin as import("bun").FileSink;
-      sink.write(JSON.stringify({ ...cmd, id }) + "\n");
-      sink.flush();
+      p.proc.stdin.write(JSON.stringify({ ...cmd, id }) + "\n");
+      p.proc.stdin.flush();
     } catch (e) {
       p.pending.delete(id);
       resolve({ success: false, error: e instanceof Error ? e.message : "write failed" });
@@ -171,9 +171,8 @@ function send(p: AgentProc, cmd: Record<string, unknown>): Promise<Record<string
 
 function sendNoReply(p: AgentProc, rec: Record<string, unknown>): void {
   try {
-    const sink = p.proc.stdin as import("bun").FileSink;
-    sink.write(JSON.stringify(rec) + "\n");
-    sink.flush();
+    p.proc.stdin.write(JSON.stringify(rec) + "\n");
+    p.proc.stdin.flush();
   } catch {
     /* process gone; the exit handler reports it */
   }
@@ -428,7 +427,7 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
 async function pump(p: AgentProc): Promise<void> {
   const decoder = new TextDecoder();
   let buf = "";
-  for await (const chunk of p.proc.stdout as ReadableStream<Uint8Array>) {
+  for await (const chunk of p.proc.stdout) {
     buf += decoder.decode(chunk, { stream: true });
     let nl: number;
     while ((nl = buf.indexOf("\n")) >= 0) {
@@ -446,7 +445,7 @@ async function pump(p: AgentProc): Promise<void> {
 
 async function drainStderr(p: AgentProc): Promise<void> {
   const decoder = new TextDecoder();
-  for await (const chunk of p.proc.stderr as ReadableStream<Uint8Array>) {
+  for await (const chunk of p.proc.stderr) {
     p.stderrTail = (p.stderrTail + decoder.decode(chunk, { stream: true })).slice(-4000);
   }
 }
@@ -462,15 +461,11 @@ export function crewCaller(token: string): string | null {
 function start(agentId: string, keys: Record<string, string>): AgentProc {
   const crewToken = crypto.randomUUID();
   crewTokens.set(crewToken, agentId);
-  const proc = Bun.spawn(["python3", join(ROOT, "bin/launch"), "rpc", agentId], {
-    cwd: ROOT,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-    // Crewmates call back into the fleet node (extensions/crew.ts) and prove
-    // who they are with FLEET_CREW_TOKEN, never with a name in the request.
-    env: { ...process.env, ...keys, FLEET_DASHBOARD_URL: `http://127.0.0.1:${NODE_PORT}`, FLEET_CREW_TOKEN: crewToken },
-  });
+  // On the ship host of the crewmate's voyage (lib/ship-host.ts); officers and idle ships run here.
+  // Crewmates call back into the fleet node (extensions/crew.ts) and prove
+  // who they are with FLEET_CREW_TOKEN, never with a name in the request.
+  const ship = chatTarget(agentId)?.ship;
+  const proc = (ship ? voyageHost(ship) : localHost).launchRpc(agentId, { ...keys, FLEET_DASHBOARD_URL: `http://127.0.0.1:${NODE_PORT}`, FLEET_CREW_TOKEN: crewToken });
   const p: AgentProc = {
     id: agentId,
     proc,

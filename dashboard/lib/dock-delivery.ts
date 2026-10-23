@@ -1,4 +1,4 @@
-import { spawnTimed } from "./proc.ts";
+import { hostRunner, localHost } from "./ship-host.ts";
 
 /**
  * A docked voyage lands through its ship's delivery mode (ported from
@@ -24,19 +24,14 @@ export function deliveryFor(mode: string): Delivery {
 
 type Run = (cmd: string[], cwd: string) => Promise<{ code: number; out: string }>;
 
-const run: Run = async (cmd, cwd) => {
-  const r = await spawnTimed(cmd, { timeoutMs: 120_000, cwd });
-  return { code: r.exitCode, out: `${r.stdout}\n${r.stderr}`.trim() };
-};
-
-/** Push `branch` and open a PR onto `base`; the PR's URL, or why not. */
+/** Push `branch` and open a PR onto `base`; the PR's URL, or why not. Runs on the ship host holding the repo (hostRunner). */
 export async function openDockPr(
   repo: string,
   branch: string,
   base: string,
   title: string,
   body: string,
-  exec: Run = run,
+  exec: Run = hostRunner(localHost),
 ): Promise<{ ok: boolean; url?: string; message: string }> {
   const push = await exec(["git", "push", "-u", "origin", branch], repo);
   if (push.code !== 0) return { ok: false, message: `the branch was not pushed (${push.out.split("\n").pop()?.slice(0, 160)}); it stays local` };

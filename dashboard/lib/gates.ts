@@ -1,7 +1,7 @@
 import type { ShipRow } from "./fleet-layers.ts";
 import { latestRunOn } from "./metrics.ts";
 import { runCheck, tail, treeState } from "./ship-checks.ts";
-import { voyageWorktree } from "./voyage-worktree.ts";
+import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 
 /**
  * Declared gates (vault research note helm-and-maneuvers): checks a ship says
@@ -29,7 +29,7 @@ export function gateFolder(ship: Pick<ShipRow, "id" | "path">): string {
 
 export async function gateStatus(ship: Pick<ShipRow, "id" | "path" | "gates" | "checks">, stage: GateStage): Promise<GateReport> {
   const names = ship.gates[stage];
-  const { commit, dirty } = await treeState(gateFolder(ship));
+  const { commit, dirty } = await treeState(gateFolder(ship), voyageHost(ship.id));
   const gates: GateState[] = names.map((name) => {
     if (!ship.checks[name]) return { name, state: "unknown-check" };
     if (dirty) return { name, state: "missing" };
