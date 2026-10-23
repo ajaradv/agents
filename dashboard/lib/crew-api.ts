@@ -13,7 +13,7 @@ import { recentManeuvers, shipTraceDb } from "./ship-maneuvers.ts";
 import { logShipEvent, recentShipEvents } from "./ship-log.ts";
 import { recordHandoff, recordRun } from "./metrics.ts";
 import { describeGates, gateFolder, gateStatus, runGates } from "./gates.ts";
-import { voyageHost } from "./voyage-worktree.ts";
+import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 import { describeManeuver, findManeuver, launchRefusal, maneuverAvailability, type ManeuverAvailability } from "./maneuvers.ts";
 import { runCheck, tail, treeState } from "./ship-checks.ts";
 import { openVoyage, type Voyage } from "./shipyard.ts";
@@ -275,6 +275,8 @@ export async function crewStartManeuver(shipId: string, b: { from: string; maneu
   if (refusal) return { ok: false, message: refusal };
   const prompt = String(b.prompt ?? "").trim();
   if (m.kind === "adw" && prompt.length < 10) return { ok: false, message: "Give the maneuver a full prompt: the intent, the files, and what done means." };
+  // ADW maneuvers run in the ship's repo on the node's machine; a voyage on another host (the laptop) has its work there.
+  if (m.kind === "adw" && (voyageWorktree(shipId)?.host ?? "local") !== "local") return { ok: false, message: `${m.name} runs on the hub, and this voyage sails on ${voyageHost(shipId).label}; do the work with the crew instead, or move the voyage to the hub.` };
   const runId = randomBytes(4).toString("hex");
   const task = await addTask(shipId, { voyage: v.file, title: `${m.name}: ${(prompt || m.checks.join(" → ")).slice(0, 120)}`, detail: prompt || describeManeuver(m), kind: "maneuver", adwId: runId, status: "working", createdBy: b.from });
   mkdirSync(maneuverLogDir(shipId), { recursive: true });
@@ -508,19 +510,37 @@ export async function crewDockRequest(shipId: string, b: { from: string; summary
  * The node holds the key; images may come only from the voyage worktree, the
  * ship's repo, or temp folders.
  */
-export async function crewLook(shipId: string, b: { from: string; images?: unknown; question?: string }): Promise<Res> {
+export async function crewLook(shipId: string, b: { from: string; images?: unknown; inline?: unknown; question?: string }): Promise<Res> {
   const a = await aboard(shipId, b.from);
   if ("error" in a) return a.error;
   const question = String(b.question ?? "").trim();
   if (question.length < 5) return { ok: false, message: "Ask a specific question about the screenshot (what should be visible, and where)." };
   const images = Array.isArray(b.images) ? b.images.map(String) : [];
   const { checkImages, lookAt } = await import("./look.ts");
-  const { voyageWorktree } = await import("./voyage-worktree.ts");
   const { tmpdir } = await import("node:os");
-  const roots = [voyageWorktree(shipId)?.path, a.ship.path, process.env.TMPDIR ?? tmpdir(), "/tmp", "/private/tmp"].filter((r): r is string => Boolean(r));
+  let roots = [voyageWorktree(shipId)?.path, a.ship.path, process.env.TMPDIR ?? tmpdir(), "/tmp", "/private/tmp"].filter((r): r is string => Boolean(r));
+  // A crewmate on a remote ship host (the laptop) sends its screenshots' bytes; they land in a temp folder here.
+  let inlineDir = "";
+  if (Array.isArray(b.inline) && b.inline.length && (voyageWorktree(shipId)?.host ?? "local") !== "local") {
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { basename, join } = await import("node:path");
+    inlineDir = await mkdtemp(join(tmpdir(), "crew-look-"));
+    for (const f of (b.inline as { name?: unknown; data?: unknown }[]).slice(0, 4)) {
+      const name = basename(String(f.name ?? "image.png")).replace(/[^\w.-]/g, "_");
+      await writeFile(join(inlineDir, name), Buffer.from(String(f.data ?? ""), "base64"));
+      images.push(join(inlineDir, name));
+    }
+    roots = [inlineDir];
+  }
+  const cleanup = async () => {
+    if (inlineDir) await (await import("node:fs/promises")).rm(inlineDir, { recursive: true, force: true });
+  };
   const checked = checkImages(images, roots);
-  if (!checked.ok) return { ok: false, message: checked.message };
-  const r = await lookAt(checked.files, question);
+  if (!checked.ok) {
+    await cleanup();
+    return { ok: false, message: checked.message };
+  }
+  const r = await lookAt(checked.files, question).finally(cleanup);
   logShipEvent(shipId, b.from, "tool", `look: ${question.slice(0, 120)}${r.ok ? "" : ` (failed: ${r.error})`}`, { cost: r.cost, model: r.model });
   return r.ok ? { ok: true, message: r.answer, cost: r.cost } : { ok: false, message: `The look failed: ${r.error}` };
 }

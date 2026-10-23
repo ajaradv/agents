@@ -23,6 +23,8 @@ function fakeHost(answer: (cmd: string[]) => Partial<SpawnResult> = () => ({}), 
       return { stdout: "", stderr: "", exitCode: 0, timedOut: false, ms: 1, ...answer(cmd) };
     },
     hasRepo: async () => repo,
+    repoPath: async (ship) => ship.path,
+    available: async () => true,
     launchRpc: () => {
       throw new Error("not in this test");
     },
@@ -38,14 +40,15 @@ describe("ship hosts", () => {
     expect(await localHost.hasRepo("/nonexistent")).toBe(false);
   });
 
-  test("an unknown or unplugged host is this machine; a plugged-in one is offered", () => {
+  test("no host named (older records) is this machine; the laptop is offered only while it can take a voyage", async () => {
     expect(shipHost(undefined)).toBe(localHost);
-    expect(shipHost("laptop")).toBe(localHost);
-    expect(availableHosts()).toEqual(["local"]);
+    expect(shipHost("laptop").kind).toBe("laptop");
     const laptop = fakeHost();
+    laptop.available = async () => false;
     setShipHost("laptop", laptop);
-    expect(shipHost("laptop")).toBe(laptop);
-    expect(availableHosts()).toEqual(["local", "laptop"]);
+    expect(await availableHosts()).toEqual(["local"]);
+    laptop.available = async () => true;
+    expect(await availableHosts()).toEqual(["local", "laptop"]);
   });
 
   test("gates read the tree state on the voyage's host", async () => {

@@ -11,6 +11,9 @@
  * notice. Any activity resets it. Pure decisions here; the dashboard runs it
  * (runWatchdog): the nudge is a line on the lead's bus, which the event router
  * turns into a turn.
+ *
+ * A voyage sailing on the laptop while the laptop is away (asleep, offline)
+ * is waiting, not stalled: the clock starts again when the laptop is back.
  */
 
 export const NUDGE_AFTER_MS = 10 * 60_000;
@@ -23,6 +26,8 @@ export type WatchedShip = {
   tasks: { id: number; title: string; status: string }[];
   /** The ship's lead can be messaged (a lead is aboard). */
   hasLead: boolean;
+  /** The voyage's ship host is away (the laptop asleep): wait, never nudge. */
+  away?: boolean;
 };
 
 type Watch = { voyage: string; since: number; nudgedAt?: number; told?: boolean };
@@ -50,7 +55,7 @@ export function watchdogStep(ships: WatchedShip[], state: WatchState, now = Date
   const seen = new Set<string>();
   for (const s of ships) {
     seen.add(s.id);
-    if (s.condition !== "becalmed" || !s.voyage) {
+    if (s.condition !== "becalmed" || !s.voyage || s.away) {
       state.delete(s.id);
       continue;
     }
@@ -89,13 +94,17 @@ const watchState: WatchState = new Map();
 export async function runWatchdog(now = Date.now()): Promise<WatchAction[]> {
   const { harborChartJson } = await import("./harbor-chart.ts");
   const { chatTarget } = await import("./chat-targets.ts");
+  const { voyageWorktree } = await import("./voyage-worktree.ts");
+  const { laptopCan } = await import("./laptop.ts");
   const chart = await harborChartJson();
+  const laptopAway = chart.ships.some((s) => voyageWorktree(s.id)?.host === "laptop") && !(await laptopCan("ship-host"));
   const ships: WatchedShip[] = chart.ships.map((s) => ({
     id: s.id,
     condition: s.condition,
     voyage: s.voyage ? { file: s.voyage.file, label: s.voyage.label } : null,
     tasks: s.tasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
     hasLead: Boolean(chatTarget(`${s.id}-lead`)),
+    away: laptopAway && voyageWorktree(s.id)?.host === "laptop",
   }));
   const actions = watchdogStep(ships, watchState, now);
   if (!actions.length) return actions;

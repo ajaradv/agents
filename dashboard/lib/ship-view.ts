@@ -7,7 +7,10 @@ import { escapeHtml } from "./quota.ts";
 import { gateStatus, type GateReport } from "./gates.ts";
 import { liveLedgerHtml, pastLedgerHtml } from "./ledger-view.ts";
 import { hasHelmsman, listProposals, proposalLine, type Proposal } from "./helm.ts";
-import { recentConfigChanges, shipTemplates } from "./ship-config.ts";
+import { readShipConfig, recentConfigChanges, shipTemplates } from "./ship-config.ts";
+import { laptopStatus } from "./laptop.ts";
+import { laptopSailable, laptopVoyages } from "./laptop-host.ts";
+import { voyageWorktree } from "./voyage-worktree.ts";
 import { voyageId } from "./metrics.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
@@ -203,7 +206,7 @@ export async function harborHtml(): Promise<string> {
       </div>
     </a>`;
   });
-  return `<div class="harbor">${(await Promise.all(tiles)).join("")}</div>
+  return `${await laptopBarHtml(ships)}<div class="harbor">${(await Promise.all(tiles)).join("")}</div>
   <details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100 new-ship">
     <summary class="d-collapse-title">Build a new ship</summary><div class="d-collapse-content">
     <form class="stack shipyard-form" data-api="/api/ships" data-then="ship">
@@ -218,6 +221,47 @@ export async function harborHtml(): Promise<string> {
       <div class="row"><button class="d-btn d-btn-neutral d-btn-sm" type="submit">Lay the keel</button><span class="muted" data-note></span></div>
     </form>
   </div></details>`;
+}
+
+/**
+ * The Harbor's laptop switch (lib/laptop-host.ts): whether ships may sail on
+ * the captain's laptop, and the voyages there now, each with Move to hub, for
+ * the end of the day. Only on a hub that has a laptop worker.
+ */
+async function laptopBarHtml(ships: ShipRow[]): Promise<string> {
+  if (!process.env.FLEET_LAPTOP_URL) return "";
+  const lv = laptopVoyages();
+  const st = await laptopStatus();
+  const awake = st.up ? "the laptop is awake" : "the laptop is asleep or offline";
+  const there = ships.filter((s) => voyageWorktree(s.id)?.host === "laptop");
+  const rows = there
+    .map((s) => {
+      const vm = s.isolation === "vm";
+      return `<li class="between"><span><strong>${escapeHtml(s.id)}</strong> is sailing on the laptop${st.up ? "" : " (waiting for it)"}</span>${
+        vm
+          ? `<span class="muted">its crew needs Gondolin: it stays on the laptop</span>`
+          : `<form class="row shipyard-form" data-api="/api/ships/${encodeURIComponent(s.id)}/move" data-confirm="Move ${escapeHtml(s.id)}'s voyage to the hub? The crew stops, the branch is pushed from the laptop, and the hub carries on from it."><button class="d-btn d-btn-sm" type="submit">Move to hub</button><span class="muted" data-note></span></form>`
+      }</li>`;
+    })
+    .join("");
+  return `<section class="d-card d-card-border bg-base-100 laptop-bar"><div class="d-card-body d-card-sm stack-tight">
+    <form class="between shipyard-form" data-api="/api/laptop-voyages">
+      <span><strong>Laptop voyages ${lv.on ? "on" : "off"}</strong> · <span class="muted">${awake}. ${lv.on ? "Ships may sail on the laptop while it is awake." : "New voyages sail on the hub."}</span></span>
+      <input type="hidden" name="on" value="${lv.on ? "0" : "1"}" />
+      <span class="row"><button class="d-btn d-btn-sm${lv.on ? "" : " d-btn-neutral"}" type="submit">${lv.on ? "Turn off (closing the laptop)" : "Turn on"}</button><span class="muted" data-note></span></span>
+    </form>
+    ${rows ? `<ul class="stack-tight">${rows}</ul>` : ""}
+  </div></section>`;
+}
+
+/** The Set a course form's "Sail on" choice: shown on a hub with a laptop worker. */
+export type SailChoice = { show: boolean; laptop: boolean; why: string; prefer: "hub" | "laptop" };
+
+async function sailChoice(ship: ShipRow): Promise<SailChoice> {
+  if (!process.env.FLEET_LAPTOP_URL) return { show: false, laptop: false, why: "", prefer: "hub" };
+  const can = await laptopSailable();
+  const prefer = readShipConfig(ship.id)?.sail_on === "laptop" && can.ok ? "laptop" : "hub";
+  return { show: true, laptop: can.ok, why: can.why, prefer };
 }
 
 // ---------------------------------------------------------------- ship deck
@@ -405,7 +449,7 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
 
     ${supplyGaugeHtml(spendToday, hasBudget ? budget : null)}
 
-    ${ship.id === "fleet" ? await ordersPanelHtml() : voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels), tasks, condition)}
+    ${ship.id === "fleet" ? await ordersPanelHtml() : voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels), tasks, condition, await sailChoice(ship))}
 
     <section class="stack">
       <h3>Crew</h3>
@@ -595,7 +639,7 @@ async function ordersPanelHtml(): Promise<string> {
 
 // ---------------------------------------------------------------- shipyard + voyage
 
-function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: boolean, cards: CrewCard[], ledger: { live: string; past: string }, tasks: VoyageTask[], condition: Condition): string {
+function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: boolean, cards: CrewCard[], ledger: { live: string; past: string }, tasks: VoyageTask[], condition: Condition, sail: SailChoice): string {
   const api = `/api/ships/${encodeURIComponent(ship.id)}`;
   const past = all.filter((v) => v.status === "docked").slice(0, 3);
   // Past voyages with their ledgers (metrics database); the plain list only when it has none.
@@ -608,12 +652,14 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
     : "";
   if (voyage) {
     const to = cards.find((c) => c.target.id === voyage.to)?.target.label ?? voyage.to;
+    const onLaptop = voyageWorktree(ship.id)?.host === "laptop";
     return `<section class="voyage is-sailing stack">
       <div class="between"><div class="row"><h3>Under sail</h3>${condition === "needs-you" ? `<span class="masthead-flag" aria-hidden="true"></span>` : ""}</div><span class="muted">since ${escapeHtml(new Date(voyage.started).toLocaleString())}</span></div>
       <p class="voyage-goal">${escapeHtml(voyage.goal)}</p>
       ${tasksHtml(tasks, cards, condition)}
       ${ledger.live}
-      <p class="muted">Goal sent to ${escapeHtml(to)} · record: <code>${escapeHtml(voyage.file.replace(/^.*\/fleet\/voyages\//, "vault fleet/voyages/"))}</code></p>
+      <p class="muted">Goal sent to ${escapeHtml(to)}${onLaptop ? " · <strong>sailing on the laptop</strong>" : ""} · record: <code>${escapeHtml(voyage.file.replace(/^.*\/fleet\/voyages\//, "vault fleet/voyages/"))}</code></p>
+      ${onLaptop && ship.isolation !== "vm" ? `<form class="row shipyard-form" data-api="${api}/move" data-confirm="Move this voyage to the hub? The crew stops, the branch is pushed from the laptop, and the hub carries on from it."><button class="d-btn d-btn-sm" type="submit">Move to hub</button><span class="muted" data-note></span></form>` : ""}
       <form class="row shipyard-form" data-api="${api}/dock">
         <input class="d-input d-input-sm" name="summary" placeholder="How it ended (optional, goes in the voyage record)" />
         <button class="d-btn d-btn-sm" type="submit">Dock</button><span class="muted" data-note></span>
@@ -633,6 +679,7 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
       <textarea class="d-textarea w-full" name="goal" rows="2" required placeholder="What should this voyage achieve? e.g. Ship the V4 home page with mobile fixes"></textarea>
       <div class="row">
         <label class="row">Send to <select class="d-select d-select-sm" name="to">${targets.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.label)}</option>`).join("")}</select></label>
+        ${sail.show ? `<label class="row">Sail on <select class="d-select d-select-sm" name="on"><option value="hub"${sail.prefer === "hub" ? " selected" : ""}>the hub</option><option value="laptop"${sail.laptop ? "" : " disabled"}${sail.prefer === "laptop" ? " selected" : ""}>the laptop${sail.laptop ? "" : ` (${escapeHtml(sail.why)})`}</option></select></label>` : ""}
         <button class="d-btn d-btn-neutral d-btn-sm" type="submit">Set sail</button><span class="muted" data-note></span>
       </div>
     </form>

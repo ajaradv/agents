@@ -227,10 +227,11 @@ export default function (pi: ExtensionAPI) {
       ship: Type.String(),
       goal: Type.String({ description: "What the voyage should achieve, in one or two sentences" }),
       to: Type.String({ description: "Who runs it: <ship>-lead (usual), another crewmate aboard, or firstmate on Firstmate ships" }),
+      on: Type.Optional(Type.String({ description: "Where it sails: hub, or laptop (only while the captain has laptop voyages on and the laptop is awake). Leave out for the ship's default" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await action("voyage_start", { ship: p.ship, goal: p.goal, to: p.to }, p));
+      return text(await action("voyage_start", { ship: p.ship, goal: p.goal, to: p.to, on: p.on }, p));
     },
   });
 

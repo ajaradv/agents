@@ -44,7 +44,10 @@ import { onShipLogWrite } from "./lib/ship-log.ts";
 import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
 import { harborChartJson } from "./lib/harbor-chart.ts";
 import { metricsDashboardHtml, parsePeriod } from "./lib/metrics-view.ts";
-import { dockVoyage, findShip, openVoyage, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
+import { dockVoyage, findShip, moveVoyageToHub, openVoyage, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
+import { readShips } from "./lib/fleet-layers.ts";
+import { setLaptopVoyages } from "./lib/laptop-host.ts";
+import { voyageWorktree } from "./lib/voyage-worktree.ts";
 import { applyProposal, dismissProposal, hasHelmsman, helmDigest } from "./lib/helm.ts";
 import { ledgerMarkdown, voyageId, voyageLedger } from "./lib/metrics.ts";
 import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas, withFrameChecks } from "./lib/canvas.ts";
@@ -862,6 +865,22 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       return Response.json(res, { status: res.ok ? 200 : 400 });
     }
 
+    // The Harbor's laptop switch, and moving a laptop voyage to the hub (lib/laptop-host.ts, lib/shipyard.ts).
+    if (path === "/api/laptop-voyages" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { on?: unknown };
+      const on = b.on === true || b.on === "1";
+      setLaptopVoyages(on);
+      const there = (await readShips()).filter((s) => voyageWorktree(s.id)?.host === "laptop").map((s) => s.id);
+      sseBroadcast("rail");
+      return Response.json({ ok: true, message: on ? "Ships may sail on the laptop while it is awake." : `New voyages sail on the hub.${there.length ? ` Still on the laptop: ${there.join(", ")} (Move to hub, or they wait while it sleeps).` : ""}` });
+    }
+    const moveVoyage = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/move$/);
+    if (moveVoyage && req.method === "POST") {
+      const res = await moveVoyageToHub(moveVoyage[1]!, stopHost);
+      sseBroadcast("ship", moveVoyage[1]!);
+      return Response.json(res, { status: res.ok ? 200 : 400 });
+    }
+
     const shipAction = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/(crew|orchestrator|voyage|dock)$/);
     if (shipAction && req.method === "POST") {
       const [, shipId, action] = shipAction as unknown as [string, string, string];
@@ -894,7 +913,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
         if (!allowed.includes(to)) {
           res = { ok: false, message: "Send the voyage to Firstmate or a crewmate aboard." };
         } else {
-          const started = await startVoyage(shipId, String(b.goal ?? ""), to);
+          const started = await startVoyage(shipId, String(b.goal ?? ""), to, b.on ? String(b.on) : undefined);
           res = started;
           if (started.ok && started.voyage && ship) {
             const line = await appendCaptainChat(to, voyageBrief(ship, started.voyage));

@@ -14,6 +14,7 @@
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { readFileSync, statSync } from "node:fs";
 
 const ship = process.env.FLEET_SHIP ?? "";
 const me = process.env.FLEET_AGENT_ID ?? "";
@@ -163,6 +164,19 @@ export default function (pi: ExtensionAPI) {
       question: Type.String({ description: "What to check, specifically" }),
     }),
     async execute(_id, p) {
+      // On a ship host away from the node (the laptop, FLEET_HOSTED), the node cannot read these paths: send the images.
+      if (process.env.FLEET_HOSTED) {
+        const inline: { name: string; data: string }[] = [];
+        for (const path of p.images.slice(0, 4)) {
+          try {
+            if (statSync(path).size > 8 * 1024 * 1024) return text(`${path} is over 8 MB.`);
+            inline.push({ name: path.split("/").pop() ?? "image.png", data: readFileSync(path).toString("base64") });
+          } catch {
+            return text(`${path} does not exist on this machine.`);
+          }
+        }
+        return text(await call("POST", "look", { inline, question: p.question }));
+      }
       return text(await call("POST", "look", { images: p.images, question: p.question }));
     },
   });

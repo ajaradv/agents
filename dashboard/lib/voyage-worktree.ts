@@ -44,12 +44,16 @@ export type VoyageWorktree = {
   started: string;
   /** The ship host holding the worktree (lib/ship-host.ts); records from before hosts are local. */
   host?: HostKind;
+  /** The ship's repo on that host (paths differ between machines); older records use the ship's path. */
+  repo?: string;
 };
 
 const recordPath = (shipId: string) => join(fleetInboxRoot(), "ships", shipId, "worktree.json");
 
-export function usesVoyageWorktrees(ship: Pick<ShipRow, "orchestrator" | "path">): boolean {
-  return ship.orchestrator === "lead" && Boolean(ship.path) && existsSync(join(ship.path, ".git"));
+/** A remote host checks its own repo when leasing; this machine's must be a git checkout. */
+export function usesVoyageWorktrees(ship: Pick<ShipRow, "orchestrator" | "path">, host: ShipHost = localHost): boolean {
+  if (ship.orchestrator !== "lead") return false;
+  return host.kind !== "local" || (Boolean(ship.path) && existsSync(join(ship.path, ".git")));
 }
 
 export function voyageWorktree(shipId: string): VoyageWorktree | null {
@@ -146,10 +150,13 @@ const realLocal = (p: string) => {
   }
 };
 
-export async function leaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">, slug: string, goal = "", host: ShipHost = localHost): Promise<{ ok: true; worktree: VoyageWorktree } | { ok: false; message: string }> {
-  const primary = ship.path;
+/** A voyage moving between hosts carries on its branch instead of starting one. */
+export type Resume = { branch: string; base: string };
+
+export async function leaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">, slug: string, goal = "", host: ShipHost = localHost, resume?: Resume): Promise<{ ok: true; worktree: VoyageWorktree } | { ok: false; message: string }> {
+  const primary = await host.repoPath(ship);
   const git: Git = (cwd, args) => hostGit(host, cwd, args);
-  if (!primary || !(await host.hasRepo(primary))) return { ok: false, message: `${ship.id} has no git repo at ${primary || "(no path)"}; voyage not started.` };
+  if (!primary || !(await host.hasRepo(primary))) return { ok: false, message: `${ship.id} has no git repo ${host.kind === "local" ? `at ${primary || "(no path)"}` : `on ${host.label}`}; voyage not started.` };
   const hasRemote = (await git(primary, ["remote"])).out.split("\n").includes("origin");
   const holder = `voyage:${ship.id}:${slug}`.slice(0, 120);
   const lease = await host.exec([treehouseBin(host), "get", "--lease", "--json", "--lease-holder", holder, ...(hasRemote ? [] : ["--no-fetch"])], { timeoutMs: 180_000, cwd: primary });
@@ -165,7 +172,7 @@ export async function leaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">, sl
   const path = info.path;
   const release = () => host.exec([treehouseBin(host), "return", "--force", "--if-lease-id", info.lease_id!, path], { timeoutMs: 120_000, cwd: primary });
   try {
-    return await prepareLease(ship, host, goal ? branchForGoal(goal) : slug, primary, path, info.lease_id, release);
+    return await prepareLease(ship, host, goal ? branchForGoal(goal) : slug, primary, path, info.lease_id, release, resume);
   } catch (e) {
     // Never leak a lease: anything unexpected after leasing returns the worktree.
     await release();
@@ -181,6 +188,7 @@ async function prepareLease(
   path: string,
   leaseId: string,
   release: () => Promise<unknown>,
+  resume?: Resume,
 ): Promise<{ ok: true; worktree: VoyageWorktree } | { ok: false; message: string }> {
   const git: Git = (cwd, args) => hostGit(host, cwd, args);
   // Paths are the host's own: only this machine's can be resolved through symlinks here.
@@ -196,21 +204,35 @@ async function prepareLease(
     await release();
     return { ok: false, message: `The leased worktree ${path} is not clean; voyage not started.` };
   }
-  const configured = readShipConfig(ship.id)?.base_branch;
-  const base = await defaultBase(git, path, typeof configured === "string" && /^[\w./-]{1,100}$/.test(configured) ? configured : undefined);
-  if (!base) {
-    await release();
-    return { ok: false, message: `Could not find ${ship.id}'s default branch (origin/HEAD, main, or master); voyage not started.` };
-  }
-  const existing = new Set((await git(primary, ["for-each-ref", "--format=%(refname:short)", "refs/heads/"])).out.split("\n").filter(Boolean));
-  const branch = voyageBranch(name, (b) => existing.has(b));
-  const sw = await git(path, ["switch", "-c", branch, base]);
-  if (!sw.ok) {
-    await release();
-    return { ok: false, message: `Could not create ${branch} from ${base}: ${sw.out.slice(0, 200)}` };
+  let base: string | null;
+  let branch: string;
+  if (resume) {
+    // Moving hosts: the branch was pushed from the other host; carry on from it.
+    base = resume.base;
+    branch = resume.branch;
+    await git(path, ["fetch", "origin", branch]);
+    const sw = await git(path, ["switch", "-c", branch, `origin/${branch}`]);
+    if (!sw.ok) {
+      await release();
+      return { ok: false, message: `Could not check out ${branch} from origin on ${host.label}: ${sw.out.slice(0, 200)}` };
+    }
+  } else {
+    const configured = readShipConfig(ship.id)?.base_branch;
+    base = await defaultBase(git, path, typeof configured === "string" && /^[\w./-]{1,100}$/.test(configured) ? configured : undefined);
+    if (!base) {
+      await release();
+      return { ok: false, message: `Could not find ${ship.id}'s default branch (origin/HEAD, main, or master); voyage not started.` };
+    }
+    const existing = new Set((await git(primary, ["for-each-ref", "--format=%(refname:short)", "refs/heads/"])).out.split("\n").filter(Boolean));
+    branch = voyageBranch(name, (b) => existing.has(b));
+    const sw = await git(path, ["switch", "-c", branch, base]);
+    if (!sw.ok) {
+      await release();
+      return { ok: false, message: `Could not create ${branch} from ${base}: ${sw.out.slice(0, 200)}` };
+    }
   }
   const primaryBranch = (await git(primary, ["branch", "--show-current"])).out;
-  const worktree: VoyageWorktree = { ship: ship.id, path, leaseId, branch, base, gitDir: real(common.out), primaryBranch, started: new Date().toISOString(), host: host.kind };
+  const worktree: VoyageWorktree = { ship: ship.id, path, leaseId, branch, base, gitDir: real(common.out), primaryBranch, started: new Date().toISOString(), host: host.kind, repo: primary };
   await mkdir(dirname(recordPath(ship.id)), { recursive: true });
   await writeFile(recordPath(ship.id), JSON.stringify(worktree, null, 2) + "\n", "utf8");
   return { ok: true, worktree };
@@ -227,6 +249,7 @@ export async function releaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">):
   const w = voyageWorktree(ship.id);
   if (!w) return { ok: true, message: "" };
   const host = shipHost(w.host);
+  const repo = w.repo ?? ship.path;
   const git: Git = (cwd, args) => hostGit(host, cwd, args);
   const changes = await worktreeChanges(w);
   if (changes.length) {
@@ -234,13 +257,13 @@ export async function releaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">):
   }
   // The lead may have renamed the branch (skills/git-conventions): use what the worktree is on now.
   const branch = (await git(w.path, ["branch", "--show-current"])).out || w.branch;
-  const ahead = (await git(ship.path, ["rev-list", "--count", `${w.base}..${branch}`])).out;
-  const r = await host.exec([treehouseBin(host), "return", "--force", "--if-lease-id", w.leaseId, w.path], { timeoutMs: 120_000, cwd: ship.path });
+  const ahead = (await git(repo, ["rev-list", "--count", `${w.base}..${branch}`])).out;
+  const r = await host.exec([treehouseBin(host), "return", "--force", "--if-lease-id", w.leaseId, w.path], { timeoutMs: 120_000, cwd: repo });
   if (r.exitCode !== 0) {
     return { ok: false, message: `Could not return ${ship.id}'s worktree to treehouse: ${(r.stderr || r.stdout).trim().slice(0, 200)}. The voyage stays open.` };
   }
   await rm(recordPath(ship.id), { force: true });
-  const now = (await git(ship.path, ["branch", "--show-current"])).out;
+  const now = (await git(repo, ["branch", "--show-current"])).out;
   const tangle = w.primaryBranch && now !== w.primaryBranch ? ` Warning: your checkout of ${ship.id} moved from ${w.primaryBranch} to ${now || "a detached HEAD"} during the voyage.` : "";
   const work = Number(ahead) > 0 ? `Branch ${branch} has ${ahead} commit(s) on ${w.base}, ready for you to review and merge.` : `Branch ${branch} has no commits; nothing to merge.`;
   return { ok: true, message: `${work}${tangle}` };

@@ -17,7 +17,7 @@ import { nodeStateDir } from "./paths.ts";
 
 /** Fleet actions that change state; each needs the captain's Go (or an approved order step). */
 export const TIER2_TOOLS: Record<string, { params: string[]; required: string[] }> = {
-  voyage_start: { params: ["ship", "goal", "to"], required: ["ship", "goal", "to"] },
+  voyage_start: { params: ["ship", "goal", "to", "on"], required: ["ship", "goal", "to"] },
   voyage_dock: { params: ["ship", "summary"], required: ["ship"] },
   crew_change: { params: ["ship", "add", "remove", "role", "budget", "model"], required: ["ship"] },
   orchestrator_set: { params: ["ship", "orchestrator"], required: ["ship", "orchestrator"] },
@@ -72,7 +72,7 @@ export function holdGoRequest(req: GoRequest): void {
 export function describeAction(tool: string, a: Record<string, string>): string {
   switch (tool) {
     case "voyage_start":
-      return `Set sail on ${a.ship}: "${a.goal}", sent to ${a.to}.`;
+      return `Set sail on ${a.ship}: "${a.goal}", sent to ${a.to}${a.on === "laptop" ? ", on the laptop" : a.on === "hub" ? ", on the hub" : ""}.`;
     case "voyage_dock":
       return `Dock ${a.ship}'s voyage${a.summary ? ` ("${a.summary}")` : ""}.`;
     case "crew_change":
@@ -107,6 +107,7 @@ export function tier2ArgError(tool: string, a: Record<string, string>): string |
     if (ops !== 1) return "crew_change takes exactly one of add, remove, budget (with role), or model (with role).";
     if ((a.budget !== undefined || a.model !== undefined) && !a.role) return "crew_change with budget or model needs role.";
   }
+  if (tool === "voyage_start" && a.on !== undefined && !["hub", "laptop"].includes(a.on)) return "on is hub or laptop.";
   if (tool === "orchestrator_set" && !["firstmate", "lead"].includes(a.orchestrator ?? "")) return "orchestrator is firstmate or lead.";
   return null;
 }

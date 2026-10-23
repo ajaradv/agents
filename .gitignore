@@ -6,6 +6,8 @@ node_modules/
 fleet/home/
 fleet/firstmate/
 fleet/inbox/
+# Crews the hub runs on this laptop (dashboard/lib/hosted.ts)
+fleet/hosted/
 
 # Bytecode for bin/axi_cli.py (imported by the Python scripts in bin/)
 bin/__pycache__/axi_cli.*

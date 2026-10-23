@@ -30,6 +30,17 @@ async function headers(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/** The worker token (secret "laptop-worker-token"). */
+export const laptopToken = () => readSecret("laptop-worker-token");
+
+/** A request to the laptop worker with its token (lib/laptop-host.ts). Throws when it is not configured. */
+export async function laptopFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  if (!URL_ENV()) throw new Error("no laptop worker (FLEET_LAPTOP_URL)");
+  const r = await fetchImpl(`${URL_ENV()}${path}`, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), ...(await headers()) } });
+  if (r.status >= 500 || r.status === 401) cached = null;
+  return r;
+}
+
 /** Is the laptop worker up, and what can it do? Cached for 30 seconds; never throws. */
 export async function laptopStatus(force = false): Promise<LaptopStatus> {
   const base = URL_ENV();

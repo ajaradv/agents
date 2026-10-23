@@ -227,7 +227,7 @@ export async function runFleetAction(tool: string, a: Record<string, string>): P
     case "voyage_start": {
       const allowed = (ship!.orchestrator === "firstmate" ? ["firstmate"] : []).concat(ship!.crew.map((r) => `${ship!.id}-${r}`));
       if (!allowed.includes(a.to!)) return { ok: false, message: `Send the voyage to ${allowed.join(" or ") || "a crewmate aboard (none yet)"}.` };
-      const started = await startVoyage(ship!.id, a.goal!, a.to!);
+      const started = await startVoyage(ship!.id, a.goal!, a.to!, a.on);
       res = started;
       if (started.ok && started.voyage) {
         const line = await postCaptainLine(a.to!, voyageBrief(ship!, started.voyage));
