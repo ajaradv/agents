@@ -10,6 +10,13 @@
  *
  * Tune with FLEET_IMAGE_KEEP (earlier-turn batch size, default 6) and FLEET_IMAGE_MB
  * (total cap, default 20; providers refuse requests over 32 MB).
+ *
+ * Images are also shrunk as they arrive (tool_result), before they enter the
+ * session: a 1440x1000 dashboard PNG of 681 KB becomes a 210 KB JPEG at most
+ * 1568 px on the long edge (Anthropic's recommended size), still clear to the
+ * model. Image-heavy sessions were the largest memory cost of an agent (a
+ * designer's 131 MB session loaded at 314 MB; measured 2026-10-22). The file on
+ * disk is untouched. FLEET_IMAGE_SHRINK=0 turns it off.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -74,7 +81,43 @@ export function windowImages<T extends Msg>(messages: T[], keep = KEEP, maxBytes
   return out;
 }
 
+/** Above this many bytes an image is re-encoded on arrival. */
+const SHRINK_OVER = 200_000;
+const LONG_EDGE = 1568;
+
+/** A smaller JPEG of a base64 image, or null when it would not be smaller (or sharp is missing). */
+export async function shrinkImage(data: string, mimeType: string): Promise<{ data: string; mimeType: string } | null> {
+  if (!/^image\/(png|jpeg|webp)$/.test(mimeType) || data.length * 0.75 < SHRINK_OVER) return null;
+  try {
+    const sharp = (await import("sharp")).default;
+    const out = await sharp(Buffer.from(data, "base64"))
+      .resize({ width: LONG_EDGE, height: LONG_EDGE, fit: "inside", withoutEnlargement: true })
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: 78, mozjpeg: true })
+      .toBuffer();
+    const b64 = out.toString("base64");
+    return b64.length < data.length * 0.9 ? { data: b64, mimeType: "image/jpeg" } : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function (pi: ExtensionAPI) {
+  if (process.env.FLEET_IMAGE_SHRINK !== "0") {
+    pi.on("tool_result", async (event) => {
+      let changed = false;
+      const content = await Promise.all(
+        event.content.map(async (c) => {
+          if (c.type !== "image") return c;
+          const small = await shrinkImage(c.data, c.mimeType);
+          if (!small) return c;
+          changed = true;
+          return { ...c, ...small };
+        }),
+      );
+      return changed ? { content } : undefined;
+    });
+  }
   pi.on("context", async (event) => {
     const messages = windowImages(event.messages as Msg[]);
     return messages ? { messages: messages as typeof event.messages } : undefined;

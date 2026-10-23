@@ -97,3 +97,24 @@ describe("cache-watch strikes count the same call, not the same tool", () => {
     expect(strikeKey("ship_log", { ship: "a" }, down)).toBe(strikeKey("ship_log", { ship: "b" }, down));
   });
 });
+
+describe("image window: screenshots shrink before they enter a session", () => {
+  test("a large PNG becomes a smaller JPEG within 1568 px; small or odd images are left alone", async () => {
+    const sharp = (await import("sharp")).default;
+    const { shrinkImage } = await import("../../extensions/image-window.ts");
+    // Smooth shapes with light grain: large as a PNG, small as a JPEG, like a busy screenshot.
+    const raw = Buffer.alloc(1800 * 1000 * 3);
+    let seed = 7;
+    for (let y = 0; y < 1000; y++) for (let x = 0; x < 1800; x++) for (let c = 0; c < 3; c++) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      raw[(y * 1800 + x) * 3 + c] = Math.max(0, Math.min(255, 128 + 60 * Math.sin(x / (9 + c)) + 50 * Math.cos(y / 13) + (seed % 24)));
+    }
+    const png = (await sharp(raw, { raw: { width: 1800, height: 1000, channels: 3 } }).png().toBuffer()).toString("base64");
+    const out = await shrinkImage(png, "image/png");
+    expect(out?.mimeType).toBe("image/jpeg");
+    expect(out!.data.length).toBeLessThan(png.length);
+    expect((await sharp(Buffer.from(out!.data, "base64")).metadata()).width).toBe(1568);
+    expect(await shrinkImage(png.slice(0, 1000), "image/png")).toBeNull();
+    expect(await shrinkImage(png, "image/gif")).toBeNull();
+  });
+});

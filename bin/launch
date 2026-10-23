@@ -845,6 +845,10 @@ def prepare_pi_launch(
 
     ext_refs: list[str] = []
     for name in agent.get("extensions") or []:
+        # The Cursor provider only when this launch runs a Cursor model (Alice lists it for her
+        # Composer backup): about 10 MB idle where unused, 70 MB when active (measured 2026-10-22).
+        if str(name) == "cursor-sdk" and not str(model or "").startswith("cursor/"):
+            continue
         ok, ref = extension_allowed(str(name), agent_type, npm_reg)
         if not ok:
             print(f"extension {name!r} not allowed for type {agent_type}", file=sys.stderr)
