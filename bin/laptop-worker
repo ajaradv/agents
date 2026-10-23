@@ -12,7 +12,7 @@
 #   bin/laptop-worker --uninstall
 #
 # The hub then needs FLEET_LAPTOP_URL=https://<this laptop's tailnet name>:8790 in its services
-# (FLEET_LAPTOP_URL=... bin/fleet-services install on the hub).
+# (a line in the hub's ~/.config/fleet/services.env, then bin/fleet-services install).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -19,6 +19,9 @@
 # resolve the same way they do in your terminal. Re-run install after moving
 # those tools.
 #
+# Settings for this machine (the hub's FLEET_LAPTOP_URL, ports, the vault) go in
+# ~/.config/fleet/services.env as KEY=VALUE lines; every install reads them.
+#
 # Testing overrides (not for daily use): FLEET_SERVICE_SUFFIX names a second pair
 # of jobs (com.fleet.node.<suffix>), and DASHBOARD_PORT / FLEET_INBOX / ALICE_VAULT
 # are passed through to both jobs when set.
@@ -37,6 +40,17 @@ DOMAIN="gui/$(id -u)"
 BUN="$(command -v bun || true)"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
+
+# Machine settings the services run with (FLEET_LAPTOP_URL on the hub, ports,
+# the vault): KEY=VALUE lines in ~/.config/fleet/services.env, read on every
+# install, so reinstalling never drops one. The environment still wins.
+SETTINGS="${XDG_CONFIG_HOME:-$HOME/.config}/fleet/services.env"
+SETTING_KEYS="DASHBOARD_PORT FLEET_INBOX ALICE_VAULT FLEET_NODE_PORT FLEET_TAILNET_USERS FLEET_LAPTOP_URL"
+if [ -f "$SETTINGS" ]; then
+  while IFS='=' read -r k v; do
+    case " $SETTING_KEYS " in *" $k "*) [ -n "${!k:-}" ] || export "$k=$v" ;; esac
+  done < <(grep -E '^[A-Z_]+=' "$SETTINGS")
+fi
 xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 
 env_block() { # extra KEY=VALUE pairs for this job
@@ -44,7 +58,7 @@ env_block() { # extra KEY=VALUE pairs for this job
   printf '      <key>PATH</key><string>%s</string>\n' "$(xml "$PATH")"
   for kv in "$@"; do printf '      <key>%s</key><string>%s</string>\n' "${kv%%=*}" "$(xml "${kv#*=}")"; done
   printf '      <key>HOME</key><string>%s</string>\n' "$(xml "$HOME")"
-  for k in DASHBOARD_PORT FLEET_INBOX ALICE_VAULT FLEET_NODE_PORT FLEET_TAILNET_USERS; do
+  for k in $SETTING_KEYS; do
     if [ -n "${!k:-}" ]; then printf '      <key>%s</key><string>%s</string>\n' "$k" "$(xml "${!k}")"; fi
   done
   printf '    </dict>\n'
@@ -102,7 +116,7 @@ if [ "$(uname)" = Linux ]; then
     printf 'User=%s\nWorkingDirectory=%s\nExecStart=%s run %s\n' "$(id -un)" "$ROOT" "$BUN" "$ROOT/$2"
     printf 'Environment=PATH=%s\nEnvironment=HOME=%s\n' "$PATH" "$HOME"
     for kv in "${@:5}"; do printf 'Environment=%s\n' "$kv"; done
-    for k in DASHBOARD_PORT FLEET_INBOX ALICE_VAULT FLEET_NODE_PORT FLEET_TAILNET_USERS FLEET_LAPTOP_URL; do
+    for k in $SETTING_KEYS; do
       if [ -n "${!k:-}" ]; then printf 'Environment=%s=%s\n' "$k" "${!k}"; fi
     done
     printf 'Restart=always\nRestartSec=5\nStandardOutput=append:%s\nStandardError=append:%s\n\n[Install]\nWantedBy=multi-user.target\n' "$LOGS/$3" "$LOGS/$3"
@@ -112,6 +126,11 @@ if [ "$(uname)" = Linux ]; then
     install)
       [ -n "$BUN" ] || die "bun is not on PATH"
       mkdir -p "$LOGS"
+      # A setting only the old unit had (set by hand before services.env) is carried over, not dropped.
+      for k in $SETTING_KEYS; do
+        old="$(sed -n "s/^Environment=$k=//p" "$UNITS/$U_NODE.service" 2>/dev/null | head -1)"
+        if [ -z "${!k:-}" ] && [ -n "$old" ]; then export "$k=$old"; mkdir -p "$(dirname "$SETTINGS")"; printf '%s=%s\n' "$k" "$old" >> "$SETTINGS"; echo "kept $k (now in $SETTINGS)"; fi
+      done
       unit "$U_NODE" dashboard/node.ts node.log "Fleet node (agents, routines, orders)" | sudo tee "$UNITS/$U_NODE.service" >/dev/null
       unit "$U_DASH" dashboard/server.ts dashboard.log "Fleet dashboard" FLEET_NODE_SPAWN=0 | sudo tee "$UNITS/$U_DASH.service" >/dev/null
       unit "$U_BROWSER" dashboard/browser.ts browser.log "Fleet shared browser (one Chrome for every screenshot)" | sudo tee "$UNITS/$U_BROWSER.service" >/dev/null
