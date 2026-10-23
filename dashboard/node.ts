@@ -201,6 +201,12 @@ function startRuntime(): void {
   };
   // Code graphs (CodeGraph): keep each indexed ship repo current. Only repos that already have
   // .codegraph/ are synced; indexing a repo is the captain's decision.
+  // Old agent sessions gzipped out of the way (lib/session-archive.ts).
+  const sessionArchive = async (): Promise<string> => {
+    const { archiveSessions } = await import("./lib/session-archive.ts");
+    const r = archiveSessions();
+    return r.files ? `archived ${r.files} old session(s) (${(r.savedBytes / 1e6).toFixed(0)} MB saved): ${r.agents.join(", ")}` : "no old sessions to archive";
+  };
   const codegraphSync = async (): Promise<string> => {
     const synced: string[] = [];
     for (const ship of await readShips()) {
@@ -211,7 +217,7 @@ function startRuntime(): void {
     return synced.length ? `synced ${synced.join(", ")}` : "skipped: no ship repo has a code graph yet";
   };
   startRoutines({
-    jobs: { "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview, "codegraph-sync": codegraphSync },
+    jobs: { "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview, "codegraph-sync": codegraphSync, "session-archive": sessionArchive },
     runAgent: async (agentId, text) => void (await acceptCrewLine(agentId, "routine", text)),
     agentExists: (agentId) => allChatTargetIds().includes(agentId),
     budgetRefusal: (ship, agentId) => budgetRefusal(ship, agentId),
