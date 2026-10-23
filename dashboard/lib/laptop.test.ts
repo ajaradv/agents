@@ -8,7 +8,7 @@ const saved = { url: process.env.FLEET_LAPTOP_URL, dir: process.env.FLEET_SECRET
 process.env.FLEET_SECRETS_DIR = dir;
 process.env.FLEET_SECRET_BACKEND = "file";
 const { writeSecret } = await import("./secret-store.ts");
-const { _setLaptopFetchForTest, laptopFirstmateSend, laptopStatus, laptopTts } = await import("./laptop.ts");
+const { _setLaptopFetchForTest, laptopFirstmateSend, laptopShot, laptopStatus, laptopTts } = await import("./laptop.ts");
 const { authorized } = await import("../worker.ts");
 await writeSecret("laptop-worker-token", "tok-123");
 afterAll(() => {
@@ -57,5 +57,17 @@ describe("the laptop as a worker for the hub", () => {
     await expect(laptopTts("hello", "bf_isabella")).rejects.toThrow("laptop is not available");
     expect((await laptopFirstmateSend("x")).ok).toBe(false);
     expect(await laptopStatus()).toMatchObject({ configured: true, up: false, error: "connect timeout" });
+  });
+  test("screenshots borrow the laptop's Chrome while it is up", async () => {
+    process.env.FLEET_LAPTOP_URL = "https://laptop.example.ts.net:8790";
+    const shot = { url: "https://fleet-hub.example.ts.net/harbor", width: 1440, height: 1000, mobile: false, wait: 0 };
+    _setLaptopFetchForTest((async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/health")) return Response.json({ ok: true, capabilities: ["browser"] });
+      expect(JSON.parse(String(init?.body))).toEqual(shot);
+      return new Response(new Uint8Array([137, 80, 78, 71]));
+    }) as unknown as typeof fetch);
+    expect(await laptopShot(shot)).toEqual({ ok: true, png: new Uint8Array([137, 80, 78, 71]) });
+    _setLaptopFetchForTest((async () => Response.json({ ok: true, capabilities: ["tts"] })) as unknown as typeof fetch);
+    expect(await laptopShot(shot)).toEqual({ ok: false, message: "the laptop is not available for screenshots" });
   });
 });

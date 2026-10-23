@@ -107,8 +107,30 @@ async function startChrome(): Promise<Browser> {
   return { proc, ws, profile, send, on };
 }
 
+/**
+ * Chrome is a separate process: it outlives the service unless stopped. On the
+ * service's own exit (launchd or systemd stopping it, Ctrl-C), stop it too, or
+ * every restart leaves a ~250 MB Chrome behind.
+ */
+let exitHooked = false;
+function stopChromeOnExit(): void {
+  if (exitHooked) return;
+  exitHooked = true;
+  const stop = () => {
+    try {
+      browser?.proc.kill("SIGKILL");
+      if (browser) rmSync(browser.profile, { recursive: true, force: true });
+    } catch {
+      /* gone */
+    }
+  };
+  process.on("exit", stop);
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(sig, () => process.exit(0));
+}
+
 async function getBrowser(): Promise<Browser> {
   if (browser) return browser;
+  stopChromeOnExit();
   starting ??= startChrome().finally(() => (starting = null));
   browser = await starting;
   return browser;
@@ -151,6 +173,31 @@ async function shot(o: { url: string; width: number; height: number; mobile: boo
   }
 }
 
+/**
+ * POST /shot: one screenshot through the gate. Also served by the laptop
+ * worker (dashboard/worker.ts), so the hub can borrow the laptop's memory.
+ */
+export async function shotResponse(req: Request, gate: Gate): Promise<Response> {
+  const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const url = String(b.url ?? "");
+  if (!/^https?:\/\//.test(url)) return Response.json({ ok: false, message: "an http(s) url" }, { status: 400 });
+  const o = {
+    url,
+    width: Math.min(3000, Math.max(200, Number(b.width) || 1440)),
+    height: Math.min(8000, Math.max(300, Number(b.height) || 1000)),
+    mobile: Boolean(b.mobile),
+    wait: Math.min(30_000, Math.max(0, Number(b.wait) || 0)),
+  };
+  try {
+    const png = await gate.run(() => shot(o));
+    touchIdle(gate);
+    return new Response(new Uint8Array(png), { headers: { "Content-Type": "image/png" } });
+  } catch (e) {
+    touchIdle(gate);
+    return Response.json({ ok: false, message: e instanceof Error ? e.message : String(e) }, { status: 502 });
+  }
+}
+
 if (import.meta.main) {
   const gate = new Gate(MAX_JOBS);
   Bun.serve({
@@ -160,26 +207,7 @@ if (import.meta.main) {
     async fetch(req) {
       const path = new URL(req.url).pathname;
       if (path === "/health") return Response.json({ chrome: browser ? "running" : "stopped", jobs: gate.active, queued: gate.queued });
-      if (path === "/shot" && req.method === "POST") {
-        const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-        const url = String(b.url ?? "");
-        if (!/^https?:\/\//.test(url)) return Response.json({ ok: false, message: "an http(s) url" }, { status: 400 });
-        const o = {
-          url,
-          width: Math.min(3000, Math.max(200, Number(b.width) || 1440)),
-          height: Math.min(8000, Math.max(300, Number(b.height) || 1000)),
-          mobile: Boolean(b.mobile),
-          wait: Math.min(30_000, Math.max(0, Number(b.wait) || 0)),
-        };
-        try {
-          const png = await gate.run(() => shot(o));
-          touchIdle(gate);
-          return new Response(new Uint8Array(png), { headers: { "Content-Type": "image/png" } });
-        } catch (e) {
-          touchIdle(gate);
-          return Response.json({ ok: false, message: e instanceof Error ? e.message : String(e) }, { status: 502 });
-        }
-      }
+      if (path === "/shot" && req.method === "POST") return shotResponse(req, gate);
       return new Response("not found", { status: 404 });
     },
   });

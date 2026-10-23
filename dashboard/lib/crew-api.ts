@@ -13,6 +13,7 @@ import { recentManeuvers, shipTraceDb } from "./ship-maneuvers.ts";
 import { logShipEvent, recentShipEvents } from "./ship-log.ts";
 import { recordHandoff, recordRun } from "./metrics.ts";
 import { describeGates, gateFolder, gateStatus, runGates } from "./gates.ts";
+import { voyageHost } from "./voyage-worktree.ts";
 import { describeManeuver, findManeuver, launchRefusal, maneuverAvailability, type ManeuverAvailability } from "./maneuvers.ts";
 import { runCheck, tail, treeState } from "./ship-checks.ts";
 import { openVoyage, type Voyage } from "./shipyard.ts";
@@ -320,7 +321,7 @@ async function runCheckManeuver(ship: ShipRow, m: ManeuverAvailability, runId: s
   let failure = "";
   try {
     await mkdir(dir, { recursive: true });
-    const tree = await treeState(gateFolder(ship));
+    const tree = await treeState(gateFolder(ship), voyageHost(ship.id));
     for (const [i, check] of m.checks.entries()) {
       const t0 = Date.now();
       const res = await runCheck(ship.id, by, check);

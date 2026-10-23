@@ -26,7 +26,7 @@ routines:
     job: free-models
 
   - id: session-archive
-    title: Old agent sessions compressed (newest two kept; untouched 14 days)
+    title: Old agent sessions compressed (newest two kept; untouched 14 days); week-old screenshots deleted
     every: weekly sun 04:00
     job: session-archive
 

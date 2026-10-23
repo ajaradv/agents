@@ -1,6 +1,6 @@
 import { jevAsk, type Answer } from "./jev.ts";
-import { spawnTimed } from "./proc.ts";
 import { redact } from "./redact.ts";
+import { localHost, type ShipHost } from "./ship-host.ts";
 
 /**
  * Dock review (Level 3B in the vault research note jev-system-one): when a
@@ -14,10 +14,6 @@ export type DockReview = { level: "light" | "normal" | "careful"; risk: number; 
 
 const WEIGHTS = { security: 0.5, complexity: 0.3, commitQuality: 0.2 };
 
-async function git(cwd: string, args: string[]): Promise<string> {
-  const r = await spawnTimed(["git", ...args], { timeoutMs: 15_000, cwd });
-  return r.exitCode === 0 ? r.stdout : "";
-}
 
 const score = (a: Answer | undefined) => (a && a.type === "score" ? a.score : 0);
 const noul = (a: Answer | undefined) => (a && a.type === "noul" ? a.noul : 0);
@@ -33,7 +29,12 @@ export function reviewLevel(a: Record<string, Answer>): Pick<DockReview, "level"
   return { level, risk, security, complexity, commitQuality, needsReview };
 }
 
-export async function reviewBranch(repo: string, base: string, branch: string, ask: typeof jevAsk = jevAsk): Promise<DockReview | null> {
+/** The branch's diff and log are read on the ship host that holds the repo (lib/ship-host.ts). */
+export async function reviewBranch(repo: string, base: string, branch: string, ask: typeof jevAsk = jevAsk, host: ShipHost = localHost): Promise<DockReview | null> {
+  const git = async (cwd: string, args: string[]): Promise<string> => {
+    const r = await host.exec(["git", ...args], { timeoutMs: 15_000, cwd });
+    return r.exitCode === 0 ? r.stdout : "";
+  };
   const stat = await git(repo, ["diff", "--shortstat", `${base}...${branch}`]);
   if (!stat.trim()) return null;
   const files = await git(repo, ["diff", "--stat=120", `${base}...${branch}`]);

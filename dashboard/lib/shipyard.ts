@@ -16,7 +16,8 @@ import { logShipEvent, shipTurnTotals } from "./ship-log.ts";
 import { describeGates, gateStatus } from "./gates.ts";
 import { endVoyageMemory, startVoyageMemory } from "./crew-memory.ts";
 import { ledgerLine, ledgerMarkdown, recordVoyageDock, recordVoyageStart, voyageId, voyageLedger } from "./metrics.ts";
-import { leaseVoyageWorktree, releaseVoyageWorktree, usesVoyageWorktrees, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
+import { hostRunner } from "./ship-host.ts";
+import { leaseVoyageWorktree, releaseVoyageWorktree, usesVoyageWorktrees, voyageHost, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
 
 /**
  * The shipyard: build a ship (register it, check what it is missing), crew it
@@ -279,6 +280,8 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
     const gates = await gateStatus(ship, "dock");
     if (!gates.green) return { ok: false, message: `${shipId} cannot dock yet: ${describeGates(gates)} Run the gates (Run gates on the deck, or ask the lead), then dock again.` };
   }
+  // The ship host holding the voyage's repo (lib/ship-host.ts): read before the release drops the record.
+  const host = voyageHost(shipId);
   // Return the voyage's worktree: uncommitted work keeps the voyage open.
   const released = ship ? await releaseVoyageWorktree(ship) : { ok: true, message: "" };
   if (!released.ok) return { ok: false, message: released.message };
@@ -290,7 +293,7 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   const ledger = voyageLedger(id);
   // Dock review (lib/dock-review.ts): how closely the captain should review the branch before merging. Advisory.
   const branchInfo = released.message.match(/^Branch (\S+) has \d+ commit\(s\) on (\S+?),/);
-  const review = ship && branchInfo && commits > 0 ? await reviewBranch(ship.path, branchInfo[2]!, branchInfo[1]!).catch(() => null) : null;
+  const review = ship && branchInfo && commits > 0 ? await reviewBranch(ship.path, branchInfo[2]!, branchInfo[1]!, undefined, host).catch(() => null) : null;
   // Land through the ship's delivery mode (lib/dock-delivery.ts): a pull request for direct-PR and no-mistakes ships.
   let delivered = "";
   if (ship && branchInfo && commits > 0 && deliveryFor(ship.mode) === "pr") {
@@ -302,7 +305,7 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
       `Voyage record (vault): ${v.file.split("/").slice(-3).join("/")}`,
       "Opened by the fleet when the voyage docked. The captain reviews and merges.",
     ].filter(Boolean).join("\n\n");
-    const pr = await openDockPr(ship.path, branchInfo[1]!, branchInfo[2]!, prTitle(v.goal), body).catch((e) => ({ ok: false, message: e instanceof Error ? e.message : String(e) }) as { ok: boolean; url?: string; message: string });
+    const pr = await openDockPr(ship.path, branchInfo[1]!, branchInfo[2]!, prTitle(v.goal), body, hostRunner(host)).catch((e) => ({ ok: false, message: e instanceof Error ? e.message : String(e) }) as { ok: boolean; url?: string; message: string });
     delivered = pr.ok ? `Pull request: ${pr.url}.` : `Delivery (${ship.mode}): ${pr.message}.`;
   }
   // The voyage's memory is archived into its note, then discarded.

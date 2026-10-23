@@ -23,6 +23,7 @@ import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fl
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
 import { toolFailuresHtml } from "./lib/tool-failures.ts";
 import { routinesHtml } from "./lib/routines.ts";
+import { clearShots, shotsHtml } from "./lib/shots.ts";
 import { LiveSession } from "./lib/live-voice.ts";
 import { vaultDoctorHtml } from "./lib/vault-doctor.ts";
 import { toolGateHtml } from "./lib/tool-gate.ts";
@@ -600,6 +601,12 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     }
     if (path === "/partials/routines" && req.method === "GET") {
       return new Response(routinesHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+    if (path === "/partials/shots" && req.method === "GET") {
+      return new Response(shotsHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+    if (path === "/partials/shots/clear" && req.method === "POST") {
+      return new Response(shotsHtml(clearShots()), { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
     if (path === "/partials/vault-doctor" && req.method === "GET") {
       return new Response(vaultDoctorHtml(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
