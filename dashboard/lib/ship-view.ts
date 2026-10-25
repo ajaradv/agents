@@ -11,6 +11,7 @@ import { readShipConfig, recentConfigChanges, shipTemplates } from "./ship-confi
 import { laptopStatus } from "./laptop.ts";
 import { laptopSailable, laptopVoyages } from "./laptop-host.ts";
 import { voyageWorktree } from "./voyage-worktree.ts";
+import { readMemorySync, voyageMemoryNotes } from "./memory-sync.ts";
 import { voyageId } from "./metrics.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
 import { recentShipEvents, shipTurnTotals, type ShipEvent } from "./ship-log.ts";
@@ -282,6 +283,32 @@ function crewCardHtml(c: CrewCard): string {
   </article>`;
 }
 
+/**
+ * The open voyage's memory (lib/memory-sync.ts): the crew's shared scratchpad
+ * and each crewmate's plan and compaction state. A voyage on another host is
+ * mirrored here every 30s; the line under the title says how fresh it is.
+ */
+export function voyageMemoryHtml(ship: ShipRow, voyage: Voyage | null): string {
+  if (!voyage || ship.orchestrator !== "lead") return "";
+  const notes = voyageMemoryNotes(ship.id, ship.crew);
+  const host = voyageWorktree(ship.id)?.host ?? "local";
+  const sync = host === "local" ? null : readMemorySync(ship.id);
+  const fresh =
+    host === "local"
+      ? ""
+      : !sync?.synced
+        ? `<p class="muted">Kept on ${escapeHtml(sync?.host ?? host)}; not mirrored yet${sync?.message ? ` (${escapeHtml(sync.message.slice(0, 120))})` : ""}.</p>`
+        : `<p class="muted">Mirrored from ${escapeHtml(sync.host)} ${ago(sync.synced)}${sync.message ? `; the last try failed (${escapeHtml(sync.message.slice(0, 120))}), so this may be stale` : ""}.</p>`;
+  const body = notes.length
+    ? notes.map((n) => `<details class="memory-note"><summary>${escapeHtml(n.label)} <span class="muted">· ${ago(n.updated)}</span></summary><pre class="memory-text">${escapeHtml(n.text.length > 6000 ? `…${n.text.slice(-6000)}` : n.text)}</pre></details>`).join("")
+    : `<p class="muted">Nothing written yet. The crew's scratchpad, plans, and state appear here as they write them.</p>`;
+  return `<section class="stack voyage-memory">
+      <h3>Voyage memory</h3>
+      ${fresh}
+      ${body}
+    </section>`;
+}
+
 function fmCrewHtml(w: ChatTarget): string {
   return `<article class="d-card d-card-border bg-base-100 crew-card is-firstmate">
     ${portrait(w, 48)}
@@ -450,6 +477,8 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
     ${supplyGaugeHtml(spendToday, hasBudget ? budget : null)}
 
     ${ship.id === "fleet" ? await ordersPanelHtml() : voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels), tasks, condition, await sailChoice(ship))}
+
+    ${voyageMemoryHtml(ship, voyage)}
 
     <section class="stack">
       <h3>Crew</h3>

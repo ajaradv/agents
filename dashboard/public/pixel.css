@@ -934,6 +934,9 @@ body.chat-open { overflow: hidden; }
 
 .deck-cols { display: grid; gap: 1rem; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: start; }
 @media (max-width: 900px) { .deck-cols { grid-template-columns: minmax(0, 1fr); } }
+.voyage-memory .memory-note { border: 2px solid var(--ink); background: var(--sheet); padding: 0.4rem 0.6rem; }
+.voyage-memory .memory-note summary { cursor: pointer; }
+.voyage-memory .memory-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto; margin: 0.4rem 0 0; font-size: 0.85rem; }
 .ship-log { list-style: none; margin: 0; padding: 0; border: 2px solid var(--ink); background: var(--sheet); max-height: 32rem; overflow: auto; }
 .log-row { display: grid; grid-template-columns: 4.4rem minmax(0, 8rem) minmax(0, 6.5rem) minmax(0, 1fr); gap: 0.5rem; padding: 0.35rem 0.55rem; border-bottom: 1px solid var(--bone); font-size: 0.75rem; align-items: baseline; }
 .log-row time, .log-kind { color: var(--quiet); }

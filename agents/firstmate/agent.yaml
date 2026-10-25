@@ -8,7 +8,6 @@ harness: pi
 model: deepseek/deepseek-v4-pro
 fallback_model: openrouter/deepseek/deepseek-v4-pro
 extensions:
-  - fleet-dashboard-heartbeat
   # Compact between tasks once context passes 65%, after running /stow
   # (extensions/context-guard.ts), instead of at the edge of the window.
   - context-guard

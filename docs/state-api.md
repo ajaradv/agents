@@ -55,4 +55,4 @@ curl -N -H "Authorization: Bearer $(cat fleet/inbox/.node/token)" \
 
 ## Not through the API yet
 
-The vault (agents on the hub read and write it directly; it syncs through git), a TUI session's captain chat and bus files (no token), and ship memory on a remote host between voyage start and dock (vault S3d).
+The vault (agents on the hub read and write it directly; it syncs through git), and a TUI session's captain chat and bus files (no token). Crew memory on a remote host is pulled, not pushed: while a voyage sails there the node mirrors it every 30s (`dashboard/lib/memory-sync.ts`, the host's `/host/memory`), and the ship page shows it under Voyage memory with how fresh it is.

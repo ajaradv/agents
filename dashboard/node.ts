@@ -23,6 +23,7 @@ import { budgetRefusal, findShip } from "./lib/shipyard.ts";
 import { materializeAllShips } from "./lib/ship-config.ts";
 import { freeRegistryAge, refreshFreeModels } from "./lib/free-models.ts";
 import { readShips } from "./lib/fleet-layers.ts";
+import { SYNC_MS, syncRemoteMemory } from "./lib/memory-sync.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos, needsChanged } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
@@ -229,6 +230,17 @@ function startRuntime(): void {
     agentExists: (agentId) => allChatTargetIds().includes(agentId),
     budgetRefusal: (ship, agentId) => budgetRefusal(ship, agentId),
   });
+  // S3d (lib/memory-sync.ts): mirror the crew memory of voyages sailing on another host, so the deck is current.
+  let mirroring = false;
+  setInterval(() => {
+    if (mirroring) return;
+    mirroring = true;
+    void readShips()
+      .then((ships) => syncRemoteMemory(ships))
+      .then((changed) => changed.forEach((id) => emit("ship", id)))
+      .catch((e) => console.error("[node] memory sync:", e))
+      .finally(() => (mirroring = false));
+  }, SYNC_MS);
   // Fleet metrics (lib/metrics.ts): import history from ship logs and voyage notes once.
   setTimeout(() => {
     try {
