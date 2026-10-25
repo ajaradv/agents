@@ -206,13 +206,15 @@ function startRuntime(): void {
   };
   // Code graphs (CodeGraph): keep each indexed ship repo current. Only repos that already have
   // .codegraph/ are synced; indexing a repo is the captain's decision.
-  // Old agent sessions gzipped out of the way (lib/session-archive.ts); week-old screenshots deleted (lib/shots.ts).
+  // Old agent sessions gzipped out of the way (lib/session-archive.ts); week-old screenshots deleted (lib/shots.ts); month-old canvas archives (lib/canvas-archive.ts).
   const sessionArchive = async (): Promise<string> => {
     const { archiveSessions } = await import("./lib/session-archive.ts");
     const { clearShots, SWEEP_DAYS } = await import("./lib/shots.ts");
+    const { KEEP_DAYS, pruneCanvasArchive } = await import("./lib/canvas-archive.ts");
     const r = archiveSessions();
     const shots = clearShots(SWEEP_DAYS);
-    const swept = shots.files ? `; ${shots.files} screenshot(s) older than ${SWEEP_DAYS} days deleted` : "";
+    const canvases = pruneCanvasArchive();
+    const swept = (shots.files ? `; ${shots.files} screenshot(s) older than ${SWEEP_DAYS} days deleted` : "") + (canvases ? `; ${canvases} canvas archive(s) older than ${KEEP_DAYS} days deleted` : "");
     return (r.files ? `archived ${r.files} old session(s) (${(r.savedBytes / 1e6).toFixed(0)} MB saved): ${r.agents.join(", ")}` : "no old sessions to archive") + swept;
   };
   const codegraphSync = async (): Promise<string> => {
