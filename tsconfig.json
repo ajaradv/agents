@@ -29,7 +29,6 @@
     "extensions/context-guard.ts",
     "extensions/crew.ts",
     "extensions/fleet.ts",
-    "extensions/fleet-dashboard-heartbeat.ts",
     "extensions/gondolin.ts",
     "extensions/gondolin/**/*.ts",
     "extensions/image-window.ts",

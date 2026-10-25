@@ -15,12 +15,6 @@ const CHAT_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 import { escapeHtml } from "./quota.ts";
 import { recentShipEvents } from "./ship-log.ts";
 
-export type FirstmateHeartbeat = {
-  ts: string;
-  state?: string;
-  ageLabel: string;
-};
-
 type SnapshotState = {
   state?: string;
   age_seconds?: number | null;
@@ -198,49 +192,6 @@ async function takeFleetSnapshot(): Promise<FleetSnapshot> {
   }
 }
 
-export async function readLatestFirstmateHeartbeat(): Promise<FirstmateHeartbeat | null> {
-  try {
-    const raw = await readFile(
-      join(fleetInboxRoot(), "firstmate", "events.jsonl"),
-      "utf8",
-    );
-    let last: FirstmateHeartbeat | null = null;
-    for (const line of raw.trim().split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const o = JSON.parse(line) as {
-          kind?: string;
-          from?: string;
-          ts?: string;
-          state?: string;
-        };
-        if (o.kind === "heartbeat" && o.from === "firstmate" && o.ts) {
-          last = {
-            ts: o.ts,
-            state: o.state,
-            ageLabel: formatAge(Date.parse(o.ts)),
-          };
-        }
-      } catch {
-        continue;
-      }
-    }
-    if (last) last.ageLabel = formatAge(Date.parse(last.ts));
-    return last;
-  } catch {
-    return null;
-  }
-}
-
-function formatAge(tsMs: number): string {
-  if (Number.isNaN(tsMs)) return "unknown";
-  const sec = Math.max(0, Math.floor((Date.now() - tsMs) / 1000));
-  if (sec < 60) return `${sec}s ago`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
-  return `${Math.floor(sec / 86400)}d ago`;
-}
-
 export function projectSlug(value: string | undefined | null): string {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
@@ -362,15 +313,11 @@ function routerFold(): string {
 
 function firstmateCard(opts: {
   home: HomeSummary | null;
-  heartbeat: FirstmateHeartbeat | null;
   tui: { ok: boolean; reason?: string };
   holds: WaitHold[];
 }): string {
   const state = opts.home?.state ?? "unknown";
   const valid = opts.home?.valid;
-  const heartbeat = opts.heartbeat
-    ? `Heartbeat ${opts.heartbeat.ageLabel}${opts.heartbeat.state ? ` · ${opts.heartbeat.state}` : ""}`
-    : "Heartbeat none yet";
   const tui = opts.tui.ok
     ? "TUI attached"
     : `TUI not attached${opts.tui.reason ? ` — ${opts.tui.reason}` : ""}`;
@@ -387,7 +334,6 @@ function firstmateCard(opts: {
       <h3 class="sheet-title">Firstmate</h3>
       <span class="${state === "captain_decision" ? "detent detent-hot" : "detent"}">${escapeHtml(state)}</span>
     </div>
-    <p class="muted">${escapeHtml(heartbeat)}</p>
     <p class="${opts.tui.ok ? "muted" : "warn"}">${escapeHtml(tui)}</p>
     ${validity}
     ${holdBlock}
@@ -426,9 +372,8 @@ function taskProject(t: SnapshotTask): string {
 }
 
 export async function fleetStripHtml(): Promise<string> {
-  const [snap, heartbeat, home, projects, tui, ships, initiatives] = await Promise.all([
+  const [snap, home, projects, tui, ships, initiatives] = await Promise.all([
     recentFleetSnapshot(),
-    readLatestFirstmateHeartbeat(),
     readHomeSummary(),
     readRegisteredProjects(),
     firstmateTuiReachable(),
@@ -442,7 +387,7 @@ export async function fleetStripHtml(): Promise<string> {
 
   if (!snap.ok) {
     return `<div class="stack">
-      ${firstmateCard({ home, heartbeat, tui, holds })}
+      ${firstmateCard({ home, tui, holds })}
     ${routerFold()}
       ${routerFold()}
       <p class="muted">Firstmate's queue is unavailable right now (${escapeHtml(snap.error ?? "no snapshot")}).</p>
@@ -552,7 +497,7 @@ export async function fleetStripHtml(): Promise<string> {
   // On Health: Firstmate's status up front; the registry (projects, ships,
   // initiatives) folded, since the Harbor already shows the ships.
   return `<div class="stack">
-    ${firstmateCard({ home, heartbeat, tui, holds })}
+    ${firstmateCard({ home, tui, holds })}
     <details class="fold registry">
       <summary>Firstmate projects, ships, and initiatives (${projects.length} registered)</summary>
       <div class="stack">
