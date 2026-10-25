@@ -29,9 +29,9 @@ export type CanvasItem = {
 };
 
 const ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
-const ITEM_RE = /^[a-z0-9][a-z0-9-]{0,59}$/;
+export const ITEM_RE = /^[a-z0-9][a-z0-9-]{0,59}$/;
 
-function canvasDir(agentId: string): string {
+export function canvasDir(agentId: string): string {
   return join(fleetInboxRoot(), agentId, "canvas");
 }
 
