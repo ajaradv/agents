@@ -65,3 +65,24 @@ describe("the Go gate", () => {
     expect(chat().at(-1).text).toContain("The captain said Go: Stop nobody-here mid-turn.");
   });
 });
+
+describe("a dock Go is for the work as asked", () => {
+  test("a newer dock ask replaces the older; a Go after the branch moved docks nothing and tells the lead", async () => {
+    let head = "aaaaaaa1111";
+    api.setDockHeadProbe(async () => head);
+    try {
+      await api.requestGo("alice", "voyage_dock", { ship: "kinwork", summary: "first" });
+      await api.requestGo("alice", "voyage_dock", { ship: "kinwork", summary: "second" });
+      const held = (await gate.readGoRequests()).filter((g) => g.tool === "voyage_dock");
+      expect(held.map((g) => [g.args.summary, g.head])).toEqual([["second", "aaaaaaa1111"]]);
+      head = "bbbbbbb2222";
+      const r = await api.decideGo(held[0]!.id, true);
+      expect(r.ok).toBe(false);
+      expect(r.message).toContain("aaaaaaa → bbbbbbb");
+      expect(await gate.readGoRequests()).toEqual([]);
+      expect(chat().at(-1).text).toContain("the branch moved since you asked");
+    } finally {
+      api.setDockHeadProbe(null);
+    }
+  });
+});

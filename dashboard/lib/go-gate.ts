@@ -39,6 +39,8 @@ export type GoRequest = {
   summary: string;
   /** Follows this request through the journal and ship logs. */
   trace?: string;
+  /** voyage_dock: the voyage branch's commit when the Go was asked; a Go on a moved branch is refused. */
+  head?: string;
 };
 
 /** The old file store (before the journal); imported once, then removed. */

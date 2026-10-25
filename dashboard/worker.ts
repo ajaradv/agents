@@ -99,11 +99,13 @@ async function hostExec(req: Request): Promise<Response> {
   const b = (await req.json().catch(() => ({}))) as { cmd?: unknown; cwd?: unknown; timeoutMs?: unknown };
   const cmd = Array.isArray(b.cmd) ? b.cmd.map(String) : [];
   const cwd = String(b.cwd ?? "");
-  const refusal = commandRefusal(cmd, await shipForFolder(cwd, await hostedShips()));
+  const ship = await shipForFolder(cwd, await hostedShips());
+  const refusal = commandRefusal(cmd, ship);
   if (refusal) return Response.json({ stdout: "", stderr: `the laptop refused: ${refusal}`, exitCode: 126, timedOut: false, ms: 0 });
   const timeoutMs = Math.min(3_600_000, Math.max(1000, Number(b.timeoutMs) || 60_000));
-  // A check runs as in a terminal here (the captain's PATH via the login shell), marked as CI.
-  return Response.json(await spawnTimed(cmd, { timeoutMs, cwd, env: { ...process.env, CI: "1" } }));
+  // A check runs as in a terminal here (the captain's PATH via the login shell), marked as CI;
+  // FLEET_SHIP_REPO is the captain's checkout here, as on the hub (lib/ship-checks.ts).
+  return Response.json(await spawnTimed(cmd, { timeoutMs, cwd, env: { ...process.env, CI: "1", FLEET_SHIP_REPO: ship!.path } }));
 }
 
 /** One hosted crewmate's link: its process, and stdin that arrived while it was starting. */

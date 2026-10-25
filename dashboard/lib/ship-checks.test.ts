@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { triageFailure } from "./ship-checks.ts";
+import { checkShell, triageFailure } from "./ship-checks.ts";
 
 describe("failure triage", () => {
   const said = (choice: string, p: number) => (async () => ({ ok: true, answers: { cause: { type: "choice", choice, confidence: p, probabilities: { [choice]: p } } }, route: "typesafe", inputTokens: 1, cost: 0, ms: 1 })) as never;
@@ -10,5 +10,14 @@ describe("failure triage", () => {
     expect(await triageFailure("pytest", "just pytest", "x", said("code_bug", 0.4))).toBeNull();
     expect(await triageFailure("pytest", "just pytest", "x", said("other", 0.9))).toBeNull();
     expect(await triageFailure("pytest", "just pytest", "x", (async () => ({ ok: false, error: "down" })) as never)).toBeNull();
+  });
+});
+
+describe("the check shell", () => {
+  test("zsh where it exists (macOS, the laptop); bash on a hub without it", () => {
+    const local = { kind: "local" } as never;
+    expect(checkShell(local, () => true)).toBe("/bin/zsh");
+    expect(checkShell(local, () => false)).toBe("/bin/bash");
+    expect(checkShell({ kind: "laptop" } as never, () => false)).toBe("/bin/zsh");
   });
 });

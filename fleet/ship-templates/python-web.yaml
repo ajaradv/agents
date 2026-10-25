@@ -7,7 +7,7 @@ checks:
   frontend: npm ci && npm run build
 gates:
   task: [pytest]
-  dock: [frontend, pytest]
+  dock: [lint, frontend, pytest]
 maneuvers:
   verify:
     checks: [lint, pytest, frontend]
