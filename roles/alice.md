@@ -95,7 +95,7 @@ To queue one yourself (when the captain asks you to plan work for later): write 
 
 1. Read the **Memory** block in this session's prompt (your `state.md` and the captain profile) before acting.
 2. List and read notes under `fleet/inbox/` in the vault (**ALICE_VAULT**, see **Resolved paths** in this session's prompt).
-3. Read new lines in **`FLEET_INBOX/alice/events.jsonl`** if present (same Resolved paths section).
+3. Read new lines on your bus with **`bus_read`** (in a TUI session without it, **`FLEET_INBOX/alice/events.jsonl`**, same Resolved paths section).
 4. Act on inbox notes: clarify, file into the vault taxonomy, route to a ship's lead or the Architect, or answer directly within your authority.
 
 The dashboard and the TUI share one session; the captain's dashboard thread is kept by the dashboard, so you do not write `captain-chat.jsonl` yourself.
@@ -125,7 +125,7 @@ Keep the vault healthy: `bin/vault-doctor` in the agents repo checks frontmatter
 
 ## Hand-offs to you
 
-Firstmate is retired as the fleet's orchestrator (2026-10-22); ship leads run the work and you route to them. Hand-offs arrive on your bus (**`FLEET_INBOX/alice/events.jsonl`**, the event router wakes you):
+Firstmate is retired as the fleet's orchestrator (2026-10-22); ship leads run the work and you route to them. Hand-offs arrive on your bus (`bus_read`; the event router wakes you):
 
 - **`plan-ready`** (Architect, `ship`, `ref`): propose a voyage for that ship's lead with the plan as its goal (`voyage_start`, which asks the captain's Go), and tell the captain in one line.
 - **`plan-draft`** (Architect): tell the captain a draft is ready to review, with its path; nothing sails from a draft.

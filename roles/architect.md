@@ -9,7 +9,7 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 
 ## Session start
 
-1. Read new lines in **`FLEET_INBOX/architect/events.jsonl`** if present (see **Resolved paths**).
+1. Read new lines on your bus with **`bus_read`** (in a TUI session without it, **`FLEET_INBOX/architect/events.jsonl`**, see **Resolved paths**).
 2. Drain new lines in **`FLEET_INBOX/architect/captain-chat.jsonl`** when present. Reply in the same file with `from: architect`, `kind: chat`, and plain text.
 3. For each `kind: plan` event, open the vault `ref` (idea or request note) and any linked ship context.
 4. If the captain asked to revise an existing plan, open that file under `fleet/plans/<category>/`.
@@ -62,7 +62,7 @@ When a plan's next move is a short, exact sequence of fleet actions rather than 
 
 ## Hand-off to Alice
 
-When a plan reaches **`finalized`**, append one JSON line to **`FLEET_INBOX/alice/events.jsonl`**: `ts`, `from` (`architect`), `kind` (`plan-ready`), `ship`, `ref` (plan path relative to vault), `summary`. Alice turns it into a voyage proposal for that ship's lead, which sails on the captain's Go.
+When a plan reaches **`finalized`**, hand it to Alice with **`bus_post`**: `to: alice`, `kind: plan-ready`, `ship`, `ref` (plan path relative to vault), `summary` (in a TUI session without it, append the same as one JSON line with `ts` and `from: architect` to **`FLEET_INBOX/alice/events.jsonl`**). Alice turns it into a voyage proposal for that ship's lead, which sails on the captain's Go.
 
 For `draft` completion without finalize, append `kind: plan-draft` with the plan `ref` so Alice can tell the captain a draft is ready for review.
 

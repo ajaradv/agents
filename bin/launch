@@ -745,7 +745,7 @@ def prepare_pi_launch(
             + code_graph_line(ship_path, str(aboard.get("isolation") or ""))
             + f"- **Crew aboard:** {crew}\n"
             f"- **FLEET_INBOX:** `{inbox}`\n"
-            f"- Own bus (read): `{inbox / agent_id / 'events.jsonl'}`\n"
+            f"- Own bus: `bus_read` (TUI: `{inbox / agent_id / 'events.jsonl'}`)\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
             + dashboard_chat_block()
         )
@@ -758,8 +758,8 @@ def prepare_pi_launch(
             "## Resolved paths (this session)\n\n"
             f"- **ALICE_VAULT:** `{vault_path}`\n"
             f"- **FLEET_INBOX:** `{inbox}`\n"
-            f"- Alice bus (Alice reads; others write hand-offs): `{inbox / 'alice' / 'events.jsonl'}`\n"
-            f"- Architect bus (read): `{inbox / 'architect' / 'events.jsonl'}`\n"
+            f"- Alice bus (Alice reads; others hand off with `bus_post`; TUI: `{inbox / 'alice' / 'events.jsonl'}`)\n"
+            f"- Architect bus: `bus_read` as the architect (TUI: `{inbox / 'architect' / 'events.jsonl'}`)\n"
             f"- Vault human inbox: `{vault_path / 'fleet' / 'inbox'}/`\n"
             f"- Plans: `{vault_path / 'fleet' / 'plans'}/`\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
@@ -787,7 +787,7 @@ def prepare_pi_launch(
             f"- SSSF source: `{ROOT / '.claude' / 'skills' / 'sssf'}/`\n"
             f"- Firstmate project registry (Firstmate is retired; write only with captain yes): `{FIRSTMATE_HOME / 'data' / 'projects.md'}`\n"
             f"- Vault initiatives (read only): `{vault_path / 'fleet' / 'initiatives'}/`\n"
-            f"- Alice bus (write hand-offs): `{inbox / 'alice' / 'events.jsonl'}`\n"
+            f"- Alice bus (hand off with `bus_post`; TUI: `{inbox / 'alice' / 'events.jsonl'}`)\n"
             f"- Captain chat (read/write): `{inbox / agent_id / 'captain-chat.jsonl'}`\n"
             + dashboard_chat_block()
         )
@@ -856,14 +856,15 @@ def prepare_pi_launch(
         ext_refs.append(ref if ref.startswith("npm:") else ref)
 
     # Every assistant can ask the captain structured questions (ask-captain.ts),
-    # show work on the dashboard canvas (canvas.ts), sends only its newest
+    # show work on the dashboard canvas (canvas.ts), hand off on agents' buses
+    # through the node (bus.ts), sends only its newest
     # screenshots to the model (image-window.ts), compacts between tasks once
     # context passes 65% (context-guard.ts), and watches prompt caching and
     # repeated reads (cache-watch.ts).
     if agent_type == "assistant":
         # Crewmates also work as a crew: tasks, crew messages, maneuvers (crew.ts).
         isolated = bool(aboard) and str(aboard.get("isolation") or "") == "vm"
-        for name in ("tool-gate", "ask-captain", "canvas", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()) + (("gondolin",) if isolated else ()) + tuple(experiments_for(agent_id)):
+        for name in ("tool-gate", "ask-captain", "canvas", "bus", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()) + (("gondolin",) if isolated else ()) + tuple(experiments_for(agent_id)):
             ref = str(ROOT / "extensions" / f"{name}.ts")
             if ref not in ext_refs:
                 ext_refs.append(ref)
