@@ -11,3 +11,23 @@ mode: no-mistakes-prod-only
 preview: http://localhost:3000
 crew_budgets:
   designer: 6
+# Checks run in the voyage's worktree on its host (lib/ship-checks.ts), the same as CI's ruff, format, and
+# pytest jobs. Ruff is pinned to kinwork/uv.lock's version. pytest runs in the local Docker stack, which needs
+# the gitignored .envs from the captain's checkout ($FLEET_SHIP_REPO); two tests read files or env only CI
+# has (docs/ outside the container mount, AWS keys unset), so they are left to CI.
+checks:
+  lint: cd kinwork && uvx ruff@0.16.10 check . && uvx ruff@0.16.10 format --check .
+  fix-lint: cd kinwork && { uvx ruff@0.16.10 check --fix -q . ; uvx ruff@0.16.10 format -q . ; } && git add -u . && { git diff --cached --quiet || git commit -qm "style(ruff) fix and format"; } && uvx ruff@0.16.10 check . && uvx ruff@0.16.10 format --check .
+  pytest: cd kinwork && { test -d .envs || cp -R "$FLEET_SHIP_REPO/kinwork/.envs" . ; } && docker compose -f docker-compose.local.yml run --rm django pytest kinwork -q -p no:warnings --deselect kinwork/ingest/tests/test_demo_warmup.py::test_launch_documents_the_ssm_docker_exec --deselect kinwork/site/tests/test_launch.py::test_empty_aws_keys_leave_boto3_on_the_instance_role
+# A task is done only with lint green on its commit; a voyage docks only with lint and pytest green.
+gates:
+  task: [lint]
+  dock: [lint, pytest]
+# tidy: the deterministic lint fix (ruff's safe fixes and the formatter, committed), then what is left to fix by hand.
+maneuvers:
+  tidy:
+    checks: [fix-lint]
+    by: [lead, builder, designer]
+  verify:
+    checks: [lint, pytest]
+    by: [lead, builder, designer]

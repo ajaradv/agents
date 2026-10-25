@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { jevAsk } from "./jev.ts";
 import { redact } from "./redact.ts";
 import { readShips } from "./fleet-layers.ts";
@@ -62,6 +63,12 @@ export async function triageFailure(name: string, cmd: string, output: string, a
   return `Triage (Jev, advisory): most likely ${a.choice.replace("_", " ")} (${pct}%); ${TRIAGE_HINT[a.choice]}.`;
 }
 
+/** zsh on macOS (the laptop and its login PATH); the hub is Linux without zsh, so bash there. */
+export function checkShell(host: ShipHost, has = existsSync): string {
+  if (host.kind !== "local") return "/bin/zsh";
+  return has("/bin/zsh") ? "/bin/zsh" : "/bin/bash";
+}
+
 export async function runCheck(shipId: string, from: string, name: string): Promise<{ ok: boolean; message: string }> {
   const ship = (await readShips()).find((s) => s.id === shipId);
   if (!ship) return { ok: false, message: `No ship ${shipId}.` };
@@ -81,7 +88,9 @@ export async function runCheck(shipId: string, from: string, name: string): Prom
     const host = voyageHost(shipId);
     // What code this run checks: gates count only runs on the current commit with a clean tree.
     const { commit, dirty } = await treeState(cwd, host);
-    const res = await host.exec(["/bin/zsh", "-lc", cmd], { timeoutMs: TIMEOUT_MS, cwd, env: { ...process.env, CI: "1" } });
+    // FLEET_SHIP_REPO: the captain's checkout on that host, for gitignored setup a fresh worktree lacks (.envs).
+    const repo = await host.repoPath(ship).catch(() => ship.path);
+    const res = await host.exec([checkShell(host), "-lc", cmd], { timeoutMs: TIMEOUT_MS, cwd, env: { ...process.env, CI: "1", FLEET_SHIP_REPO: repo } });
     const secs = Math.round((Date.now() - started) / 1000);
     const passed = !res.timedOut && res.exitCode === 0;
     const verdict = res.timedOut ? `timed out after ${secs}s` : passed ? `passed in ${secs}s` : `failed (exit ${res.exitCode}) in ${secs}s`;

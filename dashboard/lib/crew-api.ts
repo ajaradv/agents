@@ -197,7 +197,7 @@ async function verifyTask(ship: ShipRow, id: number, reporter: string, note: str
     } else {
       await updateTask(ship.id, id, { status: "blocked", note: `${note ? `${note}\n\n` : ""}${describeGates(report)}`, by: "helm" });
       recordHandoff({ ship: ship.id, from: "helm", to: reporter, kind: "task-blocked", size: failures.length });
-      await tell(`Task #${id} (${t.title}) is not done yet: ${describeGates(report)}${failures ? `\n\n${failures}` : ""}\n\nFix it, commit, and report the task done again.`);
+      await tell(`Task #${id} (${t.title}) is not done yet: ${describeGates(report)}${failures ? `\n\n${failures}` : ""}\n\n${ship.maneuvers.some((m) => m.name === "tidy") ? "Lint or formatting failures: run the ship's `tidy` maneuver first (it applies the safe fixes and commits them), then fix by hand only what it leaves. " : ""}Fix it, commit, and report the task done again.`);
     }
   } catch (e) {
     logShipEvent(ship.id, "helm", "notice", `Task #${id} gates could not run: ${e instanceof Error ? e.message : String(e)}`);

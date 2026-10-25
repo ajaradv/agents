@@ -6,6 +6,9 @@ import { crewStartManeuver } from "./crew-api.ts";
 import { describeManeuver, maneuverAvailability } from "./maneuvers.ts";
 import { describeAction, holdGoRequest, tier2ArgError, type GoRequest } from "./go-gate.ts";
 import { getWorkflow, journalEvent, listWorkflows, once, updateWorkflow } from "./journal.ts";
+import { gateFolder } from "./gates.ts";
+import { treeState } from "./ship-checks.ts";
+import { voyageHost } from "./voyage-worktree.ts";
 import { newSession } from "./session-rotate.ts";
 import { readShips } from "./fleet-layers.ts";
 import { collectCaptainHolds, lastFleetSnapshot } from "./fleet-snapshot.ts";
@@ -296,6 +299,26 @@ export async function runFleetAction(tool: string, a: Record<string, string>): P
   return res;
 }
 
+/** The voyage branch's commit (null when it cannot be read). Tests replace it. */
+let dockHead = async (shipId: string): Promise<string | null> => {
+  const ship = await findShip(shipId);
+  if (!ship) return null;
+  const { commit } = await treeState(gateFolder(ship), voyageHost(shipId));
+  return commit || null;
+};
+export function setDockHeadProbe(fn: ((shipId: string) => Promise<string | null>) | null): void {
+  dockHead = fn ?? defaultDockHead;
+}
+const defaultDockHead = dockHead;
+
+/** Cancel the ship's older dock asks still waiting (their cards go); returns the branch's commit now. */
+async function supersedeDockAsks(shipId: string): Promise<string | undefined> {
+  for (const w of listWorkflows<GoRequest>("go", "waiting")) {
+    if (w.data.tool === "voyage_dock" && w.data.args?.ship === shipId) updateWorkflow(w.id, { status: "cancelled", data: { result: "superseded by a newer dock request" } });
+  }
+  return (await dockHead(shipId).catch(() => null)) ?? undefined;
+}
+
 /** Outside an order: hold the action for the captain's Go and ask in the officer's thread. */
 export async function requestGo(from: string, tool: string, a: Record<string, string>, why = ""): Promise<Res> {
   const bad = tier2ArgError(tool, a);
@@ -303,6 +326,8 @@ export async function requestGo(from: string, tool: string, a: Record<string, st
   const reason = why.trim().replace(/\s+/g, " ").slice(0, 300);
   const summary = `${describeAction(tool, a)}${reason ? ` Why: ${reason}` : ""}`;
   const id = crypto.randomUUID().slice(0, 12);
+  // A dock ask replaces the ship's older one, and remembers what it asked about.
+  const head = tool === "voyage_dock" && a.ship ? await supersedeDockAsks(a.ship) : undefined;
   const line = await postLine(from, {
     ts: new Date().toISOString(),
     from,
@@ -311,7 +336,7 @@ export async function requestGo(from: string, tool: string, a: Record<string, st
     questions: [{ id: `go-${id}`, question: summary, options: ["Go", "No"] }],
     go: { id, tool },
   });
-  holdGoRequest({ id, tool, args: a, from, ts: line.ts, lineTs: line.ts, summary, trace: `go-${id}` });
+  holdGoRequest({ id, tool, args: a, from, ts: line.ts, lineTs: line.ts, summary, trace: `go-${id}`, ...(head ? { head } : {}) });
   fleetChanged("go");
   return { ok: true, message: `Waiting for the captain's Go on: ${summary} End your turn now; the result arrives as a message. Do not ask again or retry.` };
 }
@@ -320,6 +345,17 @@ export async function requestGo(from: string, tool: string, a: Record<string, st
 export async function decideGo(id: string, go: boolean): Promise<Res> {
   const w = getWorkflow<GoRequest>(id);
   if (!w || w.kind !== "go" || w.status !== "waiting") return { ok: false, message: "That request is no longer waiting." };
+  // A Go is for the work as it was when asked: crew commits since then (fixes after a "not yet") need a fresh ask.
+  if (go && w.data.tool === "voyage_dock" && w.data.head && w.data.args.ship) {
+    const now = await dockHead(w.data.args.ship);
+    if (now && now !== w.data.head) {
+      const msg = `${w.data.args.ship}'s branch moved since the dock was asked (${w.data.head.slice(0, 7)} → ${now.slice(0, 7)}), so this Go would dock work nobody showed you. Nothing was docked; the lead was asked to summarise the new work and ask again.`;
+      updateWorkflow(id, { status: "cancelled", data: { result: "stale: the branch moved" } });
+      await acceptCrewLine(w.data.from, "go", `The captain pressed Go on your dock request, but the branch moved since you asked (${w.data.head.slice(0, 7)} → ${now.slice(0, 7)}). Nothing was docked. Check the new commits, make sure the dock gates are green, refresh the captain's canvas if screenshots changed, then ask to dock again with a summary that covers them.`).catch(() => {});
+      fleetChanged("go");
+      return { ok: false, message: msg };
+    }
+  }
   updateWorkflow(id, { status: "running", data: { decision: go ? "go" : "no" } });
   fleetChanged("go");
   return finishGo(id);
