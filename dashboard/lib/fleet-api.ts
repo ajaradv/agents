@@ -10,7 +10,7 @@ import { newSession } from "./session-rotate.ts";
 import { readShips } from "./fleet-layers.ts";
 import { collectCaptainHolds, lastFleetSnapshot } from "./fleet-snapshot.ts";
 import { humanizeError, plainSummary } from "./humanize.ts";
-import { collectNeedsYou } from "./needs-you.ts";
+import { collectNeedsYou, type NeedItem } from "./needs-you.ts";
 import { OFFICER_SHIP, shipOf } from "./ship-events.ts";
 import { recentShipEvents, shipTurnTotals } from "./ship-log.ts";
 import { recentManeuvers } from "./ship-maneuvers.ts";
@@ -43,6 +43,36 @@ function midnightIso(): string {
 export function fleetCallerAllowed(from: string | null): from is string {
   return Boolean(from && FLEET_OFFICERS.has(from));
 }
+
+/**
+ * One "waiting on the captain" item for fleet_status. Every kind carries the
+ * same id, kind and summary (the columns the tool view shows), then its own details.
+ */
+export function needLine(n: NeedItem): Record<string, unknown> {
+  switch (n.kind) {
+    case "hold":
+      return { id: n.id, kind: n.kind, summary: `Task ${n.taskId} held: ${n.title} (${n.reason})`, task: n.taskId, title: n.title, reason: n.reason };
+    case "go":
+      return { id: n.id, kind: n.kind, summary: `${n.agentId} asks for a Go: ${n.summary}`, from: n.agentId, action: n.summary };
+    case "gate":
+      return { id: n.id, kind: n.kind, summary: `The tool gate held ${n.agentId}: ${n.summary} (${n.why})`, from: n.agentId, held: n.summary, why: n.why };
+    case "helm":
+      return { id: n.id, kind: n.kind, summary: `${n.ship} helmsman proposes ${n.what}`, ship: n.ship, proposal: n.what };
+    case "question": {
+      const question = n.questions.map((q) => q.question).join(" / ");
+      return { id: n.id, kind: n.kind, summary: `${n.agentId} asks: ${question}`, agent: n.agentId, asked: n.ts, question };
+    }
+    case "notice":
+      return { id: n.id, kind: n.kind, summary: `${n.from}: ${n.summary}`, from: n.from, notice: n.noticeKind };
+    case "order":
+      return { id: n.id, kind: n.kind, summary: `Order ${n.slug} (${n.status}): ${n.title}${n.reason ? `; ${n.reason}` : ""}`, order: n.slug, title: n.title, status: n.status, ...(n.reason ? { reason: n.reason } : {}) };
+    case "failed": {
+      const error = humanizeError(n.error);
+      return { id: n.id, kind: n.kind, summary: `A message to ${n.agentId} failed: ${error}`, agent: n.agentId, at: n.ts, message: n.sentText.slice(0, 160), error };
+    }
+  }
+}
+
 
 /** One compact picture of the fleet: ships and voyages, who works, who waits on the captain, today's spend. */
 /**
@@ -80,23 +110,7 @@ export async function fleetStatus(detail = false): Promise<Res> {
   for (const id of new Set(ships.map((s) => s.id).concat(OFFICER_SHIP))) {
     for (const [agent, t] of Object.entries(shipTurnTotals(id, since))) spend[agent] = Math.round(((spend[agent] ?? 0) + t.cost) * 1000) / 1000;
   }
-  const needsCaptain = needs.map((n) =>
-    n.kind === "hold"
-      ? { kind: n.kind, task: n.taskId, title: n.title, reason: n.reason }
-      : n.kind === "go"
-        ? { kind: n.kind, from: n.agentId, action: n.summary }
-        : n.kind === "gate"
-          ? { kind: n.kind, from: n.agentId, held: n.summary, why: n.why }
-          : n.kind === "helm"
-            ? { kind: n.kind, ship: n.ship, proposal: n.what }
-        : n.kind === "question"
-          ? { kind: n.kind, agent: n.agentId, asked: n.ts, question: n.questions.map((q) => q.question).join(" / ") }
-          : n.kind === "notice"
-            ? { kind: n.kind, from: n.from, notice: n.noticeKind, summary: n.summary }
-          : n.kind === "order"
-            ? { kind: n.kind, order: n.slug, title: n.title, status: n.status, ...(n.reason ? { reason: n.reason } : {}) }
-            : { kind: n.kind, agent: n.agentId, at: n.ts, message: n.sentText.slice(0, 160), error: humanizeError(n.error) },
-  );
+  const needsCaptain = needs.map(needLine);
   const message = `${ships.length} ships, ${working.length} agent(s) working, ${needs.length} item(s) waiting on the captain.`;
   if (!detail) {
     const total = Object.values(spend).reduce((a, b) => a + b, 0);

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { toolText, VIEWS } from "./tool-out.ts";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fleetCallerAllowed, fleetChat } from "./fleet-api.ts";
+import { fleetCallerAllowed, fleetChat, needLine } from "./fleet-api.ts";
 import { logShipEvent } from "./ship-log.ts";
 import { officerBudgetRefusal } from "./shipyard.ts";
 
@@ -33,5 +34,17 @@ describe("officer daily budget", () => {
       if (prev === undefined) delete process.env.FLEET_INBOX;
       else process.env.FLEET_INBOX = prev;
     }
+  });
+});
+
+describe("needLine", () => {
+  test("every kind fills the columns fleet_status shows", () => {
+    const helm = needLine({ kind: "helm", id: "helm:fleet:91cf77", ship: "fleet", proposalId: "91cf77", ts: "2026-10-23T21:07:14Z", what: "fix tool-gate: allow bin/fleet-chart-fixture", why: "held on every use", note: false });
+    const order = needLine({ kind: "order", id: "order:a", slug: "a", ts: "2026-10-23T21:07:14Z", title: "Dock pochteca", by: "claude-code", status: "needs-captain", steps: [], reason: "a check failed" });
+    expect(helm).toMatchObject({ id: "helm:fleet:91cf77", kind: "helm", summary: "fleet helmsman proposes fix tool-gate: allow bin/fleet-chart-fixture", ship: "fleet" });
+    expect(order.summary).toBe("Order a (needs-captain): Dock pochteca; a check failed");
+    const out = toolText({ ok: true, message: "2 waiting", needsCaptain: [helm, order] }, VIEWS.fleet_status);
+    expect(out).toContain(`"helm:fleet:91cf77",helm,"fleet helmsman proposes`);
+    expect(out).not.toContain("null");
   });
 });
