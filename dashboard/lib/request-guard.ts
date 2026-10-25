@@ -25,7 +25,8 @@ export function requestRefusal(req: Request, port: number): string | null {
   const host = (req.headers.get("host") ?? "").toLowerCase();
   const origins = hosts.map((h) => `http://${h}`);
   if (host && !hosts.includes(host)) {
-    const tailnet = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.ts\.net$/.test(host);
+    // Serve on another port than 443 (the node's :8786, for crew on the laptop) keeps it in Host.
+    const tailnet = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.ts\.net(:\d{1,5})?$/.test(host);
     const login = (req.headers.get("tailscale-user-login") ?? "").toLowerCase();
     if (!tailnet || !login) return "unknown host";
     const allowed = (process.env.FLEET_TAILNET_USERS ?? "").toLowerCase().split(",").map((x) => x.trim()).filter(Boolean);
