@@ -51,10 +51,12 @@ const SAFE_TOOLS = new Set([
   "look", "crew_request",
   // Helpers (dashboard/lib/helpers.ts): one job, limits in code, no tools off the hub and read-only ones on it.
   "helper",
+  // An agent's own bus, through the node (dashboard/lib/bus-api.ts).
+  "bus_read",
 ]);
 
 /** Tools whose free text reaches another agent: screened for steering. */
-const MESSAGE_TOOLS = new Set(["fleet_chat", "crew_message", "cursor", "cursor_ask_question"]);
+const MESSAGE_TOOLS = new Set(["fleet_chat", "crew_message", "bus_post", "cursor", "cursor_ask_question"]);
 
 const STEERING = /\b(git\s+push|push\s+(to\s+)?(origin|main|master|the\s+branch)|force[- ]push|merge\s+(it|this|the|into|to)|reveal|print|show|send|paste|share)\b[^.\n]{0,60}\b(secret|token|api[ _-]?key|password|credential|\.env|ssh\s+key|private\s+key)|\b(git\s+push|force[- ]push|merge\s+into\s+(main|master)|delete\s+the\s+(branch|repo))\b/i;
 
@@ -252,7 +254,7 @@ export function localVerdict(tool: string, input: Record<string, unknown>, ctx: 
     return { decision: "allow", reason: "read" };
   }
   if (MESSAGE_TOOLS.has(tool)) {
-    const text = String(input.text ?? input.message ?? input.prompt ?? input.question ?? "");
+    const text = String(input.text ?? input.message ?? input.prompt ?? input.question ?? input.summary ?? "");
     return STEERING.test(text) ? { decision: "ask", reason: "the message asks another agent to push, merge, or reveal something" } : { decision: "allow", reason: "message" };
   }
   if (SAFE_TOOLS.has(tool)) return { decision: "allow", reason: "fleet tool" };

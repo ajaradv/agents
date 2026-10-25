@@ -13,6 +13,7 @@ import {
 import { abortHost, answerDialog, crewCaller, hostAlive, hostIds, hostRunning, hostWaiting, startHostReaper, stopHost } from "./lib/agent-host.ts";
 import { allChatTargetIds, chatAllowed, chatTarget, refreshAgentTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import type { ChatLine } from "./lib/chat.ts";
+import { busPost, busRead } from "./lib/bus-api.ts";
 import { crewAddTask, crewCanvas, crewDockRequest, crewHelper, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
 import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
@@ -461,6 +462,15 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     const r = await judgeCall({ agent: from, tool: String(b.tool ?? ""), input, cwd: String(b.cwd ?? ""), why: String(b.why ?? "").slice(0, 200), writable }, undefined, { observe: b.mode === "observe" });
     if (r.decision === "hold") needsChanged();
     return Response.json(r);
+  }
+
+  // Agents' buses (lib/bus-api.ts, extensions/bus.ts): any live agent, by its token.
+  const bus = path.match(/^\/api\/bus\/(post|read)$/);
+  if (bus) {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ ok: false, message: "Bus calls come from a live agent session." }, { status: 403 });
+    if (bus[1] === "post" && req.method === "POST") return Response.json(await busPost(from, await body(req), known));
+    if (bus[1] === "read" && req.method === "GET") return Response.json(await busRead(from, url.searchParams.get("since") ?? "", Number(url.searchParams.get("limit")) || 30));
   }
 
   const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|public|recall|vault-tasks)$/);

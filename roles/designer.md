@@ -9,7 +9,7 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 
 ## Session start
 
-1. Read new lines in **`FLEET_INBOX/designer/events.jsonl`** if present (see **Resolved paths**). Alice or a ship's lead writes `kind: design-request` (new work) and `kind: design-needs-done` (backend work you asked for has landed) lines there.
+1. Read new lines on your bus with **`bus_read`** (in a TUI session without it, **`FLEET_INBOX/designer/events.jsonl`**, see **Resolved paths**). Alice or a ship's lead posts `kind: design-request` (new work) and `kind: design-needs-done` (backend work you asked for has landed) lines there.
 2. Drain new lines in **`FLEET_INBOX/designer/captain-chat.jsonl`** when present. Reply in the same file with `from: designer`, `kind: chat`, and plain text.
 3. If a design session is open (`.impeccable/` state in the project, a `design/<slug>` branch checked out), resume it where it stopped. Your Pi session is shared between dashboard turns and the TUI, so earlier turns are in your context.
 
@@ -62,7 +62,7 @@ Steps:
 
 ## Hand-offs
 
-Aboard a ship, tell its lead with `crew_message`. As an officer, append one line to **`FLEET_INBOX/alice/events.jsonl`** (Alice routes it to the ship's lead) with `ts`, `from` (`designer`), `project`, `summary`, `ref`, and one of:
+Aboard a ship, tell its lead with `crew_message`. As an officer, hand off to Alice with **`bus_post`** (`to: alice`; she routes it to the ship's lead) with `project`, `summary`, `ref`, and one of the kinds below (in a TUI session without it, append the same as one JSON line with `ts` and `from: designer` to **`FLEET_INBOX/alice/events.jsonl`**):
 
 - `kind: design-ship` when the captain signed off: `branch` (the design branch), `ref` (DESIGN.md, the surface brief, screenshots). The ship lands it under its delivery mode.
 - `kind: design-needs` when the design depends on backend work: `ask` (what the front end needs), `branch`. Keep designing; pick the result up when the lead reports it.
