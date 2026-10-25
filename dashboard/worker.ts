@@ -14,15 +14,22 @@
  *   POST /host/memory  {put: {relpath: text}} or {ship, agents} → {files}
  *   WS   /host/rpc     a crewmate's pi in RPC mode: first message {start: {agent, config,
  *                     worktree, hubUrl, crewToken}}; then {i} stdin in, {o}/{e} out, {x} exit code
+ *   POST /host/helper  {helper, task, urls?, cwd?} → {id}: a helper runs here (lib/helpers.ts),
+ *                     with no tools; GET /host/helper/<id> → {done, result} (polled, so a
+ *                     long job outlives any one request)
  *
  * Listens on 127.0.0.1 only; Tailscale Serve publishes it to the tailnet
  * (bin/laptop-worker --install). Every request needs the shared token
  * (secret "laptop-worker-token", the Keychain here, a 0600 file on the hub).
  */
-import { timingSafeEqual } from "node:crypto";
-import { chromeBin, Gate, MAX_JOBS, shotResponse } from "./browser.ts";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chromeBin, Gate, gatedShot, MAX_JOBS, shotResponse } from "./browser.ts";
 import { firstmateTuiReachable, sendToFirstmateTui } from "./lib/firstmate-chat.ts";
 import { agentKeyEnv } from "./lib/fleet-env.ts";
+import { freeSlot, helperDefs, runHelperHere, shotUrls, takeShots, takeSlot, type HelperResult } from "./lib/helpers.ts";
 import { commandRefusal, getMemory, hostedShips, prepareHostedLaunch, putMemory, shipForFolder, type LaunchContext } from "./lib/hosted.ts";
 import { ROOT } from "./lib/paths.ts";
 import { spawnTimed } from "./lib/proc.ts";
@@ -44,8 +51,47 @@ async function capabilities(): Promise<string[]> {
   if (ttsAvailable()) caps.push("tts");
   if ((await firstmateTuiReachable().catch(() => ({ ok: false }))).ok) caps.push("firstmate");
   if (chromeBin()) caps.push("browser");
-  caps.push("ship-host");
+  caps.push("ship-host", "helpers");
   return caps;
+}
+
+/** Helper jobs the hub started here: kept until the hub reads the result, or 15 minutes after. */
+const helperJobs = new Map<string, { done: boolean; result?: HelperResult; at: number }>();
+
+/** POST /host/helper: one helper job here (lib/helpers.ts). Definitions are this laptop's own; the hub sends only the job. */
+async function hostHelper(req: Request, shots: Gate): Promise<Response> {
+  const b = (await req.json().catch(() => ({}))) as { helper?: unknown; task?: unknown; urls?: unknown; cwd?: unknown };
+  const def = (await helperDefs()).find((d) => d.name === String(b.helper ?? ""));
+  if (!def || !def.hosts.includes("laptop")) return Response.json({ ok: false, message: `no helper ${String(b.helper)} runs on the laptop` }, { status: 400 });
+  const task = String(b.task ?? "").slice(0, 20_000);
+  if (task.trim().length < 5) return Response.json({ ok: false, message: "a task" }, { status: 400 });
+  const urls = def.input === "shots" ? shotUrls(b.urls) : [];
+  if (typeof urls === "string") return Response.json({ ok: false, message: urls }, { status: 400 });
+  // A check helper reads in the voyage's worktree: only a ship's folder here (lib/hosted.ts).
+  let cwd = "";
+  if (def.input === "check") {
+    cwd = String(b.cwd ?? "");
+    if (!(await shipForFolder(cwd, await hostedShips()))) return Response.json({ ok: false, message: "the laptop refused: not a ship's repo or worktree" }, { status: 400 });
+  }
+  if (!takeSlot("laptop")) return Response.json({ ok: false, message: "all the laptop's helper slots are busy" }, { status: 429 });
+  for (const [id, j] of helperJobs) if (Date.now() - j.at > 15 * 60_000) helperJobs.delete(id);
+  const id = randomUUID();
+  helperJobs.set(id, { done: false, at: Date.now() });
+  void (async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fleet-helper-"));
+    let result: HelperResult;
+    try {
+      const files = urls.length ? await takeShots(urls, dir, (o) => gatedShot(shots, o)) : [];
+      result = await runHelperHere(def, task, { cwd: cwd || dir, files, host: "laptop", env: { ...process.env, ...(await agentKeyEnv()) } });
+    } catch (e) {
+      result = { ok: false, text: `${def.name} could not start: ${e instanceof Error ? e.message : String(e)}`, cost: 0, ms: 0, model: def.model, stopped: "error" };
+    } finally {
+      freeSlot("laptop");
+      await rm(dir, { recursive: true, force: true });
+    }
+    helperJobs.set(id, { done: true, result, at: Date.now() });
+  })();
+  return Response.json({ ok: true, id });
 }
 
 /** POST /host/exec: a command the hub may run here (lib/hosted.ts), in a ship's repo or worktree. */
@@ -167,6 +213,14 @@ if (import.meta.main) {
         const b = (await req.json().catch(() => ({}))) as { put?: Record<string, string>; ship?: string; agents?: string[] };
         if (b.put) return Response.json(await putMemory(b.put));
         return Response.json({ files: await getMemory(String(b.ship ?? ""), Array.isArray(b.agents) ? b.agents.map(String) : []) });
+      }
+      if (path === "/host/helper" && req.method === "POST") return hostHelper(req, shots);
+      const job = path.match(/^\/host\/helper\/([0-9a-f-]{36})$/);
+      if (job && req.method === "GET") {
+        const j = helperJobs.get(job[1]!);
+        if (!j) return Response.json({ done: true, result: { ok: false, text: "the laptop has no such helper job (the worker restarted?)", cost: 0, ms: 0, model: "", stopped: "error" } });
+        if (j.done) helperJobs.delete(job[1]!);
+        return Response.json({ done: j.done, result: j.result });
       }
       if (path === "/host/rpc" && server.upgrade(req, { data: {} as RpcSocket })) return undefined;
       return new Response("not found", { status: 404 });

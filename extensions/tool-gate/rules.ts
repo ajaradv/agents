@@ -49,6 +49,8 @@ const SAFE_TOOLS = new Set([
   "session_search", "memory_search", "obsidian_list_notes", "cursor_activate_skill",
   // Crew eyes: sends screenshots from allowed folders to a vision model (dashboard/lib/look.ts checks the paths).
   "look", "crew_request",
+  // Helpers (dashboard/lib/helpers.ts): one job, limits in code, no tools off the hub and read-only ones on it.
+  "helper",
 ]);
 
 /** Tools whose free text reaches another agent: screened for steering. */

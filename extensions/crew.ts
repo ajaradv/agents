@@ -181,6 +181,23 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerTool({
+    name: "helper",
+    label: "Helper",
+    description:
+      "Hand one short job to a helper: a fresh, cheap model that runs once on the host the fleet picks (the laptop while it is up, so the hub keeps its memory) and reports back, with nothing left running. ui-check: give urls (one or two pages the fleet screenshots at desktop and phone size) and a specific question about what is visible. test-runner: give check (one of the ship's checks); it runs where the voyage's repo is, and when it fails, the helper says the likely cause and where to look.",
+    parameters: Type.Object({
+      helper: StringEnum(["ui-check", "test-runner"] as const),
+      task: Type.String({ description: "What to find out, specifically" }),
+      urls: Type.Optional(Type.Array(Type.String(), { description: "ui-check: the page(s), http(s), at most two; reachable from the laptop (a tailnet or public address, not 127.0.0.1 on the hub)" })),
+      check: Type.Optional(Type.String({ description: "test-runner: the check's name" })),
+      host: Type.Optional(StringEnum(["auto", "hub", "laptop"] as const, { description: "Default auto" })),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "helper", { helper: p.helper, task: p.task, urls: p.urls, check: p.check, host: p.host ?? "auto" }, 40 * 60_000));
+    },
+  });
+
   if (!isLead) return;
 
   pi.registerTool({

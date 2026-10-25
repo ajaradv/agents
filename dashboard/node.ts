@@ -13,7 +13,7 @@ import {
 import { abortHost, answerDialog, crewCaller, hostAlive, hostIds, hostRunning, hostWaiting, startHostReaper, stopHost } from "./lib/agent-host.ts";
 import { allChatTargetIds, chatAllowed, chatTarget, refreshAgentTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import type { ChatLine } from "./lib/chat.ts";
-import { crewAddTask, crewDockRequest, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
+import { crewAddTask, crewDockRequest, crewHelper, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
 import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
 import { startRoutines, type Routine } from "./lib/routines.ts";
@@ -312,6 +312,7 @@ async function crewApi(req: Request, shipId: string, what: string, num: string |
     else if (what === "crew-request") res = await crewRequestRole(shipId, { ...b, from } as never);
     else if (what === "dock-request") res = await crewDockRequest(shipId, { ...b, from } as never);
     else if (what === "look") res = await crewLook(shipId, { ...b, from } as never);
+    else if (what === "helper") res = await crewHelper(shipId, { ...b, from });
     else if (what === "maneuvers") res = await crewStartManeuver(shipId, { ...b, from } as never);
     else if (what === "check") res = await runCheck(shipId, from, String(b.name ?? ""));
     else if (what === "helm") res = await helmPropose(shipId, from, b as Record<string, unknown>);
@@ -464,7 +465,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|public|recall|vault-tasks)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
-  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm|look|crew-request|dock-request)(?:\/(\d+))?$/);
+  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm|look|helper|crew-request|dock-request)(?:\/(\d+))?$/);
   if (crew) return crewApi(req, crew[1]!, crew[2]!, crew[3]);
 
   if (!path.startsWith("/v1/")) return new Response("not found", { status: 404 });
