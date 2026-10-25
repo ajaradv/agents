@@ -9,7 +9,7 @@
  *   cookies or storage between jobs or ships), closed when the job ends.
  * - At most MAX_JOBS run at once; the rest wait their turn.
  *
- *   POST /shot {url, width, height, mobile, wait} → image/png
+ *   POST /shot {url, width, height, mobile, wait} → image/png; refused (502) when a stylesheet failed to load, unless unstyled
  *   GET  /health → {chrome: "running" | "stopped", jobs, queued}
  *
  * Listens on 127.0.0.1 only (FLEET_BROWSER_PORT, default 8789). bin/fleet-shot
@@ -18,6 +18,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { UNSTYLED_PROBE, unstyledError } from "./lib/shots.ts";
 
 const PORT = Number(process.env.FLEET_BROWSER_PORT) || 8789;
 export const IDLE_MS = 5 * 60_000;
@@ -147,7 +148,7 @@ function touchIdle(gate: Gate): void {
 }
 
 /** One screenshot in its own browser context. */
-async function shot(o: { url: string; width: number; height: number; mobile: boolean; wait: number }): Promise<Uint8Array> {
+async function shot(o: { url: string; width: number; height: number; mobile: boolean; wait: number; unstyled?: boolean }): Promise<Uint8Array> {
   const b = await getBrowser();
   const { result: ctx } = await b.send("Target.createBrowserContext", { disposeOnDetach: true });
   const contextId = ctx.browserContextId as string;
@@ -163,6 +164,11 @@ async function shot(o: { url: string; width: number; height: number; mobile: boo
     if (nav.result?.errorText) throw new Error(`the page did not load: ${nav.result.errorText}`);
     await Promise.race([loaded, Bun.sleep(20_000)]);
     await Bun.sleep(o.wait);
+    if (!o.unstyled) {
+      const probe = await b.send("Runtime.evaluate", { expression: UNSTYLED_PROBE, returnByValue: true }, s);
+      const why = unstyledError(probe.result?.result?.value);
+      if (why) throw new Error(why);
+    }
     const cap = await Promise.race([b.send("Page.captureScreenshot", { format: "png" }, s), Bun.sleep(20_000).then(() => null)]);
     b.on.delete(`${s}:Page.loadEventFired`);
     await b.send("Target.closeTarget", { targetId: t.targetId });
@@ -174,7 +180,7 @@ async function shot(o: { url: string; width: number; height: number; mobile: boo
 }
 
 /** One screenshot through the gate, the browser stopped after it has been idle (the laptop's helpers use it). */
-export async function gatedShot(gate: Gate, o: { url: string; width: number; height: number; mobile: boolean; wait: number }): Promise<Uint8Array> {
+export async function gatedShot(gate: Gate, o: { url: string; width: number; height: number; mobile: boolean; wait: number; unstyled?: boolean }): Promise<Uint8Array> {
   try {
     return await gate.run(() => shot(o));
   } finally {
@@ -196,6 +202,7 @@ export async function shotResponse(req: Request, gate: Gate): Promise<Response> 
     height: Math.min(8000, Math.max(300, Number(b.height) || 1000)),
     mobile: Boolean(b.mobile),
     wait: Math.min(30_000, Math.max(0, Number(b.wait) || 0)),
+    unstyled: Boolean(b.unstyled),
   };
   try {
     const png = await gate.run(() => shot(o));

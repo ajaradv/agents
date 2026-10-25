@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { clearShots, shotsUsage } from "./shots.ts";
+import { clearShots, shotsUsage, unstyledError } from "./shots.ts";
 
 describe("screenshots on disk", () => {
   test("clearing deletes only fleet-shot's files, all or those older than N days", () => {
@@ -23,5 +23,17 @@ describe("screenshots on disk", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("unstyled pages", () => {
+  test("a failed stylesheet refuses the shot and names it; a styled page or a bad probe does not", () => {
+    const why = unstyledError(JSON.stringify(["http://localhost:8000/static/css/project.css"]));
+    expect(why).toContain("http://localhost:8000/static/css/project.css");
+    expect(why).toContain("unstyled");
+    expect(unstyledError(JSON.stringify(["a", "b", "c", "d", "e"]))).toContain("and 2 more");
+    expect(unstyledError("[]")).toBeNull();
+    expect(unstyledError(undefined)).toBeNull();
+    expect(unstyledError("not json")).toBeNull();
   });
 });

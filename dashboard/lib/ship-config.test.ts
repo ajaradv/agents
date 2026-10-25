@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -94,5 +94,23 @@ print(json.dumps(m.ship_config(pathlib.Path(sys.argv[2]))))`;
     const merged = py(join(base, "sc.yaml"));
     expect(merged).toMatchObject({ id: "sc", orchestrator: "lead", crew: ["lead", "scout"], mode: "direct-PR", checks: { pytest: "just pytest" } });
     expect(merged.crew_budgets).toEqual({});
+  });
+});
+
+describe("bin/launch: the ship's preview URL", () => {
+  test("`preview:` reaches the crew prompt with the screenshot rule; no preview, no line", () => {
+    const dir = mkdtempSync(join(tmpdir(), "launch-preview-"));
+    const file = join(dir, "ship.yaml");
+    writeFileSync(file, "id: x\nmode: m\npreview: http://localhost:3000\n");
+    const py = `import importlib.util, importlib.machinery, json, pathlib, sys
+l = importlib.machinery.SourceFileLoader("launch", sys.argv[1]); s = importlib.util.spec_from_loader("launch", l); m = importlib.util.module_from_spec(s); l.exec_module(m)
+d = m.parse_simple_yaml(pathlib.Path(sys.argv[2]))
+print(json.dumps({"with": m.preview_line(d), "without": m.preview_line({"id": "x"})}))`;
+    const r = Bun.spawnSync(["/usr/bin/python3", "-B", "-c", py, join(import.meta.dir, "..", "..", "bin", "launch"), file]);
+    const out = JSON.parse(r.stdout.toString()) as { with: string; without: string };
+    expect(out.with).toContain("`http://localhost:3000`");
+    expect(out.with).toContain("fleet-shot");
+    expect(out.without).toBe("");
+    rmSync(dir, { recursive: true, force: true });
   });
 });
