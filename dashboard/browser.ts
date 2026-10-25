@@ -173,6 +173,15 @@ async function shot(o: { url: string; width: number; height: number; mobile: boo
   }
 }
 
+/** One screenshot through the gate, the browser stopped after it has been idle (the laptop's helpers use it). */
+export async function gatedShot(gate: Gate, o: { url: string; width: number; height: number; mobile: boolean; wait: number }): Promise<Uint8Array> {
+  try {
+    return await gate.run(() => shot(o));
+  } finally {
+    touchIdle(gate);
+  }
+}
+
 /**
  * POST /shot: one screenshot through the gate. Also served by the laptop
  * worker (dashboard/worker.ts), so the hub can borrow the laptop's memory.

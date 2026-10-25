@@ -16,6 +16,7 @@ import { describeGates, gateFolder, gateStatus, runGates } from "./gates.ts";
 import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 import { describeManeuver, findManeuver, launchRefusal, maneuverAvailability, type ManeuverAvailability } from "./maneuvers.ts";
 import { runCheck, tail, treeState } from "./ship-checks.ts";
+import { freeSlot, helperDefs, HOST_LABEL, HOST_SLOTS, pickHelperHost, runHelperHere, shotUrls, takeShots, takeSlot, type HelperDef, type HelperResult, type ShotOptions } from "./helpers.ts";
 import { openVoyage, type Voyage } from "./shipyard.ts";
 import { addTask, blockersRefusal, claimTask, getTask, listTasks, parseIds, readyTasks, taskProgress, TASK_STATUSES, unblockedBy, updateTask, waitingOn, type TaskStatus, type VoyageTask } from "./voyage-tasks.ts";
 import { Database } from "bun:sqlite";
@@ -543,4 +544,90 @@ export async function crewLook(shipId: string, b: { from: string; images?: unkno
   const r = await lookAt(checked.files, question).finally(cleanup);
   logShipEvent(shipId, b.from, "tool", `look: ${question.slice(0, 120)}${r.ok ? "" : ` (failed: ${r.error})`}`, { cost: r.cost, model: r.model });
   return r.ok ? { ok: true, message: r.answer, cost: r.cost } : { ok: false, message: `The look failed: ${r.error}` };
+}
+
+/** A screenshot from the hub's shared browser (dashboard/browser.ts, the service bin/fleet-shot uses). */
+async function hubShot(o: ShotOptions): Promise<Uint8Array> {
+  const r = await fetch(`http://127.0.0.1:${process.env.FLEET_BROWSER_PORT || "8789"}/shot`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(o), signal: AbortSignal.timeout(90_000) });
+  if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { message?: string }).message ?? `the hub's browser answered ${r.status}`);
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+/** Start a helper job on the laptop and wait for it (polled: the laptop may sleep mid-job). */
+async function laptopHelper(def: HelperDef, job: { task: string; urls: string[]; cwd: string }): Promise<HelperResult> {
+  const { laptopFetch } = await import("./laptop.ts");
+  const fail = (text: string): HelperResult => ({ ok: false, text, cost: 0, ms: 0, model: def.model, stopped: "error" });
+  const r = await laptopFetch("/host/helper", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ helper: def.name, ...job }), signal: AbortSignal.timeout(15_000) }).catch((e: Error) => e);
+  if (r instanceof Error) return fail(`The laptop did not take the job (${r.message}).`);
+  const started = (await r.json().catch(() => ({}))) as { ok?: boolean; id?: string; message?: string };
+  if (!started.ok || !started.id) return fail(`The laptop refused the job: ${started.message ?? `HTTP ${r.status}`}.`);
+  // Its own limit, the screenshots, and a margin for the link.
+  const deadline = Date.now() + (def.timeoutSecs + 180) * 1000;
+  let misses = 0;
+  while (Date.now() < deadline) {
+    await Bun.sleep(2000);
+    const p = await laptopFetch(`/host/helper/${started.id}`, { signal: AbortSignal.timeout(10_000) }).catch(() => null);
+    const j = p?.ok ? ((await p.json().catch(() => null)) as { done?: boolean; result?: HelperResult } | null) : null;
+    if (!j) {
+      if (++misses >= 15) return fail("The laptop went away during the job (asleep, or off the network); nothing came back.");
+      continue;
+    }
+    misses = 0;
+    if (j.done && j.result) return j.result;
+  }
+  return fail(`No answer from the laptop within ${def.timeoutSecs + 180}s.`);
+}
+
+/**
+ * helper: one short job for a helper (lib/helpers.ts) on the host the rule picks:
+ * a screenshot check on the laptop while it is up, a check's triage where the
+ * voyage's repo is. A passing check comes back without a model call.
+ */
+export async function crewHelper(shipId: string, b: { from: string; helper?: unknown; task?: unknown; urls?: unknown; check?: unknown; host?: unknown }): Promise<Res> {
+  const a = await aboard(shipId, b.from);
+  if ("error" in a) return a.error;
+  const defs = await helperDefs();
+  const def = defs.find((d) => d.name === String(b.helper ?? ""));
+  if (!def) return { ok: false, message: `No helper named ${String(b.helper ?? "")}. Helpers: ${defs.map((d) => `${d.name} (${d.description})`).join("; ") || "none"}.` };
+  let task = String(b.task ?? "").trim();
+  if (task.length < 5) return { ok: false, message: "Say what the helper should find out (a specific question)." };
+  const urls = def.input === "shots" ? shotUrls(b.urls) : [];
+  if (typeof urls === "string") return { ok: false, message: urls };
+  const wt = voyageWorktree(shipId);
+  const { laptopCan } = await import("./laptop.ts");
+  const where = pickHelperHost(def, String(b.host ?? "auto"), { laptopUp: await laptopCan("helpers"), voyageHost: wt?.host === "laptop" ? "laptop" : "local" });
+  if ("error" in where) return { ok: false, message: where.error };
+  const host = where.host;
+  if (!takeSlot(host)) return { ok: false, message: `All ${HOST_SLOTS[host]} helper slot(s) on ${HOST_LABEL[host]} are busy; try again when one finishes.` };
+  try {
+    if (def.input === "check") {
+      const name = String(b.check ?? "");
+      const run = await runCheck(shipId, b.from, name);
+      if (run.ok || !a.ship.checks[name]) return run;
+      task = `${task}\n\n${tail(run.message, 12_000)}`;
+    }
+    logShipEvent(shipId, b.from, "helper", `Helper ${def.name} started on ${HOST_LABEL[host]}: ${task.split("\n")[0]!.slice(0, 120)}`, { helper: def.name, host });
+    let r: HelperResult;
+    if (host === "laptop") {
+      r = await laptopHelper(def, { task, urls, cwd: def.input === "check" ? (wt?.path ?? "") : "" });
+    } else {
+      const { mkdtemp, rm } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { agentKeyEnv } = await import("./fleet-env.ts");
+      const dir = await mkdtemp(join(tmpdir(), "fleet-helper-"));
+      try {
+        const files = urls.length ? await takeShots(urls, dir, hubShot) : [];
+        r = await runHelperHere(def, task, { cwd: def.input === "check" ? (wt?.path ?? a.ship.path) : dir, files, host, env: { ...process.env, ...(await agentKeyEnv()) } });
+      } catch (e) {
+        r = { ok: false, text: `${def.name} could not run: ${e instanceof Error ? e.message : String(e)}`, cost: 0, ms: 0, model: def.model, stopped: "error" };
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+    const secs = Math.round(r.ms / 1000);
+    logShipEvent(shipId, b.from, "helper", `Helper ${def.name} on ${HOST_LABEL[host]} ${r.ok ? "answered" : "failed"} in ${secs}s ($${r.cost.toFixed(4)})`, { helper: def.name, host, ok: r.ok, cost: r.cost, model: r.model, secs, ...(r.stopped ? { stopped: r.stopped } : {}) });
+    return { ok: r.ok, message: `${def.name} on ${HOST_LABEL[host]} (${secs}s, $${r.cost.toFixed(4)}):\n${r.text}`, cost: r.cost };
+  } finally {
+    freeSlot(host);
+  }
 }
