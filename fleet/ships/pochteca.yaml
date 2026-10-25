@@ -5,20 +5,37 @@ crew: []
 factory: null
 mode: no-mistakes
 isolation: vm
+# Rigging (dashboard/lib/rig.ts): each voyage gets its own web stack (docker-compose.voyage.yml: no fixed names
+# or ports, the node dev server on the voyage's port), migrated before the crew starts. The dev .envs are in
+# the repo. The Rust services, celery, and monitoring start when a task needs them (docker compose up -d <svc>).
+rig:
+  vars:
+    COMPOSE_FILE: docker-compose.local.yml:docker-compose.voyage.yml
+  up:
+    - docker compose up -d --build postgres redis mailpit
+    - docker compose run --rm quetzal python manage.py migrate --noinput
+    - docker compose up -d --build node
+  ready: http://localhost:${FLEET_RIG_PORT}/
+  down: docker compose down -v --rmi local
+# Checks (as CI) run in the voyage's stack: the justfile respects COMPOSE_FILE, and no check pins -f.
 checks:
   pytest: just pytest
   lint: just lint
-  frontend: docker compose -f docker-compose.local.yml run --rm --no-deps node sh -c "npm ci && npm run build"
+  migrations: docker compose run --rm quetzal python manage.py makemigrations --check --dry-run
+  frontend: docker compose run --rm --no-deps node sh -c "npm ci && npm run build"
 gates:
   task:
+    - migrations
     - pytest
   dock:
+    - lint
+    - migrations
     - frontend
     - pytest
 maneuvers:
   verify:
-    checks: [lint, pytest, frontend]
-    by: [lead, scout, designer]
+    checks: [lint, migrations, pytest, frontend]
+    by: [lead, scout, designer, builder]
 
 # Routines this ship runs on its own (lib/routines.ts; Health > Diagnostics > Routines).
 routines:

@@ -5,6 +5,17 @@ crew: []
 factory: null
 mode: local-only
 
+# Rigging (dashboard/lib/rig.ts): each voyage gets a throwaway dashboard on its own port against a seeded
+# scratch fleet (bin/fleet-chart-fixture: three ships, storm and budget states), with no node
+# (FLEET_NODE_SPAWN=0), so nothing in it can wake an agent or spend. Crews screenshot UI work there.
+rig:
+  up:
+    - bun install --frozen-lockfile --silent
+    - rm -rf .rig && bin/fleet-chart-fixture .rig > /dev/null
+    - nohup env DASHBOARD_PORT=$FLEET_RIG_PORT FLEET_NODE_PORT=$((FLEET_RIG_PORT + 1000)) FLEET_NODE_SPAWN=0 FLEET_SHIPS_DIR="$PWD/.rig/fleet/ships" FLEET_INBOX="$PWD/.rig/inbox" ALICE_VAULT="$PWD/.rig/vault" bun dashboard/server.ts > .rig/dashboard.log 2>&1 & echo $! > .rig/dashboard.pid
+  ready: http://127.0.0.1:${FLEET_RIG_PORT}/harbor
+  down: if test -f .rig/dashboard.pid; then kill "$(cat .rig/dashboard.pid)" 2>/dev/null; fi; rm -rf .rig
+
 # Routines this ship runs on its own (lib/routines.ts; Health > Diagnostics > Routines).
 routines:
   helm-review:
