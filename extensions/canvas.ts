@@ -13,6 +13,9 @@
  *             impeccable decision board or the dev server
  * Re-using an id replaces that item. canvas_clear removes one.
  *
+ * On another ship host (FLEET_HOSTED, the laptop) the item is also sent to the
+ * node, which serves the dashboard (S3a); a url item cannot be shown from there.
+ *
  * bin/launch loads this for every assistant and sets FLEET_AGENT_ID.
  */
 
@@ -97,6 +100,54 @@ function ok(text: string) {
   return { content: [{ type: "text" as const, text }], details: {} };
 }
 
+/** All files under an item folder, relative paths (symlinks left out, as the dashboard would). */
+function itemFiles(dir: string, rel = ""): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(join(dir, rel))) {
+    const r = rel ? `${rel}/${name}` : name;
+    const st = lstatSync(join(dir, r));
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) out.push(...itemFiles(dir, r));
+    else out.push(r);
+  }
+  return out;
+}
+
+/**
+ * On a ship host away from the node (the laptop, FLEET_HOSTED) the dashboard
+ * cannot read this machine's folders: the item goes to the node (S3a, vault
+ * s3-fleet-state-api). Null when it arrived, else why not.
+ */
+async function sendToNode(id: string, dir: string | null): Promise<string | null> {
+  const ship = process.env.FLEET_SHIP ?? "";
+  const base = (process.env.FLEET_DASHBOARD_URL ?? "").replace(/\/$/, "");
+  if (!ship || !base) return "this session has no fleet node to send it to";
+  const body: Record<string, unknown> = { id, from: process.env.FLEET_AGENT_ID };
+  if (dir) {
+    const files: Record<string, string> = {};
+    let total = 0;
+    for (const rel of itemFiles(dir)) {
+      const buf = readFileSync(join(dir, rel));
+      total += buf.length;
+      if (total > 20 * 1024 * 1024) return "the item is over 20 MB; show fewer or smaller files";
+      files[rel] = buf.toString("base64");
+    }
+    body.files = files;
+  } else body.clear = true;
+  try {
+    const res = await fetch(`${base}/api/crew/${encodeURIComponent(ship)}/canvas`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-fleet-crew-token": process.env.FLEET_CREW_TOKEN ?? "" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+    return j.ok ? null : (j.message ?? `the node answered ${res.status}`);
+  } catch (e) {
+    return `the node did not answer (${e instanceof Error ? e.message : String(e)})`;
+  }
+}
+
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "canvas_show",
@@ -173,6 +224,7 @@ export default function (pi: ExtensionAPI) {
             break;
           }
           case "url": {
+            if (process.env.FLEET_HOSTED) throw new Error("a url item opens a page on the hub, and this session runs on another host: screenshot the page and show the image");
             const u = new URL(String(params.url ?? ""));
             if (u.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(u.hostname)) {
               throw new Error("url must be http://localhost:<port>/... or http://127.0.0.1:<port>/...");
@@ -189,6 +241,10 @@ export default function (pi: ExtensionAPI) {
       const dest = join(root, id);
       rmSync(dest, { recursive: true, force: true });
       renameSync(tmp, dest);
+      if (process.env.FLEET_HOSTED) {
+        const err = await sendToNode(id, dest);
+        if (err) return ok(`Not shown on the captain's dashboard: ${err}.`);
+      }
       return ok(`Shown on the captain's canvas as "${item.title}" (${id}). Tell them in one line what to look at.${item.choose ? " Their pick arrives as a chat message." : ""}`);
     },
   });
@@ -204,6 +260,10 @@ export default function (pi: ExtensionAPI) {
       const dest = join(root, slug(params.id));
       if (!existsSync(dest)) return ok(`No canvas item ${params.id}.`);
       rmSync(dest, { recursive: true, force: true });
+      if (process.env.FLEET_HOSTED) {
+        const err = await sendToNode(slug(params.id), null);
+        if (err) return ok(`Removed here, but not from the captain's dashboard: ${err}.`);
+      }
       return ok(`Removed ${params.id} from the canvas.`);
     },
   });

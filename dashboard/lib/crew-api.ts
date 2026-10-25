@@ -546,6 +546,57 @@ export async function crewLook(shipId: string, b: { from: string; images?: unkno
   return r.ok ? { ok: true, message: r.answer, cost: r.cost } : { ok: false, message: `The look failed: ${r.error}` };
 }
 
+/** What an agent on another host may put on the canvas in one upload. */
+export const CANVAS_UPLOAD_MAX = 20 * 1024 * 1024;
+
+/**
+ * canvas: a canvas item from a crewmate on another ship host (S3a, vault
+ * s3-fleet-state-api). Its canvas_show builds the item where it runs; the
+ * dashboard serves only from the hub's inbox, so the item's files come here.
+ * Paths stay inside the item; the whole upload is capped.
+ */
+export async function crewCanvas(shipId: string, b: { from: string; id?: unknown; files?: unknown; clear?: unknown }): Promise<Res> {
+  const a = await aboard(shipId, b.from);
+  if ("error" in a) return a.error;
+  const { canvasDir, ITEM_RE } = await import("./canvas.ts");
+  const { mkdir, rename, rm, writeFile } = await import("node:fs/promises");
+  const { dirname, normalize } = await import("node:path");
+  const id = String(b.id ?? "");
+  if (!ITEM_RE.test(id)) return { ok: false, message: "A canvas item id: lowercase letters, digits and dashes." };
+  const dest = join(canvasDir(b.from), id);
+  if (b.clear === true) {
+    await rm(dest, { recursive: true, force: true });
+    return { ok: true, message: `Removed ${id} from the canvas.` };
+  }
+  const files = b.files && typeof b.files === "object" ? Object.entries(b.files as Record<string, unknown>) : [];
+  if (!files.length || files.length > 500) return { ok: false, message: "An item's files (item.json first), at most 500." };
+  if (!files.some(([rel]) => rel === "item.json")) return { ok: false, message: "The item has no item.json." };
+  const decoded: [string, Buffer][] = [];
+  let total = 0;
+  for (const [rel, data] of files) {
+    const clean = normalize(rel);
+    if (clean !== rel || clean.startsWith("/") || clean.split("/").some((part) => part === ".." || part.startsWith("."))) return { ok: false, message: `Not a path inside the item: ${rel}` };
+    const buf = Buffer.from(String(data ?? ""), "base64");
+    total += buf.length;
+    if (total > CANVAS_UPLOAD_MAX) return { ok: false, message: "The item is over 20 MB; show fewer or smaller files." };
+    decoded.push([clean, buf]);
+  }
+  try {
+    JSON.parse(decoded.find(([rel]) => rel === "item.json")![1].toString("utf8"));
+  } catch {
+    return { ok: false, message: "item.json is not JSON." };
+  }
+  const tmp = join(canvasDir(b.from), `.${id}.upload`);
+  await rm(tmp, { recursive: true, force: true });
+  for (const [rel, buf] of decoded) {
+    await mkdir(dirname(join(tmp, rel)), { recursive: true });
+    await writeFile(join(tmp, rel), buf);
+  }
+  await rm(dest, { recursive: true, force: true });
+  await rename(tmp, dest);
+  return { ok: true, message: `Shown on the captain's canvas (${id}).` };
+}
+
 /** A screenshot from the hub's shared browser (dashboard/browser.ts, the service bin/fleet-shot uses). */
 async function hubShot(o: ShotOptions): Promise<Uint8Array> {
   const r = await fetch(`http://127.0.0.1:${process.env.FLEET_BROWSER_PORT || "8789"}/shot`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(o), signal: AbortSignal.timeout(90_000) });
