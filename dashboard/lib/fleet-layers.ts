@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { parseManeuvers, type ManeuverDecl } from "./maneuvers.ts";
+import { parseRig, rigChecks, type RigDecl } from "./rig.ts";
 import { baseDir, readShipConfig } from "./ship-config.ts";
 import { join } from "node:path";
 import { parse as yamlParse } from "yaml";
@@ -29,6 +30,8 @@ export type ShipRow = {
   gates: { task: string[]; dock: string[] };
   /** Declared maneuvers: what each runs, who launches it, what it needs (lib/maneuvers). */
   maneuvers: ManeuverDecl[];
+  /** How a voyage's copy of the app is set up (lib/rig.ts); null when the ship declares none. */
+  rig: RigDecl | null;
 };
 
 /** Package registries and GitHub (read over HTTPS): what a crewmate's VM reaches unless the ship says otherwise. */
@@ -70,6 +73,8 @@ export function parseShipYaml(text: string, fallbackId: string): Omit<ShipRow, "
 /** A ship row from its config (the merged view of lib/ship-config, or a parsed file). */
 export function parseShipConfig(y: Record<string, unknown>, fallbackId: string): Omit<ShipRow, "adws"> {
   const factory = y.factory as { skill?: string; adws?: unknown } | null | undefined;
+  const rig = parseRig(y.rig);
+  const declared = parseManeuvers(y.maneuvers);
   return {
     id: String(y.id ?? fallbackId),
     path: String(y.path ?? ""),
@@ -83,18 +88,26 @@ export function parseShipConfig(y: Record<string, unknown>, fallbackId: string):
     ),
     isolation: y.isolation === "vm" ? "vm" : "host",
     vmAllow: y.vm_allow === undefined ? DEFAULT_VM_ALLOW : strList(y.vm_allow).map((h) => h.toLowerCase()),
-    checks: Object.fromEntries(
-      Object.entries((y.checks as Record<string, unknown> | null) ?? {})
-        .filter(([k, v]) => /^[a-z][a-z0-9_-]{0,30}$/.test(k) && typeof v === "string" && v.trim())
-        .map(([k, v]) => [k, String(v).trim()]),
-    ),
+    // Rigging adds its own checks (rig, rig-down) and a `rig` maneuver unless the ship declares one.
+    checks: {
+      ...Object.fromEntries(
+        Object.entries((y.checks as Record<string, unknown> | null) ?? {})
+          .filter(([k, v]) => /^[a-z][a-z0-9_-]{0,30}$/.test(k) && typeof v === "string" && v.trim())
+          .map(([k, v]) => [k, String(v).trim()]),
+      ),
+      ...rigChecks(rig),
+    },
     gates: {
       task: strList((y.gates as Record<string, unknown> | null)?.task),
       dock: strList((y.gates as Record<string, unknown> | null)?.dock),
     },
-    maneuvers: parseManeuvers(y.maneuvers),
+    maneuvers: [...declared, ...(rig && !declared.some((m) => m.name === "rig") ? [RIG_MANEUVER] : [])],
+    rig,
   };
 }
+
+/** The standard maneuver of a rigged ship: set the voyage's copy up again (after a rebase, a new model, a broken stack). */
+const RIG_MANEUVER: ManeuverDecl = { name: "rig", kind: "checks", checks: ["rig"], adw: null, by: ["lead", "builder", "designer"], needs: [], gates: [], go: false, declared: true };
 
 /** Every ship, as the merged view (base plus overlay, lib/ship-config) sees it. */
 export async function readShips(dir = baseDir()): Promise<ShipRow[]> {

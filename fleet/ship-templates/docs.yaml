@@ -1,5 +1,9 @@
 # Template: a docs or content repo (Markdown, a static site). Light checks, no VM needed.
 isolation: host
+# Rigging (dashboard/lib/rig.ts): fetch the linter once before the crew starts.
+rig:
+  up:
+    - npx --yes markdownlint-cli2 --help > /dev/null
 checks:
   lint: npx --yes markdownlint-cli2 "**/*.md"
 gates:

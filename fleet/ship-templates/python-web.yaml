@@ -1,16 +1,31 @@
 # Template: a Python web app (Django or similar) with a JS frontend build, tests in Docker Compose.
 # Built from pochteca. Adjust the commands to the repo's justfile after stamping.
 isolation: vm
+# Rigging (dashboard/lib/rig.ts): each voyage's own stack, migrated before the crew starts. The repo needs a
+# docker-compose.voyage.yml override (no fixed container_name/image, no fixed host ports, the app's entry on
+# ${FLEET_RIG_PORT}; Kinwork's is the example), and the gitignored .envs in fleet/home/ships/<ship>/env/.envs.
+# Adjust the services, a seed command, and the ready page after stamping.
+rig:
+  env: [.envs]
+  vars:
+    COMPOSE_FILE: docker-compose.local.yml:docker-compose.voyage.yml
+  up:
+    - docker compose up -d --build postgres redis
+    - docker compose run --rm django python manage.py migrate --noinput
+    - docker compose up -d --build django
+  ready: http://localhost:${FLEET_RIG_PORT}/
+  down: docker compose down -v --rmi local
 checks:
+  migrations: docker compose run --rm django python manage.py makemigrations --check --dry-run
   pytest: just pytest
   lint: just lint
   frontend: npm ci && npm run build
 gates:
-  task: [pytest]
-  dock: [lint, frontend, pytest]
+  task: [migrations, pytest]
+  dock: [lint, migrations, frontend, pytest]
 maneuvers:
   verify:
-    checks: [lint, pytest, frontend]
+    checks: [lint, migrations, pytest, frontend]
     by: [lead, scout, designer]
 
 # Routines (lib/routines.ts): the helm review skips itself while no helmsman is aboard.

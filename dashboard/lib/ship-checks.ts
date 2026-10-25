@@ -4,6 +4,8 @@ import { redact } from "./redact.ts";
 import { readShips } from "./fleet-layers.ts";
 import { localHost, type ShipHost } from "./ship-host.ts";
 import { recordRun } from "./metrics.ts";
+import { ROOT } from "./paths.ts";
+import { rigEnv } from "./rig.ts";
 import { logShipEvent } from "./ship-log.ts";
 import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 
@@ -16,6 +18,8 @@ import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
  */
 
 const TIMEOUT_MS = Math.max(30, Number(process.env.FLEET_CHECK_TIMEOUT_SECS) || 900) * 1000;
+/** Rigging builds images and migrates a fresh database: longer than a check. */
+const RIG_TIMEOUT_MS = Math.max(TIMEOUT_MS, 1_800_000);
 const OUTPUT_MAX = 12_000;
 const running = new Set<string>();
 
@@ -90,7 +94,9 @@ export async function runCheck(shipId: string, from: string, name: string): Prom
     const { commit, dirty } = await treeState(cwd, host);
     // FLEET_SHIP_REPO: the captain's checkout on that host, for gitignored setup a fresh worktree lacks (.envs).
     const repo = await host.repoPath(ship).catch(() => ship.path);
-    const res = await host.exec([checkShell(host), "-lc", cmd], { timeoutMs: TIMEOUT_MS, cwd, env: { ...process.env, CI: "1", FLEET_SHIP_REPO: repo } });
+    // The voyage's rig (lib/rig.ts): its Compose project and port, so checks hit the voyage's own stack.
+    const rig = rigEnv(ship.rig, voyageWorktree(shipId)?.rig, shipId);
+    const res = await host.exec([checkShell(host), "-lc", cmd], { timeoutMs: name === "rig" ? RIG_TIMEOUT_MS : TIMEOUT_MS, cwd, env: { ...process.env, CI: "1", FLEET_SHIP_REPO: repo, FLEET_AGENTS: ROOT, ...rig } });
     const secs = Math.round((Date.now() - started) / 1000);
     const passed = !res.timedOut && res.exitCode === 0;
     const verdict = res.timedOut ? `timed out after ${secs}s` : passed ? `passed in ${secs}s` : `failed (exit ${res.exitCode}) in ${secs}s`;

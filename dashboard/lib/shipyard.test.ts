@@ -10,7 +10,7 @@ describe("shipyard", () => {
   });
 
   test("voyage brief names the goal, record, and crew", () => {
-    const ship = { id: "kinwork", path: "/k", mode: "local-only", factory: null, declaredAdws: [], adws: [], orchestrator: "lead", crew: ["designer", "scout"], crewModels: {}, isolation: "host" as const, vmAllow: [], checks: {}, gates: { task: [], dock: [] }, maneuvers: [] };
+    const ship = { id: "kinwork", path: "/k", mode: "local-only", factory: null, declaredAdws: [], adws: [], orchestrator: "lead", crew: ["designer", "scout"], crewModels: {}, isolation: "host" as const, vmAllow: [], checks: {}, gates: { task: [], dock: [] }, maneuvers: [], rig: null };
     const text = voyageBrief(ship, { file: "/vault/fleet/voyages/kinwork/x.md", ship: "kinwork", status: "sailing", goal: "Ship V4", to: "kinwork-designer", started: "2026-10-11" });
     expect(text).toContain("New voyage for kinwork: Ship V4");
     expect(text).toContain("/vault/fleet/voyages/kinwork/x.md");

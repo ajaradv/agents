@@ -12,6 +12,7 @@
  *   GET  /host/ships   {ships: [{id, path}]}
  *   POST /host/exec    {cmd, cwd, timeoutMs} → {stdout, stderr, exitCode, timedOut, ms}
  *   POST /host/memory  {put: {relpath: text}} or {ship, agents} → {files}
+ *   POST /host/rig-env {cwd} → {ok, message}: a ship's rig env files from this machine's store into a worktree
  *   WS   /host/rpc     a crewmate's pi in RPC mode: first message {start: {agent, config,
  *                     worktree, hubUrl, crewToken}}; then {i} stdin in, {o}/{e} out, {x} exit code
  *   POST /host/helper  {helper, task, urls?, cwd?} → {id}: a helper runs here (lib/helpers.ts),
@@ -30,7 +31,7 @@ import { chromeBin, Gate, gatedShot, MAX_JOBS, shotResponse } from "./browser.ts
 import { firstmateTuiReachable, sendToFirstmateTui } from "./lib/firstmate-chat.ts";
 import { agentKeyEnv } from "./lib/fleet-env.ts";
 import { freeSlot, helperDefs, runHelperHere, shotUrls, takeShots, takeSlot, type HelperResult } from "./lib/helpers.ts";
-import { commandRefusal, getMemory, hostedShips, prepareHostedLaunch, putMemory, shipForFolder, type LaunchContext } from "./lib/hosted.ts";
+import { commandRefusal, getMemory, hostedExecEnv, hostedRigEnv, hostedShips, prepareHostedLaunch, putMemory, shipForFolder, type LaunchContext } from "./lib/hosted.ts";
 import { ROOT } from "./lib/paths.ts";
 import { spawnTimed } from "./lib/proc.ts";
 import { readSecret } from "./lib/secret-store.ts";
@@ -96,7 +97,7 @@ async function hostHelper(req: Request, shots: Gate): Promise<Response> {
 
 /** POST /host/exec: a command the hub may run here (lib/hosted.ts), in a ship's repo or worktree. */
 async function hostExec(req: Request): Promise<Response> {
-  const b = (await req.json().catch(() => ({}))) as { cmd?: unknown; cwd?: unknown; timeoutMs?: unknown };
+  const b = (await req.json().catch(() => ({}))) as { cmd?: unknown; cwd?: unknown; timeoutMs?: unknown; rig?: unknown };
   const cmd = Array.isArray(b.cmd) ? b.cmd.map(String) : [];
   const cwd = String(b.cwd ?? "");
   const ship = await shipForFolder(cwd, await hostedShips());
@@ -104,8 +105,8 @@ async function hostExec(req: Request): Promise<Response> {
   if (refusal) return Response.json({ stdout: "", stderr: `the laptop refused: ${refusal}`, exitCode: 126, timedOut: false, ms: 0 });
   const timeoutMs = Math.min(3_600_000, Math.max(1000, Number(b.timeoutMs) || 60_000));
   // A check runs as in a terminal here (the captain's PATH via the login shell), marked as CI;
-  // FLEET_SHIP_REPO is the captain's checkout here, as on the hub (lib/ship-checks.ts).
-  return Response.json(await spawnTimed(cmd, { timeoutMs, cwd, env: { ...process.env, CI: "1", FLEET_SHIP_REPO: ship!.path } }));
+  // FLEET_SHIP_REPO is the captain's checkout here, as on the hub (lib/ship-checks.ts), plus the voyage's rig.
+  return Response.json(await spawnTimed(cmd, { timeoutMs, cwd, env: { ...process.env, CI: "1", ...hostedExecEnv(ship!, b.rig) } }));
 }
 
 /** One hosted crewmate's link: its process, and stdin that arrived while it was starting. */
@@ -211,6 +212,10 @@ if (import.meta.main) {
       if (path === "/shot" && req.method === "POST") return shotResponse(req, shots);
       if (path === "/host/ships" && req.method === "GET") return Response.json({ ships: (await hostedShips()).map((s) => ({ id: s.id, path: s.path })) });
       if (path === "/host/exec" && req.method === "POST") return hostExec(req);
+      if (path === "/host/rig-env" && req.method === "POST") {
+        const b = (await req.json().catch(() => ({}))) as { cwd?: unknown };
+        return Response.json(await hostedRigEnv(String(b.cwd ?? "")));
+      }
       if (path === "/host/memory" && req.method === "POST") {
         const b = (await req.json().catch(() => ({}))) as { put?: Record<string, string>; ship?: string; agents?: string[] };
         if (b.put) return Response.json(await putMemory(b.put));

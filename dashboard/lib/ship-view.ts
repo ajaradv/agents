@@ -229,6 +229,25 @@ export async function harborHtml(): Promise<string> {
  * the captain's laptop, and the voyages there now, each with Move to hub, for
  * the end of the day. Only on a hub that has a laptop worker.
  */
+const RIG_LABEL = { pending: "waiting to rig", rigging: "rigging…", ready: "ready", failed: "rigging failed" } as const;
+
+/** The open voyage's own copy of the app (lib/rigging.ts): state, preview, and Rig again. */
+export function voyageRigHtml(ship: ShipRow): string {
+  const rec = ship.rig ? voyageWorktree(ship.id)?.rig : undefined;
+  if (!rec) return "";
+  const where = voyageWorktree(ship.id)?.host === "laptop" ? "on the laptop" : "on the hub";
+  const held = rec.brief ? ` The brief to ${escapeHtml(rec.brief.to)} waits until it is ready.` : "";
+  return `<section class="d-card d-card-border bg-base-100 voyage-rig is-${rec.state}"><div class="d-card-body d-card-sm stack-tight">
+    <div class="between">
+      <span><strong>Voyage stack</strong> · <span class="${rec.state === "failed" ? "warn" : "muted"}">${RIG_LABEL[rec.state]}</span> · <span class="muted">${escapeHtml(rec.project)} ${where}, port ${rec.port}</span></span>
+      <form class="row shipyard-form" data-api="/api/ships/${encodeURIComponent(ship.id)}/rig"><button class="d-btn d-btn-sm${rec.state === "failed" ? " d-btn-neutral" : ""}" type="submit"${rec.state === "rigging" ? " disabled" : ""}>Rig again</button><span class="muted" data-note></span></form>
+    </div>
+    ${rec.state === "ready" && rec.preview ? `<p>Preview: <a href="${escapeHtml(rec.preview)}" target="_blank" rel="noopener">${escapeHtml(rec.preview)}</a>${where === "on the laptop" ? ` <span class="muted">(open it on the laptop)</span>` : ""}</p>` : ""}
+    ${rec.state === "failed" && rec.message ? `<details><summary class="warn">What failed</summary><pre class="memory-text">${escapeHtml(rec.message.slice(-2000))}</pre></details>` : ""}
+    ${held ? `<p class="muted">${held.trim()}</p>` : ""}
+  </div></section>`;
+}
+
 async function laptopBarHtml(ships: ShipRow[]): Promise<string> {
   if (!process.env.FLEET_LAPTOP_URL) return "";
   const lv = laptopVoyages();
@@ -477,6 +496,8 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
     ${supplyGaugeHtml(spendToday, hasBudget ? budget : null)}
 
     ${ship.id === "fleet" ? await ordersPanelHtml() : voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels), tasks, condition, await sailChoice(ship))}
+
+    ${voyageRigHtml(ship)}
 
     ${voyageMemoryHtml(ship, voyage)}
 

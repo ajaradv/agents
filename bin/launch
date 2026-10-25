@@ -135,7 +135,7 @@ def parse_simple_yaml(path: Path) -> dict:
             list_key = None
         if rest == "":
             if indent == 0:
-                if key in ("authority", "env", "crew_models", "crew_budgets", "checks", "gates", "maneuvers"):
+                if key in ("authority", "env", "crew_models", "crew_budgets", "checks", "gates", "maneuvers", "rig"):
                     data[key] = {}
                     nested = data[key]
                     nested_key = None
@@ -495,11 +495,25 @@ def ship_config(y: Path) -> dict:
         if merged_json.is_file() and merged_json.stat().st_mtime >= newest:
             data = json.loads(merged_json.read_text())
             if isinstance(data, dict):
-                return data
+                return with_rig(data)
     except (OSError, ValueError):
         pass
     base = parse_simple_yaml(y)
-    return merge_config(base, parse_simple_yaml(overlay)) if overlay.is_file() else base
+    return with_rig(merge_config(base, parse_simple_yaml(overlay)) if overlay.is_file() else base)
+
+
+def with_rig(ship: dict) -> dict:
+    """A rigged ship (dashboard/lib/rig.ts) gets the `rig` and `rig-down` checks and a `rig` maneuver, as the node sees it."""
+    rig = ship.get("rig")
+    if not isinstance(rig, dict) or not rig.get("up"):
+        return ship
+    checks = dict(ship.get("checks") or {}) if isinstance(ship.get("checks"), dict) else {}
+    checks.setdefault("rig", "rig steps, then bin/rig-ready")
+    if rig.get("down"):
+        checks.setdefault("rig-down", str(rig["down"]))
+    maneuvers = dict(ship.get("maneuvers") or {}) if isinstance(ship.get("maneuvers"), dict) else {}
+    maneuvers.setdefault("rig", {"checks": ["rig"], "by": ["lead", "builder", "designer"]})
+    return {**ship, "checks": checks, "maneuvers": maneuvers}
 
 
 def resolve_crewmate(agent_id: str) -> tuple[dict, dict] | None:

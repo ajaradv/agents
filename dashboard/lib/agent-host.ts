@@ -16,6 +16,8 @@ import { recordToolFailure } from "./tool-failures.ts";
 import { LINK_LOST } from "./laptop-host.ts";
 import { localHost, type RpcProc } from "./ship-host.ts";
 import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
+import { parseRig, rigEnv } from "./rig.ts";
+import { readShipConfig } from "./ship-config.ts";
 import { toolFailed } from "../../extensions/cache-watch.ts";
 import { fleetInboxRoot, NODE_PORT } from "./paths.ts";
 
@@ -475,7 +477,10 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
   // who they are with FLEET_CREW_TOKEN, never with a name in the request.
   const ship = chatTarget(agentId)?.ship;
   const host = ship ? voyageHost(ship) : localHost;
-  const proc = host.launchRpc(agentId, { ...keys, FLEET_DASHBOARD_URL: `http://127.0.0.1:${NODE_PORT}`, FLEET_CREW_TOKEN: crewToken }, { ship, worktree: ship ? voyageWorktree(ship) : null });
+  const worktree = ship ? voyageWorktree(ship) : null;
+  // A rigged voyage (lib/rig.ts): the crew's shells reach the voyage's own stack. The laptop adds the same from its config.
+  const rig = ship && worktree?.rig && host.kind === "local" ? rigEnv(parseRig(readShipConfig(ship)?.rig), worktree.rig) : {};
+  const proc = host.launchRpc(agentId, { ...keys, ...rig, FLEET_DASHBOARD_URL: `http://127.0.0.1:${NODE_PORT}`, FLEET_CREW_TOKEN: crewToken }, { ship, worktree });
   const p: AgentProc = {
     id: agentId,
     proc,

@@ -32,6 +32,43 @@ effect at the next launch either way.
 (ship, key, old, new, by, why; the helmsman's reason carries over on Apply).
 The deck's Helm section lists recent changes.
 
+## Rigging
+
+`rig:` (base) says how a voyage gets its own running copy of the app
+(`dashboard/lib/rig.ts`, `dashboard/lib/rigging.ts`; vault plan
+`fleet/plans/feature/ship-rigging`):
+
+```yaml
+rig:
+  env: [kinwork/.envs]          # gitignored files, copied from this host's store fleet/home/ships/<ship>/env/
+  vars:
+    COMPOSE_FILE: docker-compose.local.yml:docker-compose.voyage.yml
+  up:                           # each step in its own subshell from the worktree's root
+    - cd kinwork && docker compose up -d --build postgres redis mailpit
+    - cd kinwork && docker compose run --rm django python manage.py migrate --noinput
+  ready: http://localhost:${FLEET_RIG_PORT}/search/   # optional: 200 with every stylesheet (bin/rig-ready)
+  down: cd kinwork && docker compose down -v --rmi local
+```
+
+- **Set sail** leases the worktree, gives the voyage a Compose project
+  (`<ship>-<slug>`) and a port from 4100–4199 on its host, copies the env
+  files, and runs the `rig` check (the `up` steps, then `bin/rig-ready`). The
+  crew's brief is held until it is ready, then sent with the preview URL.
+  A failure raises a blocked notice; **Rig again** on the deck retries.
+- The fleet adds the checks `rig` and `rig-down` and a `rig` maneuver (lead,
+  builder, designer) to every rigged ship. Checks and crew shells get
+  `COMPOSE_PROJECT_NAME`, `FLEET_RIG_PORT`, `FLEET_RIG_PREVIEW`, and the
+  ship's `vars`, so they reach the voyage's own stack. Outside a voyage the
+  `vars` apply in a `<ship>-checks` project, never a stack started by hand.
+- **Dock** and **Move to hub** run `rig-down` first.
+- The repo carries the override that makes a second stack possible (no fixed
+  `container_name`, `image`, or host ports; the app's entry on
+  `${FLEET_RIG_PORT}`): Kinwork's `kinwork/docker-compose.voyage.yml`.
+- On the laptop, the worker runs only the rig its own config lists, takes the
+  voyage's project and port from the hub after checking them, and copies env
+  files from the laptop's own store.
+- Templates carry a `rig:` block; the shipyard lists "Rigging declared".
+
 ## Preview
 
 `preview: http://localhost:3000` (base) names where the captain opens the

@@ -45,6 +45,7 @@ import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
 import { harborChartJson } from "./lib/harbor-chart.ts";
 import { metricsDashboardHtml, parsePeriod } from "./lib/metrics-view.ts";
 import { dockVoyage, findShip, moveVoyageToHub, openVoyage, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
+import { rigVoyage } from "./lib/rigging.ts";
 import { readShips } from "./lib/fleet-layers.ts";
 import { setLaptopVoyages } from "./lib/laptop-host.ts";
 import { voyageWorktree } from "./lib/voyage-worktree.ts";
@@ -186,6 +187,13 @@ setInterval(() => {
 
 // Ship's log writes come in bursts (tool steps); tell pages at most every 1.5s per ship.
 const shipPending = new Map<string, ReturnType<typeof setTimeout>>();
+/** Hand a voyage brief to a crewmate: their chat, the page, and the node (which starts the turn). */
+async function deliverBrief(to: string, text: string): Promise<void> {
+  const line = await appendCaptainChat(to, text);
+  broadcastChat(to, line);
+  await handToNode(to, line);
+}
+
 function shipChanged(ship: string) {
   if (shipPending.has(ship)) return;
   shipPending.set(
@@ -874,6 +882,15 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       sseBroadcast("rail");
       return Response.json({ ok: true, message: on ? "Ships may sail on the laptop while it is awake." : `New voyages sail on the hub.${there.length ? ` Still on the laptop: ${there.join(", ")} (Move to hub, or they wait while it sleeps).` : ""}` });
     }
+    // Rig again (lib/rigging.ts): set the open voyage's stack up once more; a held brief goes out when it is ready.
+    const rigAgain = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/rig$/);
+    if (rigAgain && req.method === "POST") {
+      const ship = await findShip(rigAgain[1]!);
+      if (!ship) return Response.json({ ok: false, message: "No such ship." }, { status: 404 });
+      void rigVoyage(ship, deliverBrief, "captain").then(() => sseBroadcast("ship", ship.id)).catch((e) => console.error("[rig]", e));
+      sseBroadcast("ship", ship.id);
+      return Response.json({ ok: true, message: `Rigging ${ship.id}'s voyage again; the deck shows how it goes.` });
+    }
     const moveVoyage = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/move$/);
     if (moveVoyage && req.method === "POST") {
       const res = await moveVoyageToHub(moveVoyage[1]!, stopHost);
@@ -913,13 +930,10 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
         if (!allowed.includes(to)) {
           res = { ok: false, message: "Send the voyage to Firstmate or a crewmate aboard." };
         } else {
-          const started = await startVoyage(shipId, String(b.goal ?? ""), to, b.on ? String(b.on) : undefined);
+          const started = await startVoyage(shipId, String(b.goal ?? ""), to, b.on ? String(b.on) : undefined, { deliver: deliverBrief, stop: stopHost });
           res = started;
-          if (started.ok && started.voyage && ship) {
-            const line = await appendCaptainChat(to, voyageBrief(ship, started.voyage));
-            broadcastChat(to, line);
-            await handToNode(to, line);
-          }
+          // A rigged ship's brief waits for its stack (lib/rigging.ts delivers it).
+          if (started.ok && started.voyage && ship && !started.rigging) await deliverBrief(to, voyageBrief(ship, started.voyage));
         }
       } else {
         const sailing = await openVoyage(shipId);

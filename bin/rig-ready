@@ -1,0 +1,73 @@
+#!/usr/bin/env bun
+// rig-ready - wait until a rigged app answers: the page returns 200 and every
+// stylesheet it links returns 200 (a stack browsed on the wrong port, or a CSS
+// bundle not built yet, renders bare HTML; that is not ready). The last step of
+// a ship's `rig` check (dashboard/lib/rig.ts).
+//
+//   bin/rig-ready <url> [--timeout secs]
+//
+// Output is TOON (docs/tool-standards.md). Exit 0 when ready, 1 when not.
+import { encode } from "@toon-format/toon";
+import { stylesheetHrefs } from "../dashboard/lib/rig-ready.ts";
+
+const HELP = `command: rig-ready
+summary: Wait until a rigged app answers 200 with every linked stylesheet loading
+usage: bin/rig-ready <url> [--timeout secs]
+flags[2]{flag,default,description}:
+  --timeout,300,seconds to keep trying (webpack and migrations take a while on a fresh stack)
+  --help,,show this help
+examples[1]:
+  bin/rig-ready http://localhost:4100/search/`;
+
+const args = process.argv.slice(2);
+const out = (o: Record<string, unknown>) => console.log(encode(o));
+if (args[0] === "--version" || args[0] === "-v" || args[0] === "-V") {
+  console.log("1.0.0");
+  process.exit(0);
+}
+if (!args.length || args.includes("--help") || args[0] === "-h") {
+  console.log(HELP);
+  process.exit(0);
+}
+for (const a of args) if (a.startsWith("--") && a !== "--timeout") {
+  out({ error: `unknown flag ${a}`, suggestion: "valid flags: --timeout, --help" });
+  process.exit(2);
+}
+const ti = args.indexOf("--timeout");
+const timeout = Math.min(3600, Math.max(1, Number(ti >= 0 ? args[ti + 1] : 300) || 300));
+const url = args.find((a, i) => !a.startsWith("--") && (ti < 0 || i !== ti + 1));
+if (!url || !/^https?:\/\//.test(url)) {
+  out({ error: "give the app's URL (http or https)", suggestion: "bin/rig-ready http://localhost:4100/" });
+  process.exit(2);
+}
+
+const t0 = Date.now();
+let last = "";
+let tries = 0;
+while (Date.now() - t0 < timeout * 1000) {
+  tries++;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(20_000), redirect: "follow" });
+    if (!res.ok) last = `${url} answered HTTP ${res.status}`;
+    else {
+      const sheets = stylesheetHrefs(await res.text(), res.url || url);
+      const bad: string[] = [];
+      for (const href of sheets) {
+        const s = await fetch(href, { signal: AbortSignal.timeout(20_000) }).catch(() => null);
+        if (!s?.ok) bad.push(`${href} (${s ? `HTTP ${s.status}` : "no answer"})`);
+      }
+      if (!bad.length) {
+        out({ result: `ready: ${url}`, stylesheets: sheets.length, tries, secs: Math.round((Date.now() - t0) / 1000) });
+        process.exit(0);
+      }
+      last = `stylesheets not loading: ${bad.slice(0, 3).join(", ")}`;
+    }
+  } catch (e) {
+    last = `${url}: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  await Bun.sleep(3000);
+}
+// Also on stderr: in a check's output it then comes last, after the rig steps' (Docker's) progress lines.
+console.error(`rig-ready: not ready after ${timeout}s: ${last}`);
+out({ error: `not ready after ${timeout}s: ${last}`, suggestion: "read the rig steps' output above; for a stack with a frontend dev server, check the URL goes through it", tries });
+process.exit(1);

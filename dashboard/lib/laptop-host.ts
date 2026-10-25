@@ -92,7 +92,7 @@ function remoteRpc(agentId: string, crewToken: string, ctx: LaunchCtx): RpcProc 
     ws = sock;
     sock.onopen = () => {
       const w = ctx.worktree;
-      sock.send(JSON.stringify({ start: { agent: agentId, config: readShipConfig(ctx.ship ?? "") ?? {}, worktree: w ? { path: w.path, branch: w.branch, base: w.base, leaseId: w.leaseId } : null, hubUrl: nodePublicUrl(), crewToken } }));
+      sock.send(JSON.stringify({ start: { agent: agentId, config: readShipConfig(ctx.ship ?? "") ?? {}, worktree: w ? { path: w.path, branch: w.branch, base: w.base, leaseId: w.leaseId, ...(w.rig ? { rig: { project: w.rig.project, port: w.rig.port, slug: w.rig.slug } } : {}) } : null, hubUrl: nodePublicUrl(), crewToken } }));
       for (const line of queue.splice(0)) sock.send(line);
     };
     sock.onmessage = (e) => {
@@ -136,7 +136,9 @@ export const laptopHost: ShipHost = {
   async exec(cmd, opts): Promise<SpawnResult> {
     const t0 = Date.now();
     try {
-      return await post<SpawnResult>("/host/exec", { cmd, cwd: opts.cwd, timeoutMs: opts.timeoutMs }, opts.timeoutMs + 15_000);
+      // The voyage's rig names only (the laptop checks them and adds its own config's vars).
+      const rig = opts.env?.COMPOSE_PROJECT_NAME ? { project: opts.env.COMPOSE_PROJECT_NAME, port: Number(opts.env.FLEET_RIG_PORT), slug: opts.env.FLEET_RIG_SLUG } : undefined;
+      return await post<SpawnResult>("/host/exec", { cmd, cwd: opts.cwd, timeoutMs: opts.timeoutMs, ...(rig ? { rig } : {}) }, opts.timeoutMs + 15_000);
     } catch (e) {
       return { stdout: "", stderr: `the laptop is not reachable (${e instanceof Error ? e.message : String(e)})`, exitCode: 125, timedOut: false, ms: Date.now() - t0 };
     }
@@ -157,6 +159,9 @@ export const laptopHost: ShipHost = {
   launchRpc: (agentId, env, ctx) => remoteRpc(agentId, env.FLEET_CREW_TOKEN ?? "", ctx),
   async putMemory(files) {
     await post("/host/memory", { put: files }, 30_000);
+  },
+  async copyRigEnv(_ship, cwd) {
+    return await post<{ ok: boolean; message: string }>("/host/rig-env", { cwd }, 30_000);
   },
   async getMemory(ship, agents) {
     return (await post<{ files: Record<string, string> }>("/host/memory", { ship, agents }, 30_000)).files ?? {};
