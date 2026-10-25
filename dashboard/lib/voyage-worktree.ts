@@ -1,9 +1,10 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { ShipRow } from "./fleet-layers.ts";
 import { fleetInboxRoot } from "./paths.ts";
+import type { RigRecord } from "./rig.ts";
 import { readShipConfig } from "./ship-config.ts";
 import { hostGit, localHost, shipHost, type HostKind, type ShipHost } from "./ship-host.ts";
 
@@ -46,6 +47,8 @@ export type VoyageWorktree = {
   host?: HostKind;
   /** The ship's repo on that host (paths differ between machines); older records use the ship's path. */
   repo?: string;
+  /** The voyage's running copy of the app (lib/rig.ts): Compose project, port, preview, state. */
+  rig?: RigRecord;
 };
 
 const recordPath = (shipId: string) => join(fleetInboxRoot(), "ships", shipId, "worktree.json");
@@ -62,6 +65,32 @@ export function voyageWorktree(shipId: string): VoyageWorktree | null {
   } catch {
     return null;
   }
+}
+
+/** Change the voyage's rig record (no-op without an open worktree); returns the record as written. */
+export function updateVoyageRig(shipId: string, patch: Omit<Partial<RigRecord>, "brief"> & { brief?: RigRecord["brief"] | null }): RigRecord | null {
+  const w = voyageWorktree(shipId);
+  if (!w) return null;
+  const merged = { ...(w.rig ?? {}), ...patch, at: new Date().toISOString() } as RigRecord & { brief?: RigRecord["brief"] | null };
+  if (merged.brief === null) delete merged.brief;
+  writeFileSync(recordPath(shipId), JSON.stringify({ ...w, rig: merged }, null, 2) + "\n", "utf8");
+  return merged as RigRecord;
+}
+
+/** Ports held by open voyages on a host (every ship's record), so a new voyage takes a free one. */
+export function rigPortsOn(host: HostKind): number[] {
+  const out: number[] = [];
+  let ships: string[] = [];
+  try {
+    ships = readdirSync(join(fleetInboxRoot(), "ships"));
+  } catch {
+    return out;
+  }
+  for (const id of ships) {
+    const w = voyageWorktree(id);
+    if (w?.rig && (w.host ?? "local") === host) out.push(w.rig.port);
+  }
+  return out;
 }
 
 /** The ship host for a ship's repo work: the open voyage's, else this machine. */

@@ -5,7 +5,8 @@ import { join } from "node:path";
 
 const inbox = mkdtempSync(join(tmpdir(), "hosted-"));
 process.env.FLEET_HOSTED_INBOX = inbox;
-const { commandRefusal, getMemory, memoryPathOk, prepareHostedLaunch, putMemory, shipForFolder } = await import("./hosted.ts");
+const { commandRefusal, getMemory, hostedExecEnv, hostedRigEnv, memoryPathOk, prepareHostedLaunch, putMemory, shipForFolder } = await import("./hosted.ts");
+const { parseRig, rigChecks } = await import("./rig.ts");
 afterAll(() => {
   delete process.env.FLEET_HOSTED_INBOX;
   rmSync(inbox, { recursive: true, force: true });
@@ -62,5 +63,17 @@ describe("the laptop as a ship host: what the hub may ask", () => {
     await putMemory({ "ships/p/memory/voyage.md": "" });
     expect(existsSync(join(inbox, "ships/p/memory/voyage.md"))).toBe(false);
     expect(await putMemory({ "x/role-prompt.md": "evil" })).toMatchObject({ ok: false });
+  });
+  test("rigging: the laptop runs a ship's rig as its own config has it, with the voyage's project and port checked", async () => {
+    const rig = parseRig({ env: [".envs"], vars: { COMPOSE_FILE: "a.yml:b.yml" }, up: ["docker compose up -d"], ready: "http://localhost:${FLEET_RIG_PORT}/" })!;
+    const rigged = { ...ship, rig, checks: { ...ship.checks, ...rigChecks(rig) } as Record<string, string> };
+    expect(commandRefusal(["/bin/zsh", "-lc", rigged.checks.rig!], rigged)).toBeNull();
+    expect(commandRefusal(["/bin/zsh", "-lc", "docker compose up -d"], rigged)).toContain("not one of this ship's checks");
+    expect(hostedExecEnv(rigged, { project: "fleet-x", port: 4105, slug: "x" })).toMatchObject({ COMPOSE_FILE: "a.yml:b.yml", COMPOSE_PROJECT_NAME: "fleet-x", FLEET_RIG_PORT: "4105", FLEET_SHIP_REPO: REPO });
+    // A forged project or port from the hub is dropped: the checks project of its own instead.
+    expect(hostedExecEnv(rigged, { project: "x; rm -rf ~", port: 4105 })).toMatchObject({ COMPOSE_PROJECT_NAME: "fleet-checks" });
+    expect(hostedExecEnv(rigged, { project: "x; rm -rf ~", port: 4105 }).FLEET_RIG_PORT).toBeUndefined();
+    // Env files go into a worktree, never the captain's checkout.
+    expect((await hostedRigEnv(REPO, [rigged])).message).toContain("not the captain's checkout");
   });
 });

@@ -1,5 +1,10 @@
 # Template: Rust services in a cargo workspace.
 isolation: vm
+# Rigging (dashboard/lib/rig.ts): warm the build before the crew starts. Add services (docker compose up)
+# and a ready URL when the workspace serves HTTP.
+rig:
+  up:
+    - cargo build --workspace
 checks:
   build: cargo build --workspace
   test: cargo test --workspace

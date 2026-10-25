@@ -30,6 +30,7 @@ describe("parseShipYaml", () => {
       checks: {},
       gates: { task: [], dock: [] },
       maneuvers: [],
+      rig: null,
     });
   });
 

@@ -19,7 +19,8 @@ import { endVoyageMemory, freshSession as freshCrewSession, memoryFiles, startVo
 import { laptopSailable } from "./laptop-host.ts";
 import { ledgerLine, ledgerMarkdown, recordVoyageDock, recordVoyageStart, voyageId, voyageLedger } from "./metrics.ts";
 import { hostRunner, localHost, shipHost, type ShipHost } from "./ship-host.ts";
-import { leaseVoyageWorktree, releaseVoyageWorktree, usesVoyageWorktrees, voyageHost, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
+import { leaseVoyageWorktree, releaseVoyageWorktree, updateVoyageRig, usesVoyageWorktrees, voyageHost, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
+import { planRig, rigVoyage, unrigVoyage, type Deliver } from "./rigging.ts";
 
 /**
  * The shipyard: build a ship (register it, check what it is missing), crew it
@@ -166,6 +167,7 @@ export async function shipChecklist(ship: ShipRow): Promise<CheckItem[]> {
       ? { item: "Registered with Firstmate", ok: await firstmateRegistered(ship.id), required: true, note: "Firstmate runs this ship's voyages" }
       : { item: "Crew aboard", ok: ship.crew.length > 0, required: true, note: ship.crew.length ? ship.crew.join(", ") : "add at least one crewmate" },
     ...(firstmate ? [] : [{ item: "A lead aboard", ok: ship.crew.includes("lead"), required: false, note: ship.crew.includes("lead") ? "the lead plans voyages into tasks for the crew" : "without a lead, a voyage goes to one crewmate who works it alone" }]),
+    ...(firstmate ? [] : [{ item: "Rigging declared", ok: Boolean(ship.rig), required: false, note: ship.rig ? `each voyage gets its own running copy${ship.rig.ready ? `, ready at ${ship.rig.ready}` : ""}` : "add rig: (up steps, a ready URL, down) so every voyage starts with a running, migrated copy of the app" }]),
     { item: "PRODUCT.md", ok: repo && existsSync(join(ship.path, "PRODUCT.md")), required: false, note: "what the product is and who it is for; the Designer writes it with impeccable init" },
     { item: "SSSF factory", ok: ship.adws.length > 0, required: false, note: ship.adws.length ? `${ship.adws.length} ADW chains` : "repeatable maneuvers (plan, build, test) need /sssf install" },
   ];
@@ -239,7 +241,14 @@ export async function sailHost(ship: Pick<ShipRow, "id" | "isolation">, requeste
   return hubCan ? { ok: true, host: localHost } : { ok: false, message: `${ship.id} sails only on the laptop (its crew works in Gondolin VMs), and ${can.why}.` };
 }
 
-export async function startVoyage(shipId: string, goal: string, to: string, on?: string): Promise<{ ok: boolean; message: string; voyage?: Voyage }> {
+/**
+ * What Set sail needs from the process calling it: how to hand the crew the
+ * brief (held until a rigged ship's stack is ready) and how to stop crew
+ * processes left from before (they must start again with the voyage's rig).
+ */
+export type SailOpts = { deliver?: Deliver; stop?: (agentId: string) => Promise<void> };
+
+export async function startVoyage(shipId: string, goal: string, to: string, on?: string, opts: SailOpts = {}): Promise<{ ok: boolean; message: string; voyage?: Voyage; rigging?: boolean }> {
   const ship = await findShip(shipId);
   if (!ship) return { ok: false, message: `No ship named ${shipId}.` };
   const where = await sailHost(ship, on);
@@ -300,6 +309,18 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
     // A remote host keeps the crew's memory where the crew runs.
     if (host.putMemory) await host.putMemory(await memoryFiles(shipId, crew)).catch((e) => logShipEvent(shipId, "helm", "notice", `Crew memory did not reach ${host.label}: ${e instanceof Error ? e.message : String(e)}`));
   }
+  // Rigging (lib/rigging.ts): the voyage's own copy of the app first; the brief waits for it.
+  if (ship.rig && worktree) {
+    const plan = planRig(ship, slug, host.kind);
+    if (plan && "error" in plan) {
+      logShipEvent(shipId, "helm", "rig", `Not rigged: ${plan.error}`);
+      return { ok: true, message: `${shipId} set sail, but its stack was not rigged: ${plan.error} The brief was not sent.`, voyage, rigging: true };
+    }
+    updateVoyageRig(shipId, { brief: { to, text: voyageBrief(ship, voyage) } });
+    if (opts.stop) for (const id of crew) await opts.stop(id).catch(() => {});
+    void rigVoyage(ship, opts.deliver ?? null).catch((e) => console.error("[rig]", e));
+    return { ok: true, message: `${shipId} set sail${host.kind === "local" ? "" : ` on ${host.label}`}; rigging its stack first (port ${plan?.port}). The brief goes to ${to} when the app is ready.`, voyage, rigging: true };
+  }
   return { ok: true, message: `${shipId} set sail${host.kind === "local" ? "" : ` on ${host.label}`}.`, voyage };
 }
 
@@ -315,7 +336,8 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   // The ship host holding the voyage's repo (lib/ship-host.ts), and the repo there: read before the release drops the record.
   const host = voyageHost(shipId);
   const repo = voyageWorktree(shipId)?.repo ?? ship?.path ?? "";
-  // Return the voyage's worktree: uncommitted work keeps the voyage open.
+  // The voyage's stack goes first (lib/rigging.ts), then the worktree: uncommitted work keeps the voyage open.
+  if (ship) await unrigVoyage(ship);
   const released = ship ? await releaseVoyageWorktree(ship) : { ok: true, message: "" };
   if (!released.ok) return { ok: false, message: released.message };
   const now = new Date().toISOString();
@@ -385,12 +407,16 @@ export async function moveVoyageToHub(shipId: string, stop: (agentId: string) =>
   const push = await from.exec(["git", "push", "-u", "origin", branch], { timeoutMs: 120_000, cwd: w.path });
   if (push.exitCode !== 0) return { ok: false, message: `Could not push ${branch} from ${from.label}: ${(push.stderr || push.stdout).split("\n").pop()?.slice(0, 160)}` };
   if (from.getMemory) await writeMemoryFiles(await from.getMemory(shipId, crewIds)).catch(() => {});
+  await unrigVoyage(ship);
   const released = await releaseVoyageWorktree(ship);
   if (!released.ok) return { ok: false, message: `The branch is pushed, but ${from.label}'s worktree was not returned: ${released.message}` };
   const slug = v.file.split("/").pop()!.replace(/^\d{4}-\d{2}-\d{2}-/, "").replace(/\.md$/, "");
   const lease = await leaseVoyageWorktree(ship, slug, v.goal, localHost, { branch, base: w.base });
   if (!lease.ok) return { ok: false, message: `${branch} is pushed and the laptop's worktree returned, but the hub could not take the voyage: ${lease.message} Start it again on the laptop, or lease a worktree by hand.` };
   for (const id of crewIds) await freshCrewSession(id);
+  // The stack comes up again on the hub; the crew already has its brief.
+  const replan = planRig(ship, slug, "local");
+  if (replan && !("error" in replan)) void rigVoyage(ship, null).catch((e) => console.error("[rig]", e));
   const now = new Date().toISOString();
   let text = await readFile(v.file, "utf8");
   text = text.replace(/^host: .*$/m, "host: hub").replace(/^worktree: .*$/m, `worktree: ${yamlStr(lease.worktree.path)}`);

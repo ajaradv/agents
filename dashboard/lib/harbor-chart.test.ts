@@ -34,6 +34,7 @@ const ship = (id: string): ShipRow => ({
   checks: {},
   gates: { task: [], dock: [] },
   maneuvers: [],
+  rig: null,
 });
 
 const voyage = (file: string, over: Partial<Voyage> = {}): Voyage => ({

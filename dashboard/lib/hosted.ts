@@ -5,6 +5,7 @@ import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { ROOT } from "./paths.ts";
 import { spawnTimed } from "./proc.ts";
 import { readShipConfig } from "./ship-config.ts";
+import { copyRigEnv, rigEnv, validRig } from "./rig.ts";
 
 /**
  * This machine as a ship host for the hub (the laptop side of
@@ -38,10 +39,24 @@ const GIT_BAD_ARG = /^(--config\b|--config-env|--exec-path|--upload-pack|--recei
 const SAFE_REF = /^[A-Za-z0-9][\w./-]{0,120}$/;
 const PROTECTED = new Set(["main", "master", "develop", "trunk", "HEAD"]);
 
-export type HostedShip = Pick<ShipRow, "id" | "path" | "checks" | "isolation">;
+export type HostedShip = Pick<ShipRow, "id" | "path" | "checks" | "isolation"> & { rig?: ShipRow["rig"] };
 
 export async function hostedShips(): Promise<HostedShip[]> {
-  return (await readShips()).filter((s) => s.path && existsSync(join(s.path, ".git"))).map((s) => ({ id: s.id, path: s.path, checks: s.checks, isolation: s.isolation }));
+  return (await readShips()).filter((s) => s.path && existsSync(join(s.path, ".git"))).map((s) => ({ id: s.id, path: s.path, checks: s.checks, isolation: s.isolation, rig: s.rig }));
+}
+
+/** Environment for a command the hub runs here: this machine's paths and, for a voyage, its rig (checked; vars from this machine's config). */
+export function hostedExecEnv(ship: HostedShip, rig: unknown): Record<string, string> {
+  return { FLEET_SHIP_REPO: ship.path, FLEET_AGENTS: ROOT, ...rigEnv(ship.rig ?? null, validRig(rig), ship.id) };
+}
+
+/** Copy a ship's rig env files from this machine's store into one of its worktrees here. */
+export async function hostedRigEnv(cwd: string, ships?: HostedShip[]): Promise<{ ok: boolean; message: string }> {
+  const ship = await shipForFolder(cwd, ships ?? (await hostedShips()));
+  if (!ship) return { ok: false, message: "that folder is not a ship repo or worktree on the laptop" };
+  if (!ship.rig) return { ok: false, message: `${ship.id} declares no rig on the laptop` };
+  if (real(cwd) === real(ship.path)) return { ok: false, message: "rig env goes into a voyage worktree, not the captain's checkout" };
+  return copyRigEnv(ship.id, ship.rig, cwd);
 }
 
 const real = (p: string) => {
@@ -94,7 +109,7 @@ export type LaunchContext = {
   agent: string;
   /** The hub's merged ship config; only HUB_KEYS are used. */
   config: Record<string, unknown>;
-  worktree?: { path: string; branch: string; base: string; leaseId?: string } | null;
+  worktree?: { path: string; branch: string; base: string; leaseId?: string; rig?: unknown } | null;
 };
 
 /**
@@ -122,7 +137,10 @@ export async function prepareHostedLaunch(ctx: LaunchContext, ships?: HostedShip
   } else {
     await writeFile(record, "{}");
   }
-  return { ok: true, env: { FLEET_INBOX: inbox, FLEET_HOSTED: "1" }, ship };
+  // A rigged voyage: the crew's shells reach the voyage's own stack (lib/rig.ts).
+  const rec = validRig(ctx.worktree?.rig);
+  const rig = rec ? rigEnv(ship.rig ?? null, rec) : {};
+  return { ok: true, env: { FLEET_INBOX: inbox, FLEET_HOSTED: "1", ...rig }, ship };
 }
 
 /**

@@ -32,7 +32,7 @@ export type RpcProc = {
 };
 
 /** What a host needs to start a crewmate: its ship and the voyage's worktree there. */
-export type LaunchCtx = { ship?: string; worktree?: { path: string; branch: string; base: string; leaseId?: string } | null };
+export type LaunchCtx = { ship?: string; worktree?: { path: string; branch: string; base: string; leaseId?: string; rig?: { project: string; port: number; slug: string } } | null };
 
 export interface ShipHost {
   kind: HostKind;
@@ -50,6 +50,8 @@ export interface ShipHost {
   putMemory?(files: Record<string, string>): Promise<void>;
   /** ...and reads it back at dock or when the voyage moves. */
   getMemory?(ship: string, agents: string[]): Promise<Record<string, string>>;
+  /** Copy the ship's rig env files from this host's own store into a worktree here (lib/rig.ts); local hosts copy directly. */
+  copyRigEnv?(shipId: string, cwd: string): Promise<{ ok: boolean; message: string }>;
   /** Whether a new voyage may sail here now. */
   available(): Promise<boolean>;
 }
