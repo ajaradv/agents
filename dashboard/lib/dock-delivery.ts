@@ -37,7 +37,8 @@ export async function openDockPr(
   if (push.code !== 0) return { ok: false, message: `the branch was not pushed (${push.out.split("\n").pop()?.slice(0, 160)}); it stays local` };
   const existing = await exec(["gh", "pr", "view", branch, "--json", "url", "--jq", ".url"], repo);
   if (existing.code === 0 && /^https:\/\//.test(existing.out)) return { ok: true, url: existing.out.split("\n")[0], message: "a pull request for this branch was already open" };
-  const pr = await exec(["gh", "pr", "create", "--head", branch, "--base", base, "--title", title.slice(0, 120), "--body", body.slice(0, 60_000)], repo);
+  // The base is a branch name on GitHub: a worktree's start point may name the remote (origin/main).
+  const pr = await exec(["gh", "pr", "create", "--head", branch, "--base", base.replace(/^origin\//, ""), "--title", title.slice(0, 120), "--body", body.slice(0, 60_000)], repo);
   const url = pr.out.match(/https:\/\/\S+\/pull\/\d+/)?.[0];
   if (pr.code !== 0 || !url) return { ok: false, message: `the branch is pushed but no pull request was opened (${pr.out.split("\n").pop()?.slice(0, 160)})` };
   return { ok: true, url, message: "pull request opened" };

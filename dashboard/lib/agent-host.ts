@@ -435,8 +435,16 @@ async function pump(p: AgentProc): Promise<void> {
       const raw = buf.slice(0, nl).replace(/\r$/, "");
       buf = buf.slice(nl + 1);
       if (!raw.trim()) continue;
+      let rec: Record<string, unknown>;
       try {
-        await onRecord(p, JSON.parse(raw));
+        rec = JSON.parse(raw);
+      } catch {
+        // Not RPC: a launcher's own output before pi starts (a VM's setup prints "installed …", rsync lines).
+        console.error(`[dashboard] agent-host ${p.id}: not RPC: ${raw.slice(0, 160)}`);
+        continue;
+      }
+      try {
+        await onRecord(p, rec);
       } catch (e) {
         console.error(`[dashboard] agent-host ${p.id}:`, e);
       }
