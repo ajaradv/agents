@@ -26,6 +26,15 @@ describe("landing a docked voyage through the ship's delivery mode", () => {
     const reuse = async (cmd: string[]) => (cmd[2] === "view" ? { code: 0, out: "https://github.com/a/b/pull/7" } : { code: 0, out: "" });
     expect(await openDockPr("/r", "b", "main", "t", "x", reuse)).toMatchObject({ ok: true, url: "https://github.com/a/b/pull/7" });
   });
+  test("a base named from the remote (origin/main) opens the PR onto main", async () => {
+    let base = "";
+    const exec = async (cmd: string[]) => {
+      if (cmd[1] === "pr" && cmd[2] === "create") base = cmd[cmd.indexOf("--base") + 1]!;
+      return cmd[2] === "create" ? { code: 0, out: "https://github.com/a/b/pull/8" } : { code: cmd[2] === "view" ? 1 : 0, out: "" };
+    };
+    expect(await openDockPr("/r", "docs/x", "origin/main", "t", "x", exec)).toMatchObject({ ok: true, url: "https://github.com/a/b/pull/8" });
+    expect(base).toBe("main");
+  });
   test("the title is the goal's first sentence without the vault pointer", () => {
     expect(prTitle("Game mechanics phase 3, weather and supply (vault plan fleet/plans/feature/x.md: section C2). Deliver: weather.")).toBe("Game mechanics phase 3, weather and supply");
   });
