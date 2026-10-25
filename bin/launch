@@ -51,6 +51,19 @@ def code_graph_line(ship_path: Path, isolation: str) -> str:
     )
 
 
+def preview_line(ship: dict) -> str:
+    """The ship's `preview:` URL: where the captain opens the app on their own stack. Crews screenshot
+    through the same entry (a backend port can skip the CSS) and hand the captain URLs that work there."""
+    url = str(ship.get("preview") or "").strip()
+    if not url:
+        return ""
+    return (
+        f"- **Preview:** the captain opens this app at `{url}` on their own stack. Run the same stack and take screenshots "
+        "through that entry, not a backend port that skips the CSS (`bin/fleet-shot` refuses a page whose stylesheet failed). "
+        f"When you ask for Go on UI work, list the exact `{url}/...` pages for the captain to open.\n"
+    )
+
+
 def parse_simple_yaml(path: Path) -> dict:
     """Parse flat agent.yaml files (scalars, lists, one-level nested maps).
 
@@ -742,6 +755,7 @@ def prepare_pi_launch(
             + f"- **Ship repo:** `{ship_path}`; stay in this project. Work for other ships belongs to their crews. "
             "During a voyage your working folder is the voyage's worktree (see This voyage, at the end).\n"
             + f"- **Delivery mode:** `{aboard.get('mode') or 'unset'}`\n"
+            + preview_line(aboard)
             + code_graph_line(ship_path, str(aboard.get("isolation") or ""))
             + f"- **Crew aboard:** {crew}\n"
             f"- **FLEET_INBOX:** `{inbox}`\n"

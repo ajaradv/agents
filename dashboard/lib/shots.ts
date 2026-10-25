@@ -14,6 +14,42 @@ export const SWEEP_DAYS = 7;
 
 export const shotsDir = () => process.env.FLEET_SHOTS_DIR ?? join(process.env.TMPDIR ?? tmpdir(), "fleet-shots");
 
+/**
+ * Run in the page before a capture: the stylesheets that did not load. A dev
+ * stack that serves its CSS from another port (Kinwork's webpack on :3000,
+ * Django on :8000) renders bare HTML when browsed on the wrong one, and a
+ * screenshot of that reads as "the design has no CSS". Chrome keeps a sheet
+ * object for a 404'd link, but reading a same-origin sheet's rules then
+ * throws; a cross-origin sheet's rules always throw, so there only an HTTP
+ * error in the resource timing counts.
+ */
+export const UNSTYLED_PROBE = `(() => {
+  const status = new Map(performance.getEntriesByType("resource").map((e) => [e.name, e.responseStatus || 0]));
+  const bad = [];
+  for (const l of document.querySelectorAll('link[rel~="stylesheet"]')) {
+    if (l.disabled || !l.href || l.media === "print") continue;
+    let failed = !l.sheet || (status.get(l.href) ?? 0) >= 400;
+    if (!failed && new URL(l.href).origin === location.origin) {
+      try { l.sheet.cssRules; } catch { failed = true; }
+    }
+    if (failed) bad.push(l.href);
+  }
+  return JSON.stringify(bad);
+})()`;
+
+/** Why a shot of this page would mislead (stylesheets that failed), or null. */
+export function unstyledError(probe: unknown): string | null {
+  let bad: string[] = [];
+  try {
+    bad = typeof probe === "string" ? (JSON.parse(probe) as string[]) : [];
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(bad) || !bad.length) return null;
+  const list = bad.slice(0, 3).join(", ") + (bad.length > 3 ? ` and ${bad.length - 3} more` : "");
+  return `the page's stylesheet did not load (${list}), so the shot would show it unstyled. Browse the stack's styled entry (a webpack or Vite dev server, often another port) or rebuild the CSS; pass unstyled to shoot it anyway`;
+}
+
 const isShot = (name: string) => /^shot-.*\.png$/.test(name);
 
 function shotFiles(dir: string): { path: string; bytes: number; mtime: number }[] {

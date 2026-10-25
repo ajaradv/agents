@@ -102,7 +102,7 @@ export async function laptopFirstmateSend(text: string): Promise<{ ok: boolean; 
  * A screenshot taken by the laptop's Chrome (bin/fleet-shot --on laptop|auto):
  * PNG bytes, or why not. The page must be reachable from the laptop.
  */
-export async function laptopShot(o: { url: string; width: number; height: number; mobile: boolean; wait: number }): Promise<{ ok: true; png: Uint8Array } | { ok: false; message: string }> {
+export async function laptopShot(o: { url: string; width: number; height: number; mobile: boolean; wait: number; unstyled?: boolean }): Promise<{ ok: true; png: Uint8Array } | { ok: false; message: string }> {
   if (!(await laptopCan("browser"))) return { ok: false, message: "the laptop is not available for screenshots" };
   try {
     const r = await fetchImpl(`${URL_ENV()}/shot`, {

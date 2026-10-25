@@ -7,5 +7,7 @@ crew:
   - designer
 factory: null
 mode: no-mistakes-prod-only
+# Where the captain opens the app: the webpack dev server, which proxies Django (:8000 alone has no CSS).
+preview: http://localhost:3000
 crew_budgets:
   designer: 6

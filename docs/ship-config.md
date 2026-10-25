@@ -32,6 +32,17 @@ effect at the next launch either way.
 (ship, key, old, new, by, why; the helmsman's reason carries over on Apply).
 The deck's Helm section lists recent changes.
 
+## Preview
+
+`preview: http://localhost:3000` (base) names where the captain opens the
+ship's app on their own stack. `bin/launch` puts it in the crew's prompt:
+screenshot through that entry, and list the exact pages there when asking for
+Go on UI work. Set it when the stack has more than one port and only one
+serves the styled page (Kinwork: webpack on 3000 proxies Django on 8000).
+`bin/fleet-shot` and the shared browser refuse a page whose stylesheet failed
+to load (`--unstyled` / `unstyled: true` to shoot it anyway), so a wrong-port
+screenshot never reaches the captain as a design.
+
 ## Routines
 
 A ship's recurring work lives under `routines:`, a map by id (so the overlay
