@@ -14,6 +14,7 @@ import { abortHost, answerDialog, crewCaller, hostAlive, hostIds, hostRunning, h
 import { allChatTargetIds, chatAllowed, chatTarget, refreshAgentTargets, startChatTargetRefresh } from "./lib/chat-targets.ts";
 import type { ChatLine } from "./lib/chat.ts";
 import { busPost, busRead } from "./lib/bus-api.ts";
+import { cursorAtEnd, decodeCursor, encodeCursor, eventsAfter, sseFrame, streamShips } from "./lib/ship-stream.ts";
 import { crewAddTask, crewCanvas, crewDockRequest, crewHelper, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
 import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
@@ -61,11 +62,13 @@ import { newSession } from "./lib/session-rotate.ts";
  *   GET  /v1/health          { api, pid, startedAt }
  *   GET  /v1/state           NodeState (who is running, waiting, alive)
  *   GET  /v1/events          SSE: line, host, state, turn, ship, rail
+ *   GET  /v1/ship-events     SSE: every ship's log, resumable (Last-Event-ID); docs/state-api.md
  *   POST /v1/captain-line    { agentId, line }   a saved captain or crew line to run
  *   POST /v1/answer          { agentId, dialogId, value?, confirmed?, cancelled? }
  *   POST /v1/abort|stop|new-session  { agentId }
  *   POST /v1/refresh-targets after crew changes
- * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers|check|vm|helm>
+ * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers|check|vm|helm|look|helper|canvas|...>
+ * Bus API (extensions/bus.ts, any agent's token): POST /api/bus/post, GET /api/bus/read
  * Fleet API (extensions/fleet.ts, officers' crew token): GET /api/fleet/<status|log|tasks|maneuvers|chat>, POST /api/fleet/chat
  */
 
@@ -287,6 +290,47 @@ function events(server: ReturnType<typeof Bun.serve>, req: Request): Response {
   return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
 }
 
+/**
+ * GET /v1/ship-events: every ship's log as one stream (lib/ship-stream.ts), new
+ * events by default, from the start with ?from=start, resumed from Last-Event-ID
+ * (or ?after=<cursor>); ?ships=a,b narrows it. Polled once a second: other
+ * processes (the dashboard) write ship logs too.
+ */
+async function shipEvents(server: ReturnType<typeof Bun.serve>, req: Request, url: URL): Promise<Response> {
+  server.timeout(req, 0);
+  const only = (url.searchParams.get("ships") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const ships = await streamShips(only);
+  const resume = req.headers.get("last-event-id") ?? url.searchParams.get("after") ?? "";
+  let cursor = resume ? decodeCursor(resume) : url.searchParams.get("from") === "start" ? {} : cursorAtEnd(ships);
+  let tick: ReturnType<typeof setInterval> | null = null;
+  let quiet = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(enc.encode(`event: ready\ndata: ${JSON.stringify({ ships, cursor: encodeCursor(cursor) })}\n\n`));
+      tick = setInterval(() => {
+        try {
+          const { events } = eventsAfter(cursor, ships);
+          for (const e of events) {
+            cursor = { ...cursor, [e.ship]: e.id };
+            c.enqueue(enc.encode(sseFrame(e, cursor)));
+          }
+          if (events.length) quiet = 0;
+          else if (++quiet >= 15) {
+            quiet = 0;
+            c.enqueue(enc.encode(": ping\n\n"));
+          }
+        } catch {
+          if (tick) clearInterval(tick);
+        }
+      }, 1000);
+    },
+    cancel() {
+      if (tick) clearInterval(tick);
+    },
+  });
+  return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
+}
+
 /** A crewmate's VM started, stopped, failed, or blocked a request (extensions/gondolin). */
 function crewVmEvent(shipId: string, from: string, event: string, detail: string): { ok: boolean; message: string } {
   if (!["start", "stop", "blocked", "error"].includes(event)) return { ok: false, message: "unknown vm event" };
@@ -486,6 +530,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   if (path === "/v1/health") return Response.json({ api: NODE_API, pid: process.pid, startedAt, version: NODE_CODE_VERSION, root: ROOT });
   if (path === "/v1/state") return Response.json(snapshot());
   if (path === "/v1/events" && req.method === "GET") return events(server, req);
+  if (path === "/v1/ship-events" && req.method === "GET") return shipEvents(server, req, url);
   if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
 
   const b = await body(req);
