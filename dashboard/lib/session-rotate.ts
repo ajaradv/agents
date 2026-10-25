@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { hostRunning, stopHost } from "./agent-host.ts";
 import { agentTuiIsLive } from "./agent-tui-control.ts";
+import { archiveCanvas } from "./canvas-archive.ts";
 import { fleetInboxRoot } from "./paths.ts";
 
 /**
@@ -21,5 +22,7 @@ export async function newSession(agentId: string): Promise<{ ok: boolean; messag
   const dir = join(fleetInboxRoot(), agentId, "sessions");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "current"), sessionId + "\n", "utf8");
-  return { ok: true, message: "New session started. The next message begins with an empty history.", sessionId };
+  // The canvas goes with the session it belonged to (lib/canvas-archive.ts).
+  const canvas = await archiveCanvas([agentId], `${agentId}-new-session`).catch(() => ({ items: 0, dir: null }));
+  return { ok: true, message: `New session started. The next message begins with an empty history.${canvas.items ? ` ${canvas.items} canvas item(s) archived.` : ""}`, sessionId };
 }

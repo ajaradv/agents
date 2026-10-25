@@ -14,6 +14,7 @@ import { aliceVault, ROOT } from "./paths.ts";
 import { spawnTimed } from "./proc.ts";
 import { logShipEvent, shipTurnTotals } from "./ship-log.ts";
 import { describeGates, gateStatus } from "./gates.ts";
+import { archiveCanvas } from "./canvas-archive.ts";
 import { endVoyageMemory, freshSession as freshCrewSession, memoryFiles, startVoyageMemory, voyageMemoryCleared, writeMemoryFiles } from "./crew-memory.ts";
 import { laptopSailable } from "./laptop-host.ts";
 import { ledgerLine, ledgerMarkdown, recordVoyageDock, recordVoyageStart, voyageId, voyageLedger } from "./metrics.ts";
@@ -294,6 +295,8 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
   // Tiered crew memory (lib/crew-memory.ts): a fresh voyage scratchpad, fresh crew sessions, no leftovers.
   if (ship.orchestrator === "lead") {
     await startVoyageMemory(shipId, { goal: g, branch: worktree?.branch, worktree: worktree?.path, record: file }, crew);
+    // Canvas items left from before (a voyage docked before archiving existed, or work between voyages).
+    await archiveCanvas(crew, `${shipId}-before-voyage`).catch(() => {});
     // A remote host keeps the crew's memory where the crew runs.
     if (host.putMemory) await host.putMemory(await memoryFiles(shipId, crew)).catch((e) => logShipEvent(shipId, "helm", "notice", `Crew memory did not reach ${host.label}: ${e instanceof Error ? e.message : String(e)}`));
   }
@@ -346,10 +349,12 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
     await host.putMemory?.(voyageMemoryCleared(shipId, crewIds)).catch(() => {});
   }
   const scratch = ship && ship.orchestrator === "lead" ? await endVoyageMemory(shipId, crewIds) : "";
+  // The crew's canvas items end with the voyage (lib/canvas-archive.ts); the note says where they went.
+  const canvas = await archiveCanvas(crewIds, v.file.split("/").pop()!.replace(/\.md$/, "")).catch(() => ({ items: 0, dir: null }));
   let text = await readFile(v.file, "utf8");
   text = text.replace(/^status: sailing$/m, "status: docked").replace(/^started: (.*)$/m, `started: $1\nended: ${now}`);
   const note = summary.trim();
-  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (delivered ? `\n${delivered}\n` : "") + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "") + (review ? `\n## Dock review\n\n${reviewLine(review)}\n` : "") + (scratch ? `\n## Voyage memory (archived at dock)\n\n${scratch}\n` : "");
+  text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (delivered ? `\n${delivered}\n` : "") + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "") + (review ? `\n## Dock review\n\n${reviewLine(review)}\n` : "") + (scratch ? `\n## Voyage memory (archived at dock)\n\n${scratch}\n` : "") + (canvas.dir ? `\nCanvas: ${canvas.items} item(s) archived to fleet/inbox/${canvas.dir} (kept 30 days).\n` : "");
   await writeFile(v.file, text, "utf8");
   logShipEvent(shipId, "captain", "voyage-end", note || "Docked", { file: v.file });
   return { ok: true, message: `${shipId} docked.${released.message ? ` ${released.message}` : ""}${delivered ? ` ${delivered}` : ""}${ledger ? ` ${ledgerLine(ledger)}` : ""}${review ? ` ${reviewLine(review)}` : ""}` };
