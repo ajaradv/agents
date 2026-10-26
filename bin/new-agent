@@ -157,7 +157,7 @@ def main() -> int:
         description=__doc__,
         examples=[
             'bin/new-agent reviewer --model openrouter/anthropic/claude-sonnet-5.5 --description "Reviews pull requests" --dry-run',
-            "bin/new-agent tester --model deepseek/deepseek-flash --type crew --workspace ships --dry-run",
+            "bin/new-agent tester --model openrouter/deepseek/deepseek-v4-flash --type crew --workspace ships --dry-run",
             'bin/new-agent scribe --model cursor/composer-2.5 --workspace vault --why "cheap long-form notes"',
         ],
     )

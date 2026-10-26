@@ -27,9 +27,9 @@ import { logShipEvent } from "./ship-log.ts";
  * (default 2).
  */
 
-const MODEL = process.env.FLEET_HELPER_MODEL ?? "deepseek/deepseek-flash";
+const MODEL = process.env.FLEET_HELPER_MODEL ?? "openrouter/deepseek/deepseek-v4-flash";
 /** For tasks Jev judges hard (vault research note jev-system-one, Level 5C): reasoning across many sources, plans, debugging. */
-const STRONG_MODEL = process.env.FLEET_HELPER_STRONG_MODEL ?? "deepseek/deepseek-v4-pro";
+const STRONG_MODEL = process.env.FLEET_HELPER_STRONG_MODEL ?? "openrouter/deepseek/deepseek-v4-pro";
 
 /**
  * The cheapest model that can do the task: Jev picks easy (a lookup, a summary,

@@ -3,10 +3,11 @@ type: assistant
 role: alice
 harness: pi
 # The fleet's omni agent (vault plan fleet/plans/feature/alice-omni-agent.md).
-# DeepSeek V4 Pro: a long-running session needs prefix caching, which DeepSeek
-# applies automatically (Cursor replays the whole session uncached every turn).
+# DeepSeek V4 Pro through OpenRouter (it holds the DeepSeek key): a long-running
+# session needs prefix caching, which DeepSeek applies automatically (Cursor
+# replays the whole session uncached every turn).
 # Backup on another provider: Composer on Cursor's included usage.
-model: deepseek/deepseek-v4-pro
+model: openrouter/deepseek/deepseek-v4-pro
 fallback_model: cursor/composer-2.5
 # A live Pi session in the fleet node: streaming, steer mid-turn, ask_captain
 # that waits. Dashboard turns and the TUI share one session.

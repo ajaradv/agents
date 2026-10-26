@@ -6,7 +6,7 @@ harness: pi
 # Backup: DeepSeek V4 Pro, used when Cursor refuses the request that day
 # (for example its API usage pool and spend limit are both used up).
 model: cursor/grok-4.7@256k
-fallback_model: deepseek/deepseek-v4-pro
+fallback_model: openrouter/deepseek/deepseek-v4-pro
 # Design conversations span days: keep one session across dashboard turns,
 # idle stops, and the TUI (New session on the dashboard starts over).
 dashboard_session: persistent

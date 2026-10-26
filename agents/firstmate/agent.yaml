@@ -2,11 +2,11 @@ id: firstmate
 type: orchestrator
 role: firstmate
 harness: pi
-# The direct DeepSeek API, whose prompt caching keeps Firstmate's many wakes
-# cheap (Cursor replays the session uncached). Backup: the same model through
-# OpenRouter, used when the DeepSeek key is missing or out of balance that day.
-model: deepseek/deepseek-v4-pro
-fallback_model: openrouter/deepseek/deepseek-v4-pro
+# DeepSeek V4 Pro through OpenRouter (it holds the DeepSeek key), whose prompt
+# caching keeps Firstmate's many wakes cheap (Cursor replays the session
+# uncached). Backup: Composer on the Cursor key when OpenRouter fails that day.
+model: openrouter/deepseek/deepseek-v4-pro
+fallback_model: cursor/composer-2.5
 extensions:
   # Compact between tasks once context passes 65%, after running /stow
   # (extensions/context-guard.ts), instead of at the edge of the window.
