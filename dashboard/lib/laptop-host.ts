@@ -92,7 +92,7 @@ function remoteRpc(agentId: string, crewToken: string, ctx: LaunchCtx): RpcProc 
     ws = sock;
     sock.onopen = () => {
       const w = ctx.worktree;
-      sock.send(JSON.stringify({ start: { agent: agentId, config: readShipConfig(ctx.ship ?? "") ?? {}, worktree: w ? { path: w.path, branch: w.branch, base: w.base, leaseId: w.leaseId, ...(w.rig ? { rig: { project: w.rig.project, port: w.rig.port, slug: w.rig.slug } } : {}) } : null, hubUrl: nodePublicUrl(), crewToken } }));
+      sock.send(JSON.stringify({ start: { agent: agentId, ship: ctx.ship, config: readShipConfig(ctx.ship ?? "") ?? {}, worktree: w ? { path: w.path, branch: w.branch, base: w.base, leaseId: w.leaseId, ...(w.rig ? { rig: { project: w.rig.project, port: w.rig.port, slug: w.rig.slug } } : {}) } : null, hubUrl: nodePublicUrl(), crewToken } }));
       for (const line of queue.splice(0)) sock.send(line);
     };
     sock.onmessage = (e) => {

@@ -49,6 +49,8 @@ export type VoyageWorktree = {
   repo?: string;
   /** The voyage's running copy of the app (lib/rig.ts): Compose project, port, preview, state. */
   rig?: RigRecord;
+  /** A design or spec session (lib/sessions.ts): the flagship officer working in this worktree as the ship's guest. */
+  guest?: string;
 };
 
 const recordPath = (shipId: string) => join(fleetInboxRoot(), "ships", shipId, "worktree.json");
@@ -75,6 +77,23 @@ export function updateVoyageRig(shipId: string, patch: Omit<Partial<RigRecord>, 
   if (merged.brief === null) delete merged.brief;
   writeFileSync(recordPath(shipId), JSON.stringify({ ...w, rig: merged }, null, 2) + "\n", "utf8");
   return merged as RigRecord;
+}
+
+/** Set the session guest on the open worktree record (lib/sessions.ts). */
+export function setVoyageGuest(shipId: string, guest: string): void {
+  const w = voyageWorktree(shipId);
+  if (w) writeFileSync(recordPath(shipId), JSON.stringify({ ...w, guest }, null, 2) + "\n", "utf8");
+}
+
+/** The ship whose open session has this agent as its guest, if any (the node launches it there). */
+export function guestShip(agentId: string): string | undefined {
+  let ships: string[] = [];
+  try {
+    ships = readdirSync(join(fleetInboxRoot(), "ships"));
+  } catch {
+    return undefined;
+  }
+  return ships.find((id) => voyageWorktree(id)?.guest === agentId);
 }
 
 /** Ports held by open voyages on a host (every ship's record), so a new voyage takes a free one. */

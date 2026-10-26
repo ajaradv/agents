@@ -197,6 +197,22 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "queue_add",
+    label: "Add to the captain's decision queue",
+    description:
+      "Put something that needs deciding on the captain's Decision queue (the flagship deck): a design session (looks, with the fleet's designer) or a spec session (what to build, with the fleet's architect), before any ship builds it. The captain orders and starts items; chores (fixes, docs, small changes with no new UI or behaviour) sail as voyages without it.",
+    parameters: Type.Object({
+      kind: StringEnum(["design-session", "spec-session"] as const),
+      ship: Type.String({ description: "The ship the decision is for" }),
+      title: Type.String({ description: "What needs deciding, in a few words" }),
+      request: Type.Optional(Type.String({ description: "What the captain wants out of it, constraints, examples" })),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "queue", {}, { kind: p.kind, ship: p.ship, title: p.title, request: p.request ?? "" }));
+    },
+  });
+
+  pi.registerTool({
     name: "notify_captain",
     label: "Notify the captain",
     description:

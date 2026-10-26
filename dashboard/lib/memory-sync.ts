@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import type { ShipRow } from "./fleet-layers.ts";
 import { fleetInboxRoot } from "./paths.ts";
 import type { ShipHost } from "./ship-host.ts";
-import { voyageHost } from "./voyage-worktree.ts";
+import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 
 /**
  * Live crew memory for voyages on another ship host (S3d, vault plan
@@ -71,7 +71,8 @@ export async function syncRemoteMemory(ships: ShipRow[], hostFor: (ship: string)
     const prev = readMemorySync(ship.id);
     const tried = new Date().toISOString();
     try {
-      const changed = mirrorMemory(await host.getMemory(ship.id, ship.crew.map((r) => `${ship.id}-${r}`)));
+      const guest = voyageWorktree(ship.id)?.guest;
+      const changed = mirrorMemory(await host.getMemory(ship.id, guest ? [guest] : ship.crew.map((r) => `${ship.id}-${r}`)));
       writeMemorySync(ship.id, { host: host.label, tried, synced: tried, changed: changed.length });
       if (changed.length) changedShips.push(ship.id);
     } catch (e) {

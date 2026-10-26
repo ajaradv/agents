@@ -10,6 +10,7 @@ import { hasHelmsman, listProposals, proposalLine, type Proposal } from "./helm.
 import { readShipConfig, recentConfigChanges, shipTemplates } from "./ship-config.ts";
 import { laptopStatus } from "./laptop.ts";
 import { laptopSailable, laptopVoyages } from "./laptop-host.ts";
+import { QUEUE_KINDS, queueView, type QueueItem, type QueueKind } from "./decision-queue.ts";
 import { voyageWorktree } from "./voyage-worktree.ts";
 import { readMemorySync, voyageMemoryNotes } from "./memory-sync.ts";
 import { voyageId } from "./metrics.ts";
@@ -495,7 +496,7 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
 
     ${supplyGaugeHtml(spendToday, hasBudget ? budget : null)}
 
-    ${ship.id === "fleet" ? await ordersPanelHtml() : voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels), tasks, condition, await sailChoice(ship))}
+    ${ship.id === "fleet" ? `${await decisionQueueHtml()}${await ordersPanelHtml()}` : voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels), tasks, condition, await sailChoice(ship))}
 
     ${voyageRigHtml(ship)}
 
@@ -585,6 +586,46 @@ export function orderProgress(slug: string, total: number, events = recentShipEv
 }
 
 /** The fleet deck's orders panel: Go, Retry, Cancel, edit and delete, and what each order did. */
+const QUEUE_KIND_LABEL: Record<QueueKind, string> = { "design-session": "Design session", "spec-session": "Spec session", "spec-review": "Spec review", "design-review": "Design review" };
+
+/**
+ * The captain's decision queue (lib/decision-queue.ts) on the flagship's deck:
+ * design and spec sessions with the fleet's designer and architect, and the
+ * reviews that follow, in the captain's order. Ships build only what it decided.
+ */
+async function decisionQueueHtml(): Promise<string> {
+  const { open, done } = queueView();
+  const ships = (await readShips()).map((s) => s.id);
+  const laptop = await laptopSailable();
+  const row = (i: QueueItem) => {
+    const api = `/api/queue/${encodeURIComponent(i.id)}`;
+    const btn = (path: string, label: string, extra = "") => `<form class="shipyard-form" data-api="${api}/${path}"${extra}><button class="d-btn d-btn-sm d-btn-ghost" type="submit">${label}</button></form>`;
+    const session = i.kind === "design-session" || i.kind === "spec-session";
+    const start = i.status === "queued" && session
+      ? laptop.ok
+        ? `<form class="shipyard-form" data-api="${api}/start"><button class="d-btn d-btn-sm d-btn-neutral" type="submit">Start</button><span class="muted" data-note></span></form>`
+        : `<span class="muted" title="${escapeHtml(laptop.why)}">waits for the laptop</span>`
+      : "";
+    const where = i.status === "active" ? `<a href="/ships/${encodeURIComponent(i.ship)}">in session on ${escapeHtml(i.ship)}</a>` : escapeHtml(i.ship);
+    return `<li class="queue-item is-${i.status}"><div class="between"><span><strong>${escapeHtml(QUEUE_KIND_LABEL[i.kind])}</strong> · ${where} · ${escapeHtml(i.title)}</span><span class="row">${start}${i.status === "queued" ? `${btn("up", "↑")}${btn("down", "↓")}${btn("drop", "Drop", ` data-confirm="Drop this from the queue?"`)}` : ""}</span></div>${i.request ? `<p class="muted">${escapeHtml(i.request.slice(0, 300))}</p>` : ""}</li>`;
+  };
+  const kinds = QUEUE_KINDS.filter((k) => k.endsWith("-session")).map((k) => `<option value="${k}">${QUEUE_KIND_LABEL[k]}</option>`).join("");
+  return `<section class="stack decision-queue">
+    <div class="between"><h3>Decision queue</h3><span class="muted">${open.length} open · sessions run on the laptop${laptop.ok ? "" : ` (${escapeHtml(laptop.why)})`}</span></div>
+    ${open.length ? `<ol class="stack-tight queue-list">${open.map(row).join("")}</ol>` : `<p class="muted">Nothing waiting. Add what needs deciding before a ship builds it; chores sail without it.</p>`}
+    <form class="stack-tight shipyard-form" data-api="/api/queue">
+      <div class="row-wrap">
+        <select class="d-select d-select-sm" name="kind">${kinds}</select>
+        <select class="d-select d-select-sm" name="ship">${ships.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join("")}</select>
+        <input class="d-input d-input-sm" name="title" placeholder="What needs deciding (Search page redesign)" required />
+      </div>
+      <textarea class="d-textarea d-textarea-sm" name="request" rows="2" placeholder="What you want out of it, constraints, examples to look at"></textarea>
+      <div class="row"><button class="d-btn d-btn-sm" type="submit">Add to the queue</button><span class="muted" data-note></span></div>
+    </form>
+    ${done.length ? `<details><summary class="muted">Decided · ${done.length}</summary><ul class="stack-tight">${done.slice(0, 10).map((i) => `<li>${escapeHtml(QUEUE_KIND_LABEL[i.kind])} · ${escapeHtml(i.ship)} · ${escapeHtml(i.title)} <span class="muted">· ${escapeHtml(i.status.replace(/-/g, " "))}${i.record ? ` · <code>${escapeHtml(i.record.replace(/^.*\/fleet\/voyages\//, "vault fleet/voyages/"))}</code>` : ""}</span></li>`).join("")}</ul></details>` : ""}
+  </section>`;
+}
+
 async function ordersPanelHtml(): Promise<string> {
   const all = (await listOrders()).filter((o) => o.meta);
   const events = recentShipEvents("fleet", 800);
@@ -700,6 +741,20 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
         .map((v) => `<li><span>${escapeHtml(v.goal.slice(0, 140))}</span><span class="muted">${escapeHtml(v.started.slice(0, 10))}</span></li>`)
         .join("")}</ul></details>`
     : "";
+  if (voyage?.session) {
+    // A design or spec session (lib/sessions.ts): a conversation with the flagship officer, wrapped up instead of docked.
+    const title = voyage.session === "design" ? "Design session" : "Spec session";
+    return `<section class="voyage is-sailing stack">
+      <div class="between"><div class="row"><h3>${title}</h3>${condition === "needs-you" ? `<span class="masthead-flag" aria-hidden="true"></span>` : ""}</div><span class="muted">since ${escapeHtml(new Date(voyage.started).toLocaleString())}</span></div>
+      <p class="voyage-goal">${escapeHtml(voyage.goal)}</p>
+      <p class="muted">With the fleet's ${escapeHtml(voyage.to)} on the laptop · <a href="?chat=${encodeURIComponent(voyage.to)}" data-chat="${escapeHtml(voyage.to)}">open the conversation</a> · branch <code>${escapeHtml(voyageWorktree(ship.id)?.branch ?? "")}</code> · record: <code>${escapeHtml(voyage.file.replace(/^.*\/fleet\/voyages\//, "vault fleet/voyages/"))}</code></p>
+      <form class="row shipyard-form" data-api="${api}/dock" data-confirm="Wrap the session up? The prototype branch is pushed (no pull request), the brief goes into the record, and the stack comes down.">
+        <input class="d-input d-input-sm" name="summary" placeholder="What was decided (optional; the brief comes from the session)" />
+        <button class="d-btn d-btn-sm" type="submit">Wrap up</button><span class="muted" data-note></span>
+      </form>
+      ${pastHtml}
+    </section>`;
+  }
   if (voyage) {
     const to = cards.find((c) => c.target.id === voyage.to)?.target.label ?? voyage.to;
     const onLaptop = voyageWorktree(ship.id)?.host === "laptop";

@@ -30,6 +30,9 @@ import { copyRigEnv, rigEnv, validRig } from "./rig.ts";
 
 export const hostedInbox = () => process.env.FLEET_HOSTED_INBOX ?? join(ROOT, "fleet", "hosted");
 
+/** The flagship officers who may come aboard a ship here for a design or spec session (lib/sessions.ts). */
+export const GUEST_OFFICERS = ["designer", "architect"];
+
 /** Ship config keys the hub may set for a hosted launch; everything else is this machine's. */
 export const HUB_KEYS = ["crew", "crew_models", "crew_budgets", "orchestrator", "gates", "maneuvers", "base_branch"] as const;
 
@@ -107,6 +110,8 @@ export function commandRefusal(cmd: string[], ship: HostedShip | null): string |
 
 export type LaunchContext = {
   agent: string;
+  /** The ship a session guest comes aboard (crewmates name theirs in the agent id). */
+  ship?: string;
   /** The hub's merged ship config; only HUB_KEYS are used. */
   config: Record<string, unknown>;
   worktree?: { path: string; branch: string; base: string; leaseId?: string; rig?: unknown } | null;
@@ -119,11 +124,17 @@ export type LaunchContext = {
  */
 export async function prepareHostedLaunch(ctx: LaunchContext, ships?: HostedShip[]): Promise<{ ok: true; env: Record<string, string>; ship: HostedShip } | { ok: false; message: string }> {
   const all = ships ?? (await hostedShips());
-  const ship = all.filter((s) => ctx.agent.startsWith(`${s.id}-`)).sort((a, b) => b.id.length - a.id.length)[0];
-  if (!ship) return { ok: false, message: `${ctx.agent} is not a crewmate of a ship on the laptop` };
-  const role = ctx.agent.slice(ship.id.length + 1);
-  const crew = Array.isArray(ctx.config.crew) ? ctx.config.crew.map(String) : [];
-  if (!/^[a-z][a-z0-9_-]*$/.test(role) || !crew.includes(role) || !existsSync(join(ROOT, "agents", role))) return { ok: false, message: `${role} is not aboard ${ship.id}` };
+  // A session guest (lib/sessions.ts): the flagship's designer or architect, only in a worktree of a ship here.
+  const guest = GUEST_OFFICERS.includes(ctx.agent);
+  const ship = guest ? all.find((s) => s.id === ctx.ship) : all.filter((s) => ctx.agent.startsWith(`${s.id}-`)).sort((a, b) => b.id.length - a.id.length)[0];
+  if (!ship) return { ok: false, message: guest ? `${ctx.ship ?? "that ship"} is not a ship on the laptop` : `${ctx.agent} is not a crewmate of a ship on the laptop` };
+  if (guest) {
+    if (!ctx.worktree) return { ok: false, message: `${ctx.agent} comes aboard ${ship.id} only for a session, in its worktree` };
+  } else {
+    const role = ctx.agent.slice(ship.id.length + 1);
+    const crew = Array.isArray(ctx.config.crew) ? ctx.config.crew.map(String) : [];
+    if (!/^[a-z][a-z0-9_-]*$/.test(role) || !crew.includes(role) || !existsSync(join(ROOT, "agents", role))) return { ok: false, message: `${role} is not aboard ${ship.id}` };
+  }
   const inbox = hostedInbox();
   const own = readShipConfig(ship.id) ?? {};
   const fromHub = Object.fromEntries(HUB_KEYS.filter((k) => k in ctx.config).map((k) => [k, ctx.config[k]]));
@@ -133,14 +144,14 @@ export async function prepareHostedLaunch(ctx: LaunchContext, ships?: HostedShip
   await mkdir(dirname(record), { recursive: true });
   if (ctx.worktree) {
     if ((await shipForFolder(ctx.worktree.path, [ship]))?.id !== ship.id || real(ctx.worktree.path) === real(ship.path)) return { ok: false, message: `${ctx.worktree.path} is not a worktree of ${ship.id} on the laptop` };
-    await writeFile(record, JSON.stringify({ ship: ship.id, ...ctx.worktree, gitDir: join(real(ship.path), ".git"), host: "laptop" }, null, 2));
+    await writeFile(record, JSON.stringify({ ship: ship.id, ...ctx.worktree, gitDir: join(real(ship.path), ".git"), host: "laptop", ...(guest ? { guest: ctx.agent } : {}) }, null, 2));
   } else {
     await writeFile(record, "{}");
   }
   // A rigged voyage: the crew's shells reach the voyage's own stack (lib/rig.ts).
   const rec = validRig(ctx.worktree?.rig);
   const rig = rec ? rigEnv(ship.rig ?? null, rec) : {};
-  return { ok: true, env: { FLEET_INBOX: inbox, FLEET_HOSTED: "1", ...rig }, ship };
+  return { ok: true, env: { FLEET_INBOX: inbox, FLEET_HOSTED: "1", ...rig, ...(guest ? { FLEET_GUEST_SHIP: ship.id } : {}) }, ship };
 }
 
 /**
@@ -148,8 +159,9 @@ export async function prepareHostedLaunch(ctx: LaunchContext, ships?: HostedShip
  * hosts: the ship's and each crewmate's memory notes, and a crewmate's
  * current session id (a fresh one at Set sail).
  */
-const MEMORY_FILE = /^(ships\/[a-z][a-z0-9_-]*\/memory|[a-z][a-z0-9_-]*-[a-z][a-z0-9_-]*\/memory)\/[a-z][a-z0-9_-]*\.md$/;
-const SESSION_FILE = /^[a-z][a-z0-9_-]*-[a-z][a-z0-9_-]*\/sessions\/current$/;
+// Crewmates (<ship>-<role>) and the session guests (designer, architect).
+const MEMORY_FILE = /^(ships\/[a-z][a-z0-9_-]*\/memory|[a-z][a-z0-9_-]*-[a-z][a-z0-9_-]*\/memory|(designer|architect)\/memory)\/[a-z][a-z0-9_-]*\.md$/;
+const SESSION_FILE = /^([a-z][a-z0-9_-]*-[a-z][a-z0-9_-]*|designer|architect)\/sessions\/current$/;
 
 export const memoryPathOk = (rel: string, text = "") => !rel.includes("..") && (MEMORY_FILE.test(rel) || (SESSION_FILE.test(rel) && /^(dashboard-[\w.-]{1,120}\n?)?$/.test(text)));
 

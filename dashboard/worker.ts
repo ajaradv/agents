@@ -130,7 +130,7 @@ async function rpcMessage(ws: import("bun").ServerWebSocket<RpcSocket>, raw: str
   if (m.start && !ws.data.started) {
     ws.data.started = true;
     const s = m.start;
-    const ready = await prepareHostedLaunch({ agent: String(s.agent ?? ""), config: (s.config ?? {}) as Record<string, unknown>, worktree: s.worktree ?? null });
+    const ready = await prepareHostedLaunch({ agent: String(s.agent ?? ""), ship: typeof s.ship === "string" ? s.ship : undefined, config: (s.config ?? {}) as Record<string, unknown>, worktree: s.worktree ?? null });
     if (!ready.ok || !/^https?:\/\//.test(String(s.hubUrl ?? "")) || !s.crewToken) {
       ws.send(JSON.stringify({ e: `the laptop refused the launch: ${ready.ok ? "no hub address or crew token" : ready.message}\n` }));
       ws.send(JSON.stringify({ x: 1 }));
