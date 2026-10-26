@@ -68,9 +68,13 @@ export function exeClient(deps: { token?: () => Promise<string>; fetch?: Fetch; 
     async ssh(vm: string, command: string, timeoutMs = 300_000): Promise<ExecResult> {
       return exec(`ssh ${named(vm)} ${command}`, timeoutMs);
     },
-    /** A VM token for the worker behind exe.dev's proxy (X-Exedev-Authorization), expiring with the voyage. */
-    async vmToken(name: string, exp = "14d"): Promise<string> {
-      const r = json<{ token?: string; api_key?: string }>(await exec(`ssh-key generate-api-key --vm=${named(name)} --label=fleet-${named(name)} --exp=${/^\d+[dhy]$/.test(exp) ? exp : "14d"} --json`));
+    /**
+     * A VM token for the worker behind exe.dev's proxy (X-Exedev-Authorization), expiring with the voyage.
+     * exe.dev keeps each as a key on the account, named by its label, after the VM is gone (until it
+     * expires), so the label carries a suffix: a later VM with the same name must not collide.
+     */
+    async vmToken(name: string, exp = "14d", suffix = Date.now().toString(36)): Promise<string> {
+      const r = json<{ token?: string; api_key?: string }>(await exec(`ssh-key generate-api-key --vm=${named(name)} --label=fleet-${named(name)}-${suffix.replace(/[^a-z0-9]/g, "")} --exp=${/^\d+[dhy]$/.test(exp) ? exp : "14d"} --json`));
       const t = r.token ?? r.api_key ?? "";
       if (!t) throw new Error("exe.dev returned no VM token");
       return t;
