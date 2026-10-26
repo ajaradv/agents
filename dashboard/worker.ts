@@ -19,7 +19,8 @@
  *                     with no tools; GET /host/helper/<id> → {done, result} (polled, so a
  *                     long job outlives any one request)
  *
- * Listens on 127.0.0.1 only; Tailscale Serve publishes it to the tailnet
+ * Listens on 127.0.0.1 (FLEET_WORKER_HOST on an exe.dev voyage VM, whose proxy reaches it from outside and lets
+ * only token holders through); Tailscale Serve publishes the laptop's to the tailnet
  * (bin/laptop-worker --install). Every request needs the shared token
  * (secret "laptop-worker-token", the Keychain here, a 0600 file on the hub).
  */
@@ -184,7 +185,7 @@ if (import.meta.main) {
   let token = await readSecret("laptop-worker-token");
   const shots = new Gate(MAX_JOBS);
   Bun.serve<RpcSocket>({
-    hostname: "127.0.0.1",
+    hostname: process.env.FLEET_WORKER_HOST || "127.0.0.1",
     port: PORT,
     idleTimeout: 120,
     async fetch(req, server) {
@@ -246,5 +247,5 @@ if (import.meta.main) {
       },
     },
   });
-  console.log(`laptop worker http://127.0.0.1:${PORT}`);
+  console.log(`worker http://${process.env.FLEET_WORKER_HOST || "127.0.0.1"}:${PORT}`);
 }
