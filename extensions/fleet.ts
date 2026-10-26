@@ -243,7 +243,7 @@ export default function (pi: ExtensionAPI) {
       ship: Type.String(),
       goal: Type.String({ description: "What the voyage should achieve, in one or two sentences" }),
       to: Type.String({ description: "Who runs it: <ship>-lead (usual), another crewmate aboard, or firstmate on Firstmate ships" }),
-      on: Type.Optional(Type.String({ description: "Where it sails: hub, or laptop (only while the captain has laptop voyages on and the laptop is awake). Leave out for the ship's default" })),
+      on: Type.Optional(StringEnum(["hub", "laptop", "exe"] as const, { description: "Where it sails: hub, laptop (while laptop voyages are on), or exe (an exe.dev VM, while exe.dev voyages are on). Leave out for the ship's default" })),
       spec: Type.Optional(Type.String({ description: "The approved spec it builds (vault path fleet/specs/<ship>/<slug>.md)" })),
       chore: Type.Optional(Type.Boolean({ description: "true for a chore: a fix, docs, or a small change with no new UI or behaviour" })),
       ...OrderArgs,
