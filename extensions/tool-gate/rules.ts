@@ -55,6 +55,8 @@ const SAFE_TOOLS = new Set([
   "bus_read",
   // The captain's decision queue (dashboard/lib/decision-queue.ts): adds an item the captain orders and starts.
   "queue_add", "queue_request",
+  // The flagship officers' decisions (dashboard/lib/decisions.ts): a spec to review, a design difference.
+  "spec_submit", "design_review",
 ]);
 
 /** Tools whose free text reaches another agent: screened for steering. */

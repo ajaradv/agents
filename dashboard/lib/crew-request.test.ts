@@ -32,7 +32,9 @@ describe("the lead requests a missing role", () => {
   test("only the lead asks, for a real role that is not aboard, and says why", async () => {
     expect((await crewRequestRole("demo", { from: "demo-designer", role: "builder", why: "I need help with code." })).message).toContain("Only the ship's lead");
     expect((await crewRequestRole("demo", { from: "demo-lead", role: "wizard", why: "Magic is needed here." })).message).toContain("not a crew role");
-    expect((await crewRequestRole("demo", { from: "demo-lead", role: "designer", why: "Another designer please." })).message).toContain("already aboard");
+    expect((await crewRequestRole("demo", { from: "demo-lead", role: "lead", why: "Another lead please." })).message).toContain("already aboard");
+    // The fleet's designer lives on the flagship (D4): never requested as crew.
+    expect((await crewRequestRole("demo", { from: "demo-lead", role: "designer", why: "Another designer please." })).message).toContain("not a crew role");
     expect((await crewRequestRole("demo", { from: "demo-lead", role: "scout", why: "x" })).message).toContain("Say why");
   });
 });

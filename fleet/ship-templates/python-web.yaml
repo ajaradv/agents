@@ -26,7 +26,7 @@ gates:
 maneuvers:
   verify:
     checks: [lint, migrations, pytest, frontend]
-    by: [lead, scout, designer]
+    by: [lead, scout, builder]
 
 # Routines (lib/routines.ts): the helm review skips itself while no helmsman is aboard.
 routines:

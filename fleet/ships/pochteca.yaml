@@ -35,7 +35,7 @@ gates:
 maneuvers:
   verify:
     checks: [lint, migrations, pytest, frontend]
-    by: [lead, scout, designer, builder]
+    by: [lead, scout, builder]
 
 # Routines this ship runs on its own (lib/routines.ts; Health > Diagnostics > Routines).
 routines:

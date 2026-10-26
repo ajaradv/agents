@@ -46,6 +46,7 @@ import { harborChartJson } from "./lib/harbor-chart.ts";
 import { metricsDashboardHtml, parsePeriod } from "./lib/metrics-view.ts";
 import { dockVoyage, findShip, moveVoyageToHub, openVoyage, registerShip, setCrew, setOrchestrator, startQueueSession, startVoyage, voyageBrief } from "./lib/shipyard.ts";
 import { addQueueItem, moveQueueItem, readQueue, updateQueueItem } from "./lib/decision-queue.ts";
+import { reviewQueueItem } from "./lib/decisions.ts";
 import { rigVoyage } from "./lib/rigging.ts";
 import { readShips } from "./lib/fleet-layers.ts";
 import { setLaptopVoyages } from "./lib/laptop-host.ts";
@@ -890,11 +891,15 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       sseBroadcast("ship", "fleet");
       return Response.json(r.ok ? { ok: true, message: `Queued: ${r.item.title}.` } : r, { status: r.ok ? 200 : 400 });
     }
-    const queueAct = path.match(/^\/api\/queue\/(q[0-9a-z]{6,12})\/(start|up|down|drop)$/);
+    const queueAct = path.match(/^\/api\/queue\/(q[0-9a-z]{6,12})\/(start|up|down|drop|approve|changes)$/);
     if (queueAct && req.method === "POST") {
       const [, id, act] = queueAct as unknown as [string, string, string];
       let res: { ok: boolean; message: string };
       if (act === "start") res = await startQueueSession(id, { deliver: deliverBrief, stop: stopHost });
+      else if (act === "approve" || act === "changes") {
+        const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+        res = await reviewQueueItem(id, act, String(b.note ?? ""), { tellLead: deliverBrief });
+      }
       else if (act === "drop") res = updateQueueItem(id, { status: "dropped" }) ? { ok: true, message: "Dropped." } : { ok: false, message: "No such item." };
       else res = moveQueueItem(id, act as "up" | "down") ? { ok: true, message: "Moved." } : { ok: false, message: "It is already at that end." };
       sseBroadcast("ship", "fleet");
@@ -950,7 +955,7 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
         if (!allowed.includes(to)) {
           res = { ok: false, message: "Send the voyage to Firstmate or a crewmate aboard." };
         } else {
-          const started = await startVoyage(shipId, String(b.goal ?? ""), to, b.on ? String(b.on) : undefined, { deliver: deliverBrief, stop: stopHost });
+          const started = await startVoyage(shipId, String(b.goal ?? ""), to, b.on ? String(b.on) : undefined, { deliver: deliverBrief, stop: stopHost, spec: b.spec ? String(b.spec) : undefined, chore: b.chore === true || b.chore === "on" || b.chore === "true" });
           res = started;
           // A rigged ship's brief waits for its stack (lib/rigging.ts delivers it).
           if (started.ok && started.voyage && ship && !started.rigging) await deliverBrief(to, voyageBrief(ship, started.voyage));

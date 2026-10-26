@@ -22,7 +22,9 @@ import { hostRunner, localHost, shipHost, type ShipHost } from "./ship-host.ts";
 import { leaseVoyageWorktree, releaseVoyageWorktree, setVoyageGuest, updateVoyageRig, usesVoyageWorktrees, voyageHost, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
 import { planRig, rigVoyage, unrigVoyage, type Deliver } from "./rigging.ts";
 import { briefHeading, extractBrief, SESSION_KINDS, sessionBranch, sessionBrief, type SessionKind } from "./sessions.ts";
-import { finishQueueItem, readQueue, updateQueueItem } from "./decision-queue.ts";
+import { checkSpec, parseSpec, setSpecStatus, type Spec } from "./specs.ts";
+import { addQueueItem, finishQueueItem, readQueue, updateQueueItem } from "./decision-queue.ts";
+import { busPost } from "./bus-api.ts";
 
 /**
  * The shipyard: build a ship (register it, check what it is missing), crew it
@@ -46,8 +48,11 @@ export async function findShip(id: string): Promise<ShipRow | undefined> {
 }
 
 /** Roles a ship can take aboard: agent templates with `crew: true`. */
+/** The flagship's deciders (D4): the one designer and one architect work with the captain, never aboard as crew. */
+export const FLAGSHIP_OFFICERS = new Set(["designer", "architect"]);
+
 export async function crewRoles(): Promise<AgentMeta[]> {
-  return (await loadAgents()).filter((a) => a.crewEligible && !a.ship);
+  return (await loadAgents()).filter((a) => a.crewEligible && !a.ship && !FLAGSHIP_OFFICERS.has(a.id));
 }
 
 /** Remove map.key when the map exists; a ship without that map has nothing to remove. */
@@ -71,6 +76,7 @@ export async function setCrew(
   const ship = await findShip(shipId);
   if (!ship) return { ok: false, message: `No ship named ${shipId}.` };
   const roles = new Set((await crewRoles()).map((r) => r.id));
+  if (change.add && FLAGSHIP_OFFICERS.has(change.add)) return { ok: false, message: `The fleet's ${change.add} lives on the flagship and is not crew: put the decision on the Decision queue (a ${change.add === "designer" ? "design" : "spec"} session), and the voyage builds the spec.` };
   if (change.add && (!ROLE_RE.test(change.add) || !roles.has(change.add))) return { ok: false, message: `${change.add} is not a crew role.` };
   await editShip(shipId, (doc) => {
     const crew = new Set(ship.crew);
@@ -181,7 +187,7 @@ export function readyToSail(items: CheckItem[]): boolean {
 
 // ---------------------------------------------------------------- voyages
 
-export type Voyage = { file: string; ship: string; status: "sailing" | "docked"; goal: string; to: string; started: string; ended?: string; worktree?: VoyageWorktree; session?: SessionKind };
+export type Voyage = { file: string; ship: string; status: "sailing" | "docked"; goal: string; to: string; started: string; ended?: string; worktree?: VoyageWorktree; session?: SessionKind; spec?: string; chore?: boolean };
 
 function voyageDir(shipId: string): string {
   return join(aliceVault(), "fleet", "voyages", shipId);
@@ -211,6 +217,8 @@ export async function listVoyages(shipId: string): Promise<Voyage[]> {
         to: String(fm.to ?? ""),
         started: String(fm.started ?? ""),
         ...(fm.kind === "session" && (fm.session === "design" || fm.session === "spec") ? { session: fm.session as SessionKind } : {}),
+        ...(fm.spec ? { spec: String(fm.spec) } : {}),
+        ...(fm.chore === true || fm.chore === "true" ? { chore: true } : {}),
         ...(fm.ended ? { ended: String(fm.ended) } : {}),
       });
     } catch {
@@ -249,7 +257,7 @@ export async function sailHost(ship: Pick<ShipRow, "id" | "isolation">, requeste
  * brief (held until a rigged ship's stack is ready) and how to stop crew
  * processes left from before (they must start again with the voyage's rig).
  */
-export type SailOpts = { deliver?: Deliver; stop?: (agentId: string) => Promise<void>; session?: SessionKind };
+export type SailOpts = { deliver?: Deliver; stop?: (agentId: string) => Promise<void>; session?: SessionKind; spec?: string; chore?: boolean };
 
 export async function startVoyage(shipId: string, goal: string, to: string, on?: string, opts: SailOpts = {}): Promise<{ ok: boolean; message: string; voyage?: Voyage; rigging?: boolean }> {
   const ship = await findShip(shipId);
@@ -258,6 +266,19 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
   const session = opts.session;
   if (session && to !== SESSION_KINDS[session]) return { ok: false, message: `A ${session} session goes to the ${SESSION_KINDS[session]}.` };
   if (session && ship.orchestrator !== "lead") return { ok: false, message: `${shipId} is run by Firstmate; sessions need a lead-run ship.` };
+  // Decided work only (D3): a lead-run voyage builds an approved spec, or is a chore.
+  let spec: Spec | null = null;
+  if (!session && ship.orchestrator === "lead") {
+    if (opts.spec) {
+      const c = checkSpec(opts.spec, shipId);
+      if (!c.ok) return { ok: false, message: c.message };
+      if (c.spec.status !== "approved") return { ok: false, message: `That spec is ${c.spec.status}; voyages sail from approved specs (approve it on the Decision queue).` };
+      spec = c.spec;
+    } else if (!opts.chore) {
+      return { ok: false, message: `${shipId}'s voyages sail from an approved spec, or as a chore (a fix, docs, a small change with no new UI or behaviour). Pick a spec or mark it a chore; anything still to decide goes on the Decision queue.` };
+    }
+    if (spec && goal.trim().length < 4) goal = spec.title;
+  }
   const where = await sailHost(ship, session ? "laptop" : on);
   if (session && !where.ok) return { ok: false, message: `${where.message} Design and spec sessions run on the laptop; this one waits in the queue until it is awake.` };
   if (!where.ok) return { ok: false, message: where.message };
@@ -274,7 +295,7 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
   // Fleet-crewed ships work in a leased worktree on a crew/ branch, never in the captain's checkout.
   let worktree: VoyageWorktree | undefined;
   if (usesVoyageWorktrees(ship, host)) {
-    const lease = session ? await leaseVoyageWorktree(ship, sessionBranch(session, slug.slice(0, 40).replace(/-+$/, "")), "", host) : await leaseVoyageWorktree(ship, slug, g, host);
+    const lease = session ? await leaseVoyageWorktree(ship, sessionBranch(session, slug.slice(0, 40).replace(/-+$/, "")), "", host) : await leaseVoyageWorktree(ship, slug, g, host, undefined, spec?.prototype || undefined);
     if ("message" in lease) return { ok: false, message: lease.message };
     worktree = lease.worktree;
   }
@@ -289,6 +310,7 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
       `goal: ${yamlStr(g)}`,
       `to: ${to}`,
       ...(session ? ["kind: session", `session: ${session}`] : []),
+      ...(spec ? [`spec: ${yamlStr(spec.file)}`] : opts.chore ? ["chore: true"] : []),
       `orchestrator: ${ship.orchestrator}`,
       `crew: [${crew.join(", ")}]`,
       ...(worktree ? [`branch: ${worktree.branch}`, `worktree: ${yamlStr(worktree.path)}`] : []),
@@ -308,7 +330,8 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
     "utf8",
   );
   logShipEvent(shipId, "captain", "voyage-start", g, { file, to, ...(worktree ? { branch: worktree.branch, worktree: worktree.path } : {}) });
-  const voyage: Voyage = { file, ship: shipId, status: "sailing", goal: g, to, started: now.toISOString(), ...(worktree ? { worktree } : {}), ...(session ? { session } : {}) };
+  const voyage: Voyage = { file, ship: shipId, status: "sailing", goal: g, to, started: now.toISOString(), ...(worktree ? { worktree } : {}), ...(session ? { session } : {}), ...(spec ? { spec: spec.file } : {}), ...(opts.chore && !spec ? { chore: true } : {}) };
+  if (spec) setSpecStatus(spec.file, "sailing");
   if (session && worktree) setVoyageGuest(shipId, to);
   recordVoyageStart({ id: voyageId(file), ship: shipId, goal: g, to, branch: worktree?.branch, worktree: worktree?.path, started: now.toISOString() });
   // Tiered crew memory (lib/crew-memory.ts): a fresh voyage scratchpad, fresh crew sessions, no leftovers.
@@ -403,9 +426,12 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
     text = text.trimEnd() + `\n- ${now} wrapped up${delivered ? `; ${delivered}` : ""}\n` + (note ? `\n## Summary\n\n${note}\n` : "") + `\n## ${briefHeading(v.session)}\n\n${brief || "(The session ended without a brief in the scratchpad; see the memory below.)"}\n` + (scratch ? `\n## Session memory (archived at wrap-up)\n\n${scratch}\n` : "") + (canvas.dir ? `\nCanvas: ${canvas.items} item(s) archived to fleet/inbox/${canvas.dir} (kept 30 days).\n` : "");
     await writeFile(v.file, text, "utf8");
     finishQueueItem(v.file, brief ? "done" : "done-without-brief");
+    // D2: the architect drafts the spec from the brief; the captain reviews it in the queue.
+    if (brief) await requestSpec(shipId, v.goal, v.file).catch((e) => logShipEvent(shipId, "helm", "notice", `The spec request did not reach the architect: ${e instanceof Error ? e.message : String(e)}`));
     logShipEvent(shipId, "captain", "voyage-end", note || `${v.session} session wrapped up`, { file: v.file });
     return { ok: true, message: `${shipId}'s ${v.session} session wrapped up. ${delivered}${brief ? ` The ${briefHeading(v.session).toLowerCase()} is in the record.` : " No brief was written."}` };
   }
+  if (v.spec) setSpecStatus(v.spec, "built");
   text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (delivered ? `\n${delivered}\n` : "") + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "") + (review ? `\n## Dock review\n\n${reviewLine(review)}\n` : "") + (scratch ? `\n## Voyage memory (archived at dock)\n\n${scratch}\n` : "") + (canvas.dir ? `\nCanvas: ${canvas.items} item(s) archived to fleet/inbox/${canvas.dir} (kept 30 days).\n` : "");
   await writeFile(v.file, text, "utf8");
   logShipEvent(shipId, "captain", "voyage-end", note || "Docked", { file: v.file });
@@ -462,6 +488,22 @@ function maneuverBrief(ship: ShipRow): string[] {
   return ["Maneuvers (maneuver_start; locked ones cannot start):", ...all.map((m) => `- ${describeManeuver(m)}`)];
 }
 
+/** What a voyage was decided as (D3): the approved spec and its acceptance criteria, or a chore. */
+function specBrief(v: Voyage): string[] {
+  if (v.spec) {
+    const spec = parseSpec(v.spec);
+    if (!spec) return [`Build the approved spec at ${v.spec} (read it first).`];
+    return [
+      `Build the approved spec at ${spec.file}: read it first (goal, scope, non-goals, design, technical approach, task shape). Plan the tasks from it; it is decided, so do not re-open the direction (questions for the captain only where the spec leaves one open).`,
+      ...(spec.prototype ? [`Your branch starts from the prototype ${spec.prototype} (pushed by the design or spec session): make it production-ready rather than starting over; remove the prototype switches the spec says to drop.`] : []),
+      "Acceptance criteria (each must be met and checked; when you ask to dock, list every one with how it was checked):",
+      ...spec.criteria.map((c, i) => `${i + 1}. ${c}`),
+    ];
+  }
+  if (v.chore) return ["This voyage is a chore: a fix, docs, or a small change with no new UI or behaviour. If it turns out to need a decision (a new look, a new behaviour, options), stop and file it with queue_request instead of choosing."];
+  return [];
+}
+
 /** The opening message a crewmate (or Firstmate) gets when a voyage starts. */
 export function voyageBrief(ship: ShipRow, v: Voyage): string {
   if (v.to === `${ship.id}-lead`) {
@@ -477,6 +519,7 @@ export function voyageBrief(ship: ShipRow, v: Voyage): string {
       ...(v.worktree ?? voyageWorktree(ship.id)
         ? [`Work happens on branch ${(v.worktree ?? voyageWorktree(ship.id))!.branch} in the voyage's own worktree (your crew's working folder); commit there and never push. ${deliveryFor(ship.mode) === "pr" ? `At dock the fleet pushes the branch and opens a pull request (delivery mode ${ship.mode}); the captain merges.` : "The captain reviews and merges after docking."} The branch name is a guess from the goal: before the first commit, rename it if the type or words are wrong, and write conventional commit messages (skill git-conventions).`]
         : []),
+      ...specBrief(v),
       "You are the lead: read voyage_status, plan the goal into tasks, assign them with task_add, tell me the plan in a few lines, and end your turn. Reports come back to you as crew messages.",
     ].join("\n");
   }
@@ -523,4 +566,13 @@ export async function startQueueSession(id: string, opts: Omit<SailOpts, "sessio
   const r = await startVoyage(item.ship, goal, SESSION_KINDS[kind], "laptop", { ...opts, session: kind });
   if (r.ok && r.voyage) updateQueueItem(id, { status: "active", record: r.voyage.file });
   return { ok: r.ok, message: r.message };
+}
+
+/** After a session: a spec review on the captain's queue, and the request on the architect's bus. */
+export async function requestSpec(shipId: string, topic: string, record: string): Promise<void> {
+  const title = `Spec: ${topic.split(/[.\n]/)[0]!.slice(0, 120)}`;
+  const r = addQueueItem({ kind: "spec-review", ship: shipId, title, request: `Drafted by the architect from the session record ${record}.`, by: "helm", source: record });
+  if (!r.ok) throw new Error(r.message);
+  const posted = await busPost("helm", { to: "architect", kind: "spec-request", summary: `Write the spec for ${shipId}: ${topic.slice(0, 160)}. Read the brief in the session record, write fleet/specs/${shipId}/<slug>.md, then spec_submit with queue ${r.item.id}.`, ref: record, ship: shipId }, async (id) => id === "architect");
+  if (!posted.ok) throw new Error(posted.message);
 }

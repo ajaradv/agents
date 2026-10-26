@@ -25,6 +25,7 @@ import { freeRegistryAge, refreshFreeModels } from "./lib/free-models.ts";
 import { readShips } from "./lib/fleet-layers.ts";
 import { SYNC_MS, syncRemoteMemory } from "./lib/memory-sync.ts";
 import { addQueueItem } from "./lib/decision-queue.ts";
+import { designReview, specSubmit } from "./lib/decisions.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos, needsChanged } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
@@ -540,7 +541,18 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     if (bus[1] === "read" && req.method === "GET") return Response.json(await busRead(from, url.searchParams.get("since") ?? "", Number(url.searchParams.get("limit")) || 30));
   }
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|public|recall|vault-tasks)$/);
+  // The flagship officers' decisions (lib/decisions.ts, extensions/decisions.ts): spec_submit, design_review.
+  const decision = path.match(/^\/api\/decisions\/(spec|design-review)$/);
+  if (decision && req.method === "POST") {
+    const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
+    if (!from) return Response.json({ ok: false, message: "Decision calls come from a live agent session." }, { status: 403 });
+    const b = await body(req);
+    const r = decision[1] === "spec" ? specSubmit(from, b) : designReview(from, b);
+    if (r.ok) emit("ship", "fleet");
+    return Response.json(r);
+  }
+
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|queue|delegate|public|recall|vault-tasks)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm|look|helper|canvas|crew-request|dock-request|queue-request)(?:\/(\d+))?$/);

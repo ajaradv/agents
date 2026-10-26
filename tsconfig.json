@@ -24,6 +24,7 @@
   "include": [
     "dashboard/**/*.ts",
     "extensions/ask-captain.ts",
+    "extensions/decisions.ts",
     "extensions/cache-watch.ts",
     "extensions/canvas.ts",
     "extensions/context-guard.ts",

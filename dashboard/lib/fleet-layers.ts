@@ -107,7 +107,7 @@ export function parseShipConfig(y: Record<string, unknown>, fallbackId: string):
 }
 
 /** The standard maneuver of a rigged ship: set the voyage's copy up again (after a rebase, a new model, a broken stack). */
-const RIG_MANEUVER: ManeuverDecl = { name: "rig", kind: "checks", checks: ["rig"], adw: null, by: ["lead", "builder", "designer"], needs: [], gates: [], go: false, declared: true };
+const RIG_MANEUVER: ManeuverDecl = { name: "rig", kind: "checks", checks: ["rig"], adw: null, by: ["lead", "builder"], needs: [], gates: [], go: false, declared: true };
 
 /** Every ship, as the merged view (base plus overlay, lib/ship-config) sees it. */
 export async function readShips(dir = baseDir()): Promise<ShipRow[]> {

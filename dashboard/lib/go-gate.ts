@@ -17,7 +17,7 @@ import { nodeStateDir } from "./paths.ts";
 
 /** Fleet actions that change state; each needs the captain's Go (or an approved order step). */
 export const TIER2_TOOLS: Record<string, { params: string[]; required: string[] }> = {
-  voyage_start: { params: ["ship", "goal", "to", "on"], required: ["ship", "goal", "to"] },
+  voyage_start: { params: ["ship", "goal", "to", "on", "spec", "chore"], required: ["ship", "goal", "to"] },
   voyage_dock: { params: ["ship", "summary"], required: ["ship"] },
   crew_change: { params: ["ship", "add", "remove", "role", "budget", "model"], required: ["ship"] },
   orchestrator_set: { params: ["ship", "orchestrator"], required: ["ship", "orchestrator"] },
@@ -74,7 +74,7 @@ export function holdGoRequest(req: GoRequest): void {
 export function describeAction(tool: string, a: Record<string, string>): string {
   switch (tool) {
     case "voyage_start":
-      return `Set sail on ${a.ship}: "${a.goal}", sent to ${a.to}${a.on === "laptop" ? ", on the laptop" : a.on === "hub" ? ", on the hub" : ""}.`;
+      return `Set sail on ${a.ship}: "${a.goal}", sent to ${a.to}${a.on === "laptop" ? ", on the laptop" : a.on === "hub" ? ", on the hub" : ""}${a.spec ? `, building the spec ${a.spec.replace(/^.*fleet\/specs\//, "")}` : a.chore === "true" ? ", as a chore" : ""}.`;
     case "voyage_dock":
       return `Dock ${a.ship}'s voyage${a.summary ? ` ("${a.summary}")` : ""}.`;
     case "crew_change":

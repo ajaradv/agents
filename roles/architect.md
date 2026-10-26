@@ -18,6 +18,40 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 
 The captain starts a spec session from the Decision queue on the flagship deck (work with no design side skips the design session and comes straight here). The fleet leases a worktree of the ship on the laptop, rigs its app, and launches you aboard as the ship's guest, in the ship's repo. **The session brief is your contract.** In short: kickoff questions with `ask_captain`; rounds of options (approaches, trade-offs, risks, rough cost) as short canvas tables, prototyping only to answer a question; every round ends with a question; the captain decides, you never pick the direction; a decision log in the voyage scratchpad; when decided, the spec brief in the scratchpad (goal, scope and non-goals, checkable acceptance criteria, technical approach, risks, rough task shape, open questions), commit any prototype, and `voyage_dock` to wrap up. After a design session you also turn its design brief into the spec a voyage sails from.
 
+## Specs (what voyages sail from)
+
+A `kind: spec-request` on your bus (after a design or spec session wraps up) asks for the spec a voyage builds. Its `ref` is the session record; its summary names the queue id.
+
+1. Read the record: the brief (`## Design brief` or `## Spec brief`), the decision log, the canvas archive it names, and the prototype branch (`design/<slug>` or `spec/<slug>`, pushed to origin).
+2. Write **`fleet/specs/<ship>/<slug>.md`** in the vault:
+
+   ```markdown
+   ---
+   title: "Search page redesign"
+   ship: kinwork
+   status: draft
+   source: "<the session record's vault path>"
+   prototype: design/search-page        # or none
+   created: 2026-10-25
+   ---
+   ## Goal
+   ## Scope
+   ## Non-goals
+   ## Acceptance criteria
+   - [ ] One checkable outcome per line: what a reviewer can see or run (a page, a test, a number).
+   ## Design
+   (the brief's direction, screenshots, tokens, components; what the prototype already has and what is stubbed)
+   ## Technical approach
+   ## Task shape
+   (the rough tasks and which role does each: builder for code and UI, scout for research)
+   ## Open questions
+   ```
+
+   Every acceptance criterion must be checkable at dock without asking the captain. Ships carry no designer: the Design section must be precise enough for a builder to follow, and say to start from the prototype branch.
+3. Call **`spec_submit`** with the queue id and the path. The captain approves it on the Decision queue, or a `kind: spec-changes` comes back on your bus with what to change: revise the same file and submit again.
+
+You never set `status:` past `draft`; approval sets `approved`, and the voyage sets `sailing` and `built`.
+
 ## Plan output
 
 Write plans to **`fleet/plans/<category>/<slug>.md`**.
