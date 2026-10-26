@@ -1,0 +1,35 @@
+#!/usr/bin/env bun
+// fleet-exe - the hub's exe.dev voyage VMs from a shell (dashboard/lib/exe-golden.ts).
+// Runs where the secret exe-dev-voyage-token is: the hub.
+//
+// Usage:
+//   bin/fleet-exe golden <ship> [--rebuild]   build the ship's golden VM (fleet | kinwork | pochteca |
+//                                             lineage_atria): create, set up, worker token, rig env files,
+//                                             warm the rig, seal, pause. ~10 to 30 minutes. Needs the pool
+//                                             free: no voyage VM running. --rebuild replaces an existing one
+//   bin/fleet-exe ls                          the voyage-tagged VMs: name, status, vCPUs
+import { exeClient } from "../dashboard/lib/exe-dev.ts";
+import { buildGolden } from "../dashboard/lib/exe-golden.ts";
+
+const [cmd, ...args] = process.argv.slice(2);
+const usage = async () => {
+  const lines = (await Bun.file(import.meta.path).text()).split("\n").slice(1);
+  console.log(lines.slice(0, lines.findIndex((l) => !l.startsWith("//"))).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+  process.exit(2);
+};
+
+if (cmd === "ls") {
+  const vms = await exeClient().ls().catch((e) => {
+    console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  });
+  for (const v of vms) console.log(`${v.vm_name}\t${v.status}\t${v.allocated_cpus ?? "?"} vCPU`);
+} else if (cmd === "golden") {
+  const ship = args.find((a) => !a.startsWith("--"));
+  if (!ship || args.some((a) => a.startsWith("--") && a !== "--rebuild")) await usage();
+  const r = await buildGolden(ship!, { rebuild: args.includes("--rebuild"), onLog: (l) => console.log(l) });
+  console.log(r.ok ? `ok: ${r.message}` : `error: ${r.message}`);
+  process.exit(r.ok ? 0 : 1);
+} else {
+  await usage();
+}

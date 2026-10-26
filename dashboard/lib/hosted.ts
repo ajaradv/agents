@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { readShips, type ShipRow } from "./fleet-layers.ts";
 import { ROOT } from "./paths.ts";
 import { spawnTimed } from "./proc.ts";
 import { readShipConfig } from "./ship-config.ts";
-import { copyRigEnv, rigEnv, validRig } from "./rig.ts";
+import { copyRigEnv, rigEnv, rigStore, validRig } from "./rig.ts";
 
 /**
  * This machine as a ship host for the hub (the laptop side of
@@ -94,6 +94,51 @@ export async function hostedRigEnv(cwd: string, ships?: HostedShip[]): Promise<{
   if (!ship.rig) return { ok: false, message: `${ship.id} declares no rig on the laptop` };
   if (real(cwd) === real(ship.path)) return { ok: false, message: "rig env goes into a voyage worktree, not the captain's checkout" };
   return copyRigEnv(ship.id, ship.rig, cwd);
+}
+
+export const ENV_STORE_LIMITS = { files: 50, bytes: 256 * 1024 } as const;
+
+/** Why the hub may not put these files in a ship's env store here, or null. Never production files, macOS `._*` files, or paths that leave the store. */
+export function envStoreRefusal(shipId: string, files: unknown, ships: Pick<HostedShip, "id">[]): string | null {
+  if (!ships.some((s) => s.id === shipId)) return `${shipId} is not a ship on this machine`;
+  if (!files || typeof files !== "object" || Array.isArray(files)) return "files must be an object of path to content";
+  const entries = Object.entries(files);
+  if (!entries.length) return "no files";
+  if (entries.length > ENV_STORE_LIMITS.files) return `more than ${ENV_STORE_LIMITS.files} files`;
+  let bytes = 0;
+  for (const [rel, text] of entries) {
+    if (typeof text !== "string") return `${rel}: content must be text`;
+    bytes += Buffer.byteLength(text);
+    const parts = rel.split("/");
+    if (!rel || rel.startsWith("/") || rel.includes("\0") || parts.some((x) => x === ".." || x === "." || x === "")) return `${rel}: not a relative path inside the store`;
+    if (parts.some((x) => x.startsWith("._"))) return `${rel}: macOS metadata files are not stored`;
+    if (/production/i.test(rel)) return `${rel}: production files are never stored here`;
+  }
+  return bytes > ENV_STORE_LIMITS.bytes ? `more than ${ENV_STORE_LIMITS.bytes / 1024} KB in all` : null;
+}
+
+/** Write the files the hub sends into this machine's rig env store for a ship (dirs 0700, files 0600, each replaced atomically). */
+export async function putEnvStore(shipId: string, files: unknown, ships?: HostedShip[]): Promise<{ ok: boolean; message: string; written: number }> {
+  const refusal = envStoreRefusal(shipId, files, ships ?? (await hostedShips()));
+  if (refusal) return { ok: false, message: refusal, written: 0 };
+  const root = rigStore(shipId);
+  let written = 0;
+  for (const [rel, text] of Object.entries(files as Record<string, string>)) {
+    const file = join(root, rel);
+    // Every directory from the store down is ours to lock: mkdir's mode only applies to the ones it makes.
+    await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+    for (let d = dirname(file); d.length >= root.length; d = dirname(d)) await chmod(d, 0o700);
+    await writeFile(`${file}.tmp`, text, { mode: 0o600 });
+    await rename(`${file}.tmp`, file);
+    written++;
+  }
+  return { ok: true, message: `${written} file(s) stored for ${shipId}`, written };
+}
+
+/** On a Linux VM containers run as root, so a check that mounts the worktree leaves root-owned files behind: chown the folder back after a ship check. */
+export function chownAfter(cmd: string[], kind: string | undefined): boolean {
+  const [bin, flag, script, ...more] = cmd;
+  return kind === "vm" && (bin === "/bin/bash" || bin === "/bin/zsh") && flag === "-lc" && typeof script === "string" && !more.length;
 }
 
 const real = (p: string) => {
