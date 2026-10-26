@@ -9,10 +9,12 @@ import { liveLedgerHtml, pastLedgerHtml } from "./ledger-view.ts";
 import { hasHelmsman, listProposals, proposalLine, type Proposal } from "./helm.ts";
 import { readShipConfig, recentConfigChanges, shipTemplates } from "./ship-config.ts";
 import { laptopStatus } from "./laptop.ts";
+import { exeSailable, exeVoyages, vmPreview } from "./exe-voyages.ts";
 import { laptopSailable, laptopVoyages } from "./laptop-host.ts";
 import { QUEUE_KINDS, queueView, type QueueItem, type QueueKind } from "./decision-queue.ts";
 import { listSpecs, parseSpec } from "./specs.ts";
 import { voyageWorktree } from "./voyage-worktree.ts";
+import { nodePublicUrl } from "./worker-host.ts";
 import { OFFICER_SHIP, shipOf } from "./ship-events.ts";
 import { readMemorySync, voyageMemoryNotes } from "./memory-sync.ts";
 import { voyageId } from "./metrics.ts";
@@ -280,7 +282,7 @@ export async function harborHtml(): Promise<string> {
       </div>
     </a>`;
   });
-  return `${await laptopBarHtml(ships)}<div class="harbor">${await flagshipTileHtml()}${(await Promise.all(tiles)).join("")}</div>
+  return `${await laptopBarHtml(ships)}${exeBarHtml(ships)}<div class="harbor">${await flagshipTileHtml()}${(await Promise.all(tiles)).join("")}</div>
   <details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100 new-ship">
     <summary class="d-collapse-title">Build a new ship</summary><div class="d-collapse-content">
     <form class="stack shipyard-form" data-api="/api/ships" data-then="ship">
@@ -308,14 +310,17 @@ const RIG_LABEL = { pending: "waiting to rig", rigging: "rigging…", ready: "re
 export function voyageRigHtml(ship: ShipRow): string {
   const rec = ship.rig ? voyageWorktree(ship.id)?.rig : undefined;
   if (!rec) return "";
-  const where = voyageWorktree(ship.id)?.host === "laptop" ? "on the laptop" : "on the hub";
+  const w = voyageWorktree(ship.id);
+  const where = w?.host === "laptop" ? "on the laptop" : w?.host === "vm" ? "on an exe.dev VM" : "on the hub";
+  // The crew keeps the localhost URL in its brief (it runs on the VM); the captain's is the VM's.
+  const preview = w?.vm ? vmPreview(w.vm, rec.preview) : rec.preview;
   const held = rec.brief ? ` The brief to ${escapeHtml(rec.brief.to)} waits until it is ready.` : "";
   return `<section class="d-card d-card-border bg-base-100 voyage-rig is-${rec.state}"><div class="d-card-body d-card-sm stack-tight">
     <div class="between">
       <span><strong>Voyage stack</strong> · <span class="${rec.state === "failed" ? "warn" : "muted"}">${RIG_LABEL[rec.state]}</span> · <span class="muted">${escapeHtml(rec.project)} ${where}, port ${rec.port}</span></span>
       <form class="row shipyard-form" data-api="/api/ships/${encodeURIComponent(ship.id)}/rig"><button class="d-btn d-btn-sm${rec.state === "failed" ? " d-btn-neutral" : ""}" type="submit"${rec.state === "rigging" ? " disabled" : ""}>Rig again</button><span class="muted" data-note></span></form>
     </div>
-    ${rec.state === "ready" && rec.preview ? `<p>Preview: <a href="${escapeHtml(rec.preview)}" target="_blank" rel="noopener">${escapeHtml(rec.preview)}</a>${where === "on the laptop" ? ` <span class="muted">(open it on the laptop)</span>` : ""}</p>` : ""}
+    ${rec.state === "ready" && preview ? `<p>Preview: <a href="${escapeHtml(preview)}" target="_blank" rel="noopener">${escapeHtml(preview)}</a>${where === "on the laptop" ? ` <span class="muted">(open it on the laptop)</span>` : ""}</p>` : ""}
     ${rec.state === "failed" && rec.message ? `<details><summary class="warn">What failed</summary><pre class="memory-text">${escapeHtml(rec.message.slice(-2000))}</pre></details>` : ""}
     ${held ? `<p class="muted">${held.trim()}</p>` : ""}
   </div></section>`;
@@ -347,14 +352,37 @@ async function laptopBarHtml(ships: ShipRow[]): Promise<string> {
   </div></section>`;
 }
 
-/** The Set a course form's "Sail on" choice: shown on a hub with a laptop worker. */
-export type SailChoice = { show: boolean; laptop: boolean; why: string; prefer: "hub" | "laptop" };
+/**
+ * The Harbor's exe.dev switch (lib/exe-voyages.ts): whether ships that prefer
+ * the laptop sail on an exe.dev VM while it is away, and the voyages on VMs
+ * now, each with Move to hub. Shown on a hub whose node has a tailnet address.
+ */
+function exeBarHtml(ships: ShipRow[]): string {
+  const ev = exeVoyages();
+  if (!ev.on && !nodePublicUrl()) return "";
+  const there = ships.filter((s) => voyageWorktree(s.id)?.host === "vm");
+  const rows = there
+    .map((s) => `<li class="between"><span><strong>${escapeHtml(s.id)}</strong> is sailing on ${escapeHtml(voyageWorktree(s.id)?.vm ?? "an exe.dev VM")}</span><form class="row shipyard-form" data-api="/api/ships/${encodeURIComponent(s.id)}/move" data-confirm="Move ${escapeHtml(s.id)}'s voyage to the hub? The crew stops, the branch is pushed from the VM, the hub carries on from it, and the VM is removed."><button class="d-btn d-btn-sm" type="submit">Move to hub</button><span class="muted" data-note></span></form></li>`)
+    .join("");
+  return `<section class="d-card d-card-border bg-base-100 laptop-bar"><div class="d-card-body d-card-sm stack-tight">
+    <form class="between shipyard-form" data-api="/api/exe-voyages">
+      <span><strong>exe.dev voyages ${ev.on ? "on" : "off"}</strong> · <span class="muted">${ev.on ? "Ships that prefer the laptop sail on an exe.dev VM while the laptop is away." : "Ships that prefer the laptop sail on the hub."}</span></span>
+      <input type="hidden" name="on" value="${ev.on ? "0" : "1"}" />
+      <span class="row"><button class="d-btn d-btn-sm${ev.on ? "" : " d-btn-neutral"}" type="submit">${ev.on ? "Turn off" : "Turn on"}</button><span class="muted" data-note></span></span>
+    </form>
+    ${rows ? `<ul class="stack-tight">${rows}</ul>` : ""}
+  </div></section>`;
+}
+
+/** The Set a course form's "Sail on" choice: shown on a hub with a laptop worker or exe.dev voyages on. */
+export type SailChoice = { show: boolean; laptop: boolean; why: string; prefer: "hub" | "laptop"; exe?: { ok: boolean; why: string } };
 
 async function sailChoice(ship: ShipRow): Promise<SailChoice> {
-  if (!process.env.FLEET_LAPTOP_URL) return { show: false, laptop: false, why: "", prefer: "hub" };
+  const exe = exeVoyages().on && ship.isolation !== "vm" ? await exeSailable(ship.id).catch((e) => ({ ok: false, why: String(e) })) : undefined;
+  if (!process.env.FLEET_LAPTOP_URL) return { show: Boolean(exe), laptop: false, why: "the hub has no laptop worker", prefer: "hub", ...(exe ? { exe } : {}) };
   const can = await laptopSailable();
   const prefer = readShipConfig(ship.id)?.sail_on === "laptop" && can.ok ? "laptop" : "hub";
-  return { show: true, laptop: can.ok, why: can.why, prefer };
+  return { show: true, laptop: can.ok, why: can.why, prefer, ...(exe ? { exe } : {}) };
 }
 
 // ---------------------------------------------------------------- ship deck
@@ -875,7 +903,7 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
       <textarea class="d-textarea w-full" name="goal" rows="2" placeholder="${ship.orchestrator === "lead" ? "The goal (a spec's title is used when left empty)" : "What should this voyage achieve? e.g. Ship the V4 home page with mobile fixes"}"></textarea>
       <div class="row">
         <label class="row">Send to <select class="d-select d-select-sm" name="to">${targets.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.label)}</option>`).join("")}</select></label>
-        ${sail.show ? `<label class="row">Sail on <select class="d-select d-select-sm" name="on"><option value="hub"${sail.prefer === "hub" ? " selected" : ""}>the hub</option><option value="laptop"${sail.laptop ? "" : " disabled"}${sail.prefer === "laptop" ? " selected" : ""}>the laptop${sail.laptop ? "" : ` (${escapeHtml(sail.why)})`}</option></select></label>` : ""}
+        ${sail.show ? `<label class="row">Sail on <select class="d-select d-select-sm" name="on"><option value="hub"${sail.prefer === "hub" ? " selected" : ""}>the hub</option><option value="laptop"${sail.laptop ? "" : " disabled"}${sail.prefer === "laptop" ? " selected" : ""}>the laptop${sail.laptop ? "" : ` (${escapeHtml(sail.why)})`}</option>${sail.exe ? `<option value="exe"${sail.exe.ok ? "" : " disabled"}>an exe.dev VM${sail.exe.ok ? "" : ` (${escapeHtml(sail.exe.why)})`}</option>` : ""}</select></label>` : ""}
         <button class="d-btn d-btn-neutral d-btn-sm" type="submit">Set sail</button><span class="muted" data-note></span>
       </div>
     </form>

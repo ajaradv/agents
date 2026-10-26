@@ -18,7 +18,7 @@ export const EXE_WORKER_PORT = Number(process.env.FLEET_EXE_WORKER_PORT ?? 8790)
 
 export function exeVoyageHost(vm: string, deps: { fetch?: (url: string, init: RequestInit) => Promise<Response>; secret?: (name: string) => Promise<string> } = {}): ShipHost {
   const secret = deps.secret ?? readSecret;
-  return workerHost({
+  const host = workerHost({
     kind: "vm",
     label: `the exe.dev VM ${vm}`,
     url: () => `https://${vm}.exe.xyz:${EXE_WORKER_PORT}`,
@@ -30,6 +30,7 @@ export function exeVoyageHost(vm: string, deps: { fetch?: (url: string, init: Re
     // A voyage already on a VM may always continue there; new voyages are placed by the shipyard.
     available: async () => true,
   });
+  return { ...host, vm };
 }
 
 export type AdoptDeps = {

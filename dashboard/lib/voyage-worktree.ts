@@ -117,8 +117,11 @@ export function rigPortsOn(host: HostKind): number[] {
 
 /** The ship host for a ship's repo work: the open voyage's, else this machine. */
 export function voyageHost(shipId: string): ShipHost {
-  const w = voyageWorktree(shipId);
-  // One exe.dev VM per voyage: its host is made from the record's VM name.
+  return hostFor(voyageWorktree(shipId));
+}
+
+/** A record's host. One exe.dev VM per voyage: its host is made from the record's VM name (shipHost has no "vm" backend and would fall back to this machine). */
+function hostFor(w: Pick<VoyageWorktree, "host" | "vm"> | null | undefined): ShipHost {
   if (w?.host === "vm" && w.vm) return exeVoyageHost(w.vm);
   return shipHost(w?.host);
 }
@@ -293,7 +296,7 @@ async function prepareLease(
     }
   }
   const primaryBranch = (await git(primary, ["branch", "--show-current"])).out;
-  const worktree: VoyageWorktree = { ship: ship.id, path, leaseId, branch, base, gitDir: real(common.out), primaryBranch, started: new Date().toISOString(), host: host.kind, repo: primary };
+  const worktree: VoyageWorktree = { ship: ship.id, path, leaseId, branch, base, gitDir: real(common.out), primaryBranch, started: new Date().toISOString(), host: host.kind, repo: primary, ...(host.vm ? { vm: host.vm } : {}) };
   await mkdir(dirname(recordPath(ship.id)), { recursive: true });
   await writeFile(recordPath(ship.id), JSON.stringify(worktree, null, 2) + "\n", "utf8");
   return { ok: true, worktree };
@@ -301,7 +304,7 @@ async function prepareLease(
 
 /** Uncommitted changes in the voyage's worktree (files, short status lines). */
 export async function worktreeChanges(w: VoyageWorktree): Promise<string[]> {
-  const host = shipHost(w.host);
+  const host = hostFor(w);
   if (!(await host.hasRepo(w.path))) return [];
   return (await hostGit(host, w.path, ["status", "--porcelain"])).out.split("\n").filter(Boolean);
 }
@@ -309,7 +312,7 @@ export async function worktreeChanges(w: VoyageWorktree): Promise<string[]> {
 export async function releaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">): Promise<{ ok: boolean; message: string }> {
   const w = voyageWorktree(ship.id);
   if (!w) return { ok: true, message: "" };
-  const host = shipHost(w.host);
+  const host = hostFor(w);
   const repo = w.repo ?? ship.path;
   const git: Git = (cwd, args) => hostGit(host, cwd, args);
   const changes = await worktreeChanges(w);

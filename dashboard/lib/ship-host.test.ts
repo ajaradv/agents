@@ -7,7 +7,7 @@ import { openDockPr } from "./dock-delivery.ts";
 import type { SpawnResult } from "./proc.ts";
 import { treeState } from "./ship-checks.ts";
 import { availableHosts, hostRunner, localHost, setShipHost, shipHost, type ShipHost } from "./ship-host.ts";
-import { leaseVoyageWorktree, voyageHost } from "./voyage-worktree.ts";
+import { leaseVoyageWorktree, voyageHost, voyageWorktree, worktreeChanges } from "./voyage-worktree.ts";
 
 const REPO = join(import.meta.dir, "..", "..");
 
@@ -91,6 +91,34 @@ describe("ship hosts", () => {
       if (prev === undefined) delete process.env.FLEET_INBOX;
       else process.env.FLEET_INBOX = prev;
       rmSync(inbox, { recursive: true, force: true });
+    }
+  });
+
+  test("a record on a VM resolves to that VM's host everywhere, never the local machine", async () => {
+    const inbox = mkdtempSync(join(tmpdir(), "ship-host-"));
+    const secrets = mkdtempSync(join(tmpdir(), "ship-host-sec-"));
+    const saved = { inbox: process.env.FLEET_INBOX, dir: process.env.FLEET_SECRETS_DIR, be: process.env.FLEET_SECRET_BACKEND, fetch: globalThis.fetch };
+    process.env.FLEET_INBOX = inbox;
+    process.env.FLEET_SECRETS_DIR = secrets;
+    process.env.FLEET_SECRET_BACKEND = "file";
+    const urls: string[] = [];
+    globalThis.fetch = (async (url: string) => (urls.push(String(url)), Response.json({ stdout: "?? x.ts\n", stderr: "", exitCode: 0, timedOut: false, ms: 1 }))) as unknown as typeof fetch;
+    try {
+      mkdirSync(join(inbox, "ships", "a"), { recursive: true });
+      writeFileSync(join(inbox, "ships", "a", "worktree.json"), JSON.stringify({ ship: "a", path: "/w", host: "vm", vm: "a-fix" }));
+      expect(voyageHost("a")).toMatchObject({ kind: "vm", vm: "a-fix" });
+      const w = voyageWorktree("a")!;
+      expect(await worktreeChanges(w)).toEqual(["?? x.ts"]);
+      expect(urls.length).toBeGreaterThan(0);
+      for (const u of urls) expect(u).toStartWith("https://a-fix.exe.xyz:");
+    } finally {
+      globalThis.fetch = saved.fetch;
+      for (const [k, v] of [["FLEET_INBOX", saved.inbox], ["FLEET_SECRETS_DIR", saved.dir], ["FLEET_SECRET_BACKEND", saved.be]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      rmSync(inbox, { recursive: true, force: true });
+      rmSync(secrets, { recursive: true, force: true });
     }
   });
 });
