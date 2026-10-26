@@ -1,8 +1,10 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { addColumn, migrate, type Migration } from "./db-migrate.ts";
 import { nodeStateDir } from "./paths.ts";
 import { readShipConfig } from "./ship-config.ts";
+import { ulid } from "./ulid.ts";
 
 /**
  * The fleet metrics database (vault research note helm-and-maneuvers): one
@@ -16,12 +18,18 @@ import { readShipConfig } from "./ship-config.ts";
  *   result) with its voyage.
  * - handoffs: crew messages and task changes between crewmates.
  *
+ * Every turns, runs, and handoffs row carries event_key (unique; the
+ * idempotency key, so a replayed event adds nothing) and project_id (the ship,
+ * or "flagship" for the officers, who have no ship).
+ *
+ * The schema is numbered migrations (MIGRATIONS below; lib/db-migrate.ts).
+ *
  * The node and the dashboard both write it (WAL, busy timeout); anything can
  * read it. Views answer the usual questions directly (cost by role and model,
  * check pass rates, voyage totals).
  */
 
-const SCHEMA = `
+const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS voyages (
   id TEXT PRIMARY KEY, ship TEXT NOT NULL, goal TEXT NOT NULL, sent_to TEXT NOT NULL DEFAULT '',
   branch TEXT NOT NULL DEFAULT '', worktree TEXT NOT NULL DEFAULT '', started TEXT NOT NULL,
@@ -66,6 +74,35 @@ CREATE VIEW IF NOT EXISTS voyage_totals AS
   FROM voyages v;
 `;
 
+/** The officers' ship in project_id (agents #45); turns with no ship are theirs (chat-bridge passes the ship only for crewmates). */
+const OFFICER_PROJECT = "flagship";
+
+const MIGRATIONS: Migration[] = [
+  {
+    version: 1,
+    note: "baseline: voyages, turns, runs, handoffs, views",
+    up: (db) => {
+      db.exec(SCHEMA_V1);
+      // Columns added after the first release of this file.
+      addColumn(db, "runs", "commit_sha", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "runs", "dirty", "INTEGER NOT NULL DEFAULT 0");
+      db.exec("CREATE INDEX IF NOT EXISTS runs_commit ON runs(ship, name, commit_sha)");
+    },
+  },
+  {
+    version: 2,
+    note: "event_key and project_id on turns, runs, handoffs",
+    up: (db) => {
+      for (const table of ["turns", "runs", "handoffs"]) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN event_key TEXT`);
+        db.exec(`ALTER TABLE ${table} ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`);
+        db.exec(`UPDATE ${table} SET event_key = 'legacy:${table}:' || id, project_id = CASE WHEN ship = '' THEN '${OFFICER_PROJECT}' ELSE ship END`);
+        db.exec(`CREATE UNIQUE INDEX ${table}_event_key ON ${table}(event_key)`);
+      }
+    },
+  },
+];
+
 let handle: Database | null = null;
 let handlePath = "";
 
@@ -75,12 +112,7 @@ export function metricsDb(): Database {
   mkdirSync(nodeStateDir(), { recursive: true });
   handle = new Database(path, { create: true });
   handle.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;");
-  handle.exec(SCHEMA);
-  // Columns added after the first release of this file.
-  const cols = new Set((handle.query("PRAGMA table_info(runs)").all() as { name: string }[]).map((c) => c.name));
-  if (!cols.has("commit_sha")) handle.exec("ALTER TABLE runs ADD COLUMN commit_sha TEXT NOT NULL DEFAULT ''");
-  if (!cols.has("dirty")) handle.exec("ALTER TABLE runs ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0");
-  handle.exec("CREATE INDEX IF NOT EXISTS runs_commit ON runs(ship, name, commit_sha)");
+  migrate(handle, MIGRATIONS, "metrics.db");
   handlePath = path;
   return handle;
 }
@@ -149,20 +181,20 @@ export function roleOf(agent: string, ship?: string): string {
   return ship && agent.startsWith(`${ship}-`) ? agent.slice(ship.length + 1) : agent;
 }
 
-export function recordTurn(t: { agent: string; ship?: string; model?: string; ok: boolean; ms: number; cost?: number; tokens?: number; cacheRead?: number; prompt?: number; error?: string }): void {
+export function recordTurn(t: { eventKey?: string; agent: string; ship?: string; model?: string; ok: boolean; ms: number; cost?: number; tokens?: number; cacheRead?: number; prompt?: number; error?: string }): void {
   safely(() => {
     const ship = t.ship ?? "";
     metricsDb()
-      .query("INSERT INTO turns (ts, agent, role, ship, voyage, model, mode, ok, ms, cost, tokens, cache_read, prompt, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(now(), t.agent, roleOf(t.agent, ship), ship, openVoyageId(ship), t.model ?? "", ship ? shipMode(ship) : "host", t.ok ? 1 : 0, Math.round(t.ms), t.cost ?? 0, t.tokens ?? 0, t.cacheRead ?? 0, t.prompt ?? 0, (t.error ?? "").slice(0, 300));
+      .query("INSERT INTO turns (event_key, project_id, ts, agent, role, ship, voyage, model, mode, ok, ms, cost, tokens, cache_read, prompt, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING")
+      .run(t.eventKey ?? ulid(), ship || OFFICER_PROJECT, now(), t.agent, roleOf(t.agent, ship), ship, openVoyageId(ship), t.model ?? "", ship ? shipMode(ship) : "host", t.ok ? 1 : 0, Math.round(t.ms), t.cost ?? 0, t.tokens ?? 0, t.cacheRead ?? 0, t.prompt ?? 0, (t.error ?? "").slice(0, 300));
   });
 }
 
-export function recordRun(r: { ship: string; agent: string; kind: "check" | "maneuver"; name: string; ok: boolean; ms: number; cost?: number; deterministic?: boolean; detail?: string; commit?: string; dirty?: boolean }): void {
+export function recordRun(r: { eventKey?: string; ship: string; agent: string; kind: "check" | "maneuver"; name: string; ok: boolean; ms: number; cost?: number; deterministic?: boolean; detail?: string; commit?: string; dirty?: boolean }): void {
   safely(() =>
     metricsDb()
-      .query("INSERT INTO runs (ts, ship, voyage, agent, kind, name, deterministic, ok, ms, cost, detail, commit_sha, dirty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(now(), r.ship, openVoyageId(r.ship), r.agent, r.kind, r.name, r.deterministic === false ? 0 : 1, r.ok ? 1 : 0, Math.round(r.ms), r.cost ?? 0, (r.detail ?? "").slice(0, 300), r.commit ?? "", r.dirty ? 1 : 0),
+      .query("INSERT INTO runs (event_key, project_id, ts, ship, voyage, agent, kind, name, deterministic, ok, ms, cost, detail, commit_sha, dirty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING")
+      .run(r.eventKey ?? ulid(), r.ship || OFFICER_PROJECT, now(), r.ship, openVoyageId(r.ship), r.agent, r.kind, r.name, r.deterministic === false ? 0 : 1, r.ok ? 1 : 0, Math.round(r.ms), r.cost ?? 0, (r.detail ?? "").slice(0, 300), r.commit ?? "", r.dirty ? 1 : 0),
   );
 }
 
@@ -175,11 +207,11 @@ export function latestRunOn(ship: string, name: string, commit: string): { ok: b
   return r ? { ok: r.ok === 1, ts: r.ts, detail: r.detail } : null;
 }
 
-export function recordHandoff(h: { ship: string; from: string; to?: string; kind: string; size?: number }): void {
+export function recordHandoff(h: { eventKey?: string; ship: string; from: string; to?: string; kind: string; size?: number }): void {
   safely(() =>
     metricsDb()
-      .query("INSERT INTO handoffs (ts, ship, voyage, from_agent, to_agent, kind, size) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(now(), h.ship, openVoyageId(h.ship), h.from, h.to ?? "", h.kind, h.size ?? 0),
+      .query("INSERT INTO handoffs (event_key, project_id, ts, ship, voyage, from_agent, to_agent, kind, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING")
+      .run(h.eventKey ?? ulid(), h.ship || OFFICER_PROJECT, now(), h.ship, openVoyageId(h.ship), h.from, h.to ?? "", h.kind, h.size ?? 0),
   );
 }
 

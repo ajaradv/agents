@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { migrate, type Migration } from "./db-migrate.ts";
 import { nodeStateDir } from "./paths.ts";
 
 /**
@@ -26,7 +27,7 @@ export type WorkflowStatus = "waiting" | "running" | "done" | "failed" | "cancel
 export type Workflow<T = Record<string, unknown>> = { id: string; kind: WorkflowKind; status: WorkflowStatus; trace: string; data: T; created: string; updated: string };
 export type Step = { workflow: string; key: string; status: "started" | "done" | "failed"; result: unknown; started: string; ended: string | null };
 
-const SCHEMA = `
+const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS workflows (
   id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL, trace TEXT NOT NULL,
   data_json TEXT NOT NULL DEFAULT '{}', created TEXT NOT NULL, updated TEXT NOT NULL
@@ -43,6 +44,9 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_trace ON events(trace, id);
 `;
 
+// recall.ts keeps its own FTS tables in this file, created idempotently by itself.
+const MIGRATIONS: Migration[] = [{ version: 1, note: "baseline: workflows, steps, events", up: SCHEMA_V1 }];
+
 let db: Database | null = null;
 let dbPath = "";
 
@@ -52,7 +56,7 @@ function open(): Database {
   mkdirSync(nodeStateDir(), { recursive: true });
   db = new Database(path, { create: true });
   db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;");
-  db.exec(SCHEMA);
+  migrate(db, MIGRATIONS, "journal.db");
   dbPath = path;
   return db;
 }

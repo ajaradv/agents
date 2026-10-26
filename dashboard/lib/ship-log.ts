@@ -1,13 +1,18 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { addColumn, migrate, type Migration } from "./db-migrate.ts";
 import { fleetInboxRoot } from "./paths.ts";
+import { ulid } from "./ulid.ts";
 
 /**
  * The ship's log: one append-only SQLite file per ship at
  * fleet/inbox/ships/<ship>/ship.db (WAL, like SSSF's sssf.db), written by the
  * dashboard server as crewmates work. It exists so "where did it break?" has an
  * answer that does not live in a process's memory.
+ *
+ * The schema is numbered migrations (MIGRATIONS below; lib/db-migrate.ts).
+ * events.event_key is the idempotency key (unique; a replayed event adds nothing).
  *
  * kinds: chat-in (captain → crew), chat-out (crew → captain), question,
  * answer, turn-start, turn-end (ms, cost, tokens, error), tool, notice, canvas.
@@ -22,7 +27,7 @@ export type ShipEvent = {
   payload: Record<string, unknown> | null;
 };
 
-const SCHEMA = `
+const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS events (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   ts            TEXT NOT NULL,
@@ -49,6 +54,29 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE INDEX IF NOT EXISTS tasks_voyage ON tasks(voyage, id);
 `;
+
+const MIGRATIONS: Migration[] = [
+  {
+    version: 1,
+    note: "baseline: events and tasks",
+    up: (db) => {
+      db.exec(SCHEMA_V1);
+      // Added after the first voyages: dependencies between tasks (voyage-tasks.ts), as comma-separated ids.
+      addColumn(db, "tasks", "blocked_by", "TEXT NOT NULL DEFAULT ''");
+      // Who may claim the task (a crew role), or NULL for anyone aboard.
+      addColumn(db, "tasks", "role", "TEXT");
+    },
+  },
+  {
+    version: 2,
+    note: "event_key on events",
+    up: (db) => {
+      db.exec("ALTER TABLE events ADD COLUMN event_key TEXT");
+      db.exec("UPDATE events SET event_key = 'legacy:events:' || id");
+      db.exec("CREATE UNIQUE INDEX events_event_key ON events(event_key)");
+    },
+  },
+];
 
 const SHIP_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 const dbs = new Map<string, Database>();
@@ -77,12 +105,7 @@ function open(ship: string, root?: string): Database | null {
     mkdirSync(join(path, ".."), { recursive: true });
     db = new Database(path, { create: true });
     db.exec("PRAGMA journal_mode = WAL;");
-    db.exec(SCHEMA);
-    // Added after the first voyages: dependencies between tasks (voyage-tasks.ts), as comma-separated ids.
-    const cols = db.query("PRAGMA table_info(tasks)").all() as { name: string }[];
-    if (!cols.some((c) => c.name === "blocked_by")) db.exec("ALTER TABLE tasks ADD COLUMN blocked_by TEXT NOT NULL DEFAULT ''");
-    // Who may claim the task (a crew role), or NULL for anyone aboard.
-    if (!cols.some((c) => c.name === "role")) db.exec("ALTER TABLE tasks ADD COLUMN role TEXT");
+    migrate(db, MIGRATIONS, `ship.db (${ship})`);
     dbs.set(key, db);
   }
   return db;
@@ -94,14 +117,14 @@ export function logShipEvent(
   kind: string,
   summary: string,
   payload?: Record<string, unknown> | null,
-  opts: { root?: string; ts?: string } = {},
+  opts: { root?: string; ts?: string; eventKey?: string } = {},
 ): number | null {
   try {
     const r = open(ship, opts.root)
-      ?.query("INSERT INTO events (ts, actor, kind, summary, payload_json) VALUES (?, ?, ?, ?, ?)")
-      .run(opts.ts ?? new Date().toISOString(), actor, kind, summary.slice(0, 2000), payload ? JSON.stringify(payload) : null);
+      ?.query("INSERT INTO events (event_key, ts, actor, kind, summary, payload_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING")
+      .run(opts.eventKey ?? ulid(), opts.ts ?? new Date().toISOString(), actor, kind, summary.slice(0, 2000), payload ? JSON.stringify(payload) : null);
     if (!opts.root) onWrite(ship);
-    return r ? Number(r.lastInsertRowid) : null;
+    return r && r.changes > 0 ? Number(r.lastInsertRowid) : null; // a replayed event_key inserts nothing
   } catch (e) {
     console.error("[dashboard] ship log:", e);
     return null;

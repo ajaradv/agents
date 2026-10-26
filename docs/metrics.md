@@ -14,6 +14,24 @@ notebook).
 
 Views: `cost_by_role_model`, `check_pass_rates`, `voyage_totals`.
 
+`turns`, `runs`, and `handoffs` also carry `event_key` (unique, a ULID; the
+idempotency key, so a replayed event inserts nothing) and `project_id` (the
+ship, or `flagship` for the officers, whose turns have no ship). Rows from
+before these columns have `legacy:<table>:<id>` keys.
+
+## Schema changes
+
+Each SQLite file (`metrics.db`, `journal.db`, each ship's `ship.db`) is a list
+of numbered migrations (`MIGRATIONS` in `dashboard/lib/metrics.ts`,
+`journal.ts`, `ship-log.ts`; runner in `dashboard/lib/db-migrate.ts`), applied
+at open and recorded in `PRAGMA user_version`. To change a schema, append the
+next version (SQL string, or a function for steps SQL cannot express); never
+edit one that has shipped, because files already past it will not run it
+again. Each migration runs in its own transaction with the version bump, so a
+failure leaves the file at the last good version and the open throws with the
+database and version. Read-only openers do not migrate: they read what the
+writer has already brought up to date.
+
 ## Where it shows
 
 - **Health → Fleet metrics** (`dashboard/lib/metrics-view.ts`), for 7 days,
