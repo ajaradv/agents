@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseShipConfig } from "./fleet-layers.ts";
-import { stylesheetHrefs } from "./rig-ready.ts";
+import { loopbackRequest, stylesheetHrefs } from "./rig-ready.ts";
 
 const overlay = mkdtempSync(join(tmpdir(), "rig-overlay-"));
 const prev = process.env.FLEET_SHIP_OVERLAY_DIR;
@@ -96,5 +96,18 @@ print(json.dumps({"checks": sorted(d["checks"]), "builder": m.launchable_maneuve
     const out = Bun.spawnSync(["/usr/bin/python3", "-B", "-c", py, join(import.meta.dir, "..", "..", "bin", "launch"), file, dir]);
     expect(JSON.parse(out.stdout.toString())).toEqual({ checks: ["lint", "rig", "rig-down"], builder: ["rig"], mode: "m" });
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("short names and previews", () => {
+  test("a voyage slug is words and hyphens, a letter first, at most 32 characters", () => {
+    expect(r.rigSlug("2026 Design five variants of the search page, each one")).toBe("design-five-variants-of-the-sear");
+    expect(r.rigSlug("---")).toBe("voyage");
+    expect(r.rigSlug("Fix: login!")).toBe("fix-login");
+  });
+  test("previews fill in the port and the slug; *.localhost goes through 127.0.0.1 with its Host", () => {
+    expect(r.previewUrl("http://${FLEET_RIG_SLUG}.localhost/", 4100, "search")).toBe("http://search.localhost/");
+    expect(loopbackRequest("http://search.localhost/a?b=1")).toEqual({ url: "http://127.0.0.1/a?b=1", headers: { Host: "search.localhost" } });
+    expect(loopbackRequest("http://localhost:4100/")).toEqual({ url: "http://localhost:4100/", headers: {} });
   });
 });

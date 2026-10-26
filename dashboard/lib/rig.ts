@@ -89,7 +89,15 @@ export function freePort(taken: number[]): number | null {
   return null;
 }
 
-export const previewUrl = (ready: string, port: number) => ready.replace(/\$\{FLEET_RIG_PORT\}|\$FLEET_RIG_PORT\b/g, String(port));
+/** The ready URL with the voyage's port and short name filled in (lineage_atria's previews are <slug>.localhost). */
+export const previewUrl = (ready: string, port: number, slug = "") =>
+  ready.replace(/\$\{FLEET_RIG_PORT\}|\$FLEET_RIG_PORT\b/g, String(port)).replace(/\$\{FLEET_RIG_SLUG\}|\$FLEET_RIG_SLUG\b/g, slug);
+
+/** A voyage's short name: lowercase words and hyphens, a letter first, at most 32 characters (fits Compose and ship tooling). */
+export function rigSlug(raw: string): string {
+  const s = raw.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^[-0-9]+/, "").slice(0, 32).replace(/-+$/, "");
+  return s || "voyage";
+}
 
 /** What a rig record may carry across to another host (the laptop checks it before use). */
 export function validRig(r: unknown): Pick<RigRecord, "project" | "port" | "slug"> | null {
@@ -110,7 +118,7 @@ export function validRig(r: unknown): Pick<RigRecord, "project" | "port" | "slug
 export function rigEnv(rig: RigDecl | null, rec: Pick<RigRecord, "project" | "port" | "slug"> | null | undefined, shipId?: string): Record<string, string> {
   if (!rig) return {};
   if (!rec) return { ...rig.vars, ...(shipId ? { COMPOSE_PROJECT_NAME: rigProject(shipId, "checks") } : {}) };
-  return { ...rig.vars, COMPOSE_PROJECT_NAME: rec.project, FLEET_RIG_PORT: String(rec.port), FLEET_RIG_SLUG: rec.slug, FLEET_RIG_PREVIEW: previewUrl(rig.ready, rec.port) };
+  return { ...rig.vars, COMPOSE_PROJECT_NAME: rec.project, FLEET_RIG_PORT: String(rec.port), FLEET_RIG_SLUG: rec.slug, FLEET_RIG_PREVIEW: previewUrl(rig.ready, rec.port, rec.slug) };
 }
 
 /** This host's store of a ship's gitignored files (machine-local, never in git). */

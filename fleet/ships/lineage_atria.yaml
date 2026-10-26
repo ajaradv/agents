@@ -7,3 +7,15 @@ factory:
   adws:
     - adw_plan_build_test
 mode: no-mistakes
+
+# Rigging (dashboard/lib/rig.ts): its own multi-worktree tooling (scripts/dev_worktree.sh attach/detach) sets up
+# the voyage's worktree: the shared Traefik/Postgres/Redis stack (started once per host, kept), a database of its
+# own, and django/node under the voyage's Compose project. Previews are <slug>.localhost, which macOS resolves
+# without the dev DNS record (bin/rig-ready goes through 127.0.0.1 with the Host where it does not).
+rig:
+  vars:
+    DEV_DOMAIN: localhost
+  up:
+    - scripts/dev_worktree.sh attach "$FLEET_RIG_SLUG"
+  ready: http://${FLEET_RIG_SLUG}.localhost/
+  down: scripts/dev_worktree.sh detach "$FLEET_RIG_SLUG"
