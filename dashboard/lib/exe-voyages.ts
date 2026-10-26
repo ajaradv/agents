@@ -127,9 +127,10 @@ export async function provisionVoyageVm(shipId: string, slug: string, deps: Prov
       const r = await client.ssh(vm, `~/Workspace/agents/bin/voyage-vm-setup ${step}`);
       if (!r.ok) return await fail(`voyage-vm-setup ${step.split(" ")[0]} failed on ${vm}: ${r.body.trim().split("\n").slice(-2).join(" ").slice(0, 300)}`);
     }
-    // refresh restarts the worker when the agents repo moved.
+    // refresh restarts the worker when the agents repo moved. Probe with its ship list: the worker
+    // refuses any command outside a ship's folder, so an exec would never pass.
     const host = hostOf(vm);
-    const up = await until(async () => (await host.exec(["true"], { timeoutMs: 10_000 })).exitCode === 0, 3_000, 120_000, t);
+    const up = await until(async () => Boolean(await host.repoPath({ id: shipId, path: "" })), 3_000, 120_000, t);
     if (!up) return await fail(`${vm}'s worker did not answer after the refresh`);
     return { ok: true, vm, host };
   } catch (e) {

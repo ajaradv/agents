@@ -15,7 +15,7 @@ function fakes(opts: { vms?: ExeVm[]; adopt?: (n: number) => boolean; ssh?: (cmd
   const calls: string[] = [];
   let adopts = 0;
   let health = 0;
-  const host = { kind: "vm", label: "vm", exec: async () => (calls.push("health"), { stdout: "", stderr: "", exitCode: opts.health?.(++health) === false ? 125 : 0, timedOut: false, ms: 0 }) } as unknown as ShipHost;
+  const host = { kind: "vm", label: "vm", exec: async () => ({ stdout: "", stderr: "the laptop refused: that folder is not a ship repo or worktree on the laptop", exitCode: 126, timedOut: false, ms: 0 }), repoPath: async () => (calls.push("health"), opts.health?.(++health) === false ? "" : "/home/exedev/Workspace/Kinwork") } as unknown as ShipHost;
   return {
     calls,
     deps: {
