@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -53,4 +53,20 @@ export async function writeSecret(service: string, value: string, label = servic
   p.stdin.write(`add-generic-password -U -a fleet -s ${service} -l "${label.replace(/"/g, "")}" -w ${value}\n`);
   p.stdin.end();
   return (await p.exited) === 0;
+}
+
+/** Remove a secret; true when it is gone afterwards (one that never existed counts). */
+export async function deleteSecret(service: string): Promise<boolean> {
+  if (useFiles()) {
+    try {
+      unlinkSync(fileFor(service));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") return false;
+    }
+    return true;
+  }
+  const p = Bun.spawn(["/usr/bin/security", "delete-generic-password", "-a", "fleet", "-s", service], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
+  // Exit 44 is "item not found": already gone.
+  const code = await p.exited;
+  return code === 0 || code === 44;
 }

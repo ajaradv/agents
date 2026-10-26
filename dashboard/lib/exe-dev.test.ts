@@ -61,7 +61,7 @@ describe("an exe.dev voyage VM as a ship host", () => {
     const { exeVoyageHost } = await import("./exe-host.ts");
     const calls: { url: string; headers: Record<string, string> }[] = [];
     const host = exeVoyageHost("kinwork-search", {
-      secret: async (n) => (n === "exe-vm-kinwork-search" ? "exe1.vm" : n === "exe-worker-token" ? "w0rker" : ""),
+      secret: async (n) => (n === "exe-vm-kinwork-search" ? "exe1.vm" : n === "exe-worker-kinwork-search" ? "w0rker" : ""),
       fetch: async (url, init) => {
         calls.push({ url, headers: init.headers as Record<string, string> });
         return Response.json({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false, ms: 1 });

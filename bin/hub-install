@@ -7,6 +7,8 @@
 # Usage:
 #   bin/hub-install            tools and runtimes (pinned to the laptop's versions)
 #   bin/hub-install --check    only report what is installed
+#   bin/hub-install --worker   a voyage VM's worker (bin/voyage-vm-setup runs it): no browser,
+#                              no 1Password CLI, no herdr
 #
 # What it does NOT do (secrets and state stay manual and deliberate; see the
 # vault plan fleet/plans/ops/exe-dev-hub-setup.md):
@@ -20,6 +22,9 @@ PI_VERSION=1.3.0
 TREEHOUSE_VERSION=2.3.0
 HERDR_VERSION=0.9.5
 PI_EXTENSIONS=(pi-cursor-sdk@^0.4.0 pi-hermes-memory@^0.9.9 pi-jetbrains-junie-bridge@^1.4.0 pi-obsidian@^0.2.3)
+
+WORKER=0
+if [ "${1:-}" = --worker ]; then WORKER=1; shift; fi
 
 [ "$(uname)" = Linux ] || { echo "error: hub-install is for Linux hosts" >&2; exit 2; }
 case "$(uname -m)" in
@@ -56,7 +61,7 @@ if [ ! -f /etc/apt/sources.list.d/github-cli.list ]; then
   curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
   echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
 fi
-if [ ! -f /etc/apt/sources.list.d/1password.list ]; then
+if [ "$WORKER" = 0 ] && [ ! -f /etc/apt/sources.list.d/1password.list ]; then
   curl -fsSL https://downloads.1password.com/linux/keys/1password.asc | sudo gpg --dearmor --yes -o /etc/apt/keyrings/1password-archive-keyring.gpg
   echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$ARCH stable main" | sudo tee /etc/apt/sources.list.d/1password.list >/dev/null
 fi
@@ -65,10 +70,12 @@ if [ ! -f /etc/apt/sources.list.d/tailscale.list ]; then
   curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
 fi
 sudo apt-get update -qq
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gh 1password-cli tailscale >/dev/null
+pkgs=(gh tailscale)
+[ "$WORKER" = 1 ] || pkgs+=(1password-cli)
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${pkgs[@]}" >/dev/null
 
 step "a browser for screenshots (bin/fleet-shot)"
-if ! have google-chrome && ! have chromium; then
+if [ "$WORKER" = 0 ] && ! have google-chrome && ! have chromium; then
   if [ "$ARCH" = amd64 ]; then
     curl -fsSL -o /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/chrome.deb >/dev/null && rm -f /tmp/chrome.deb
@@ -117,7 +124,7 @@ if [ "$(ver treehouse --version | grep -o '[0-9.]*$')" != "$TREEHOUSE_VERSION" ]
   (cd /tmp && grep " $f\$" treehouse.sums | sha256sum -c --quiet)
   tar -xzf "/tmp/$f" -C /tmp treehouse && install -m 0755 /tmp/treehouse "$BIN/treehouse" && rm -f "/tmp/$f" /tmp/treehouse /tmp/treehouse.sums
 fi
-if [ "$(ver herdr --version | grep -o '[0-9.]*$')" != "$HERDR_VERSION" ]; then
+if [ "$WORKER" = 0 ] && [ "$(ver herdr --version | grep -o '[0-9.]*$')" != "$HERDR_VERSION" ]; then
   curl -fsSL -o "$BIN/herdr" "https://github.com/ogulcancelik/herdr/releases/download/v$HERDR_VERSION/herdr-linux-$HERDR_ARCH" && chmod 0755 "$BIN/herdr"
 fi
 
