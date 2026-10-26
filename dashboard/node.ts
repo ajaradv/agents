@@ -51,6 +51,7 @@ import { logShipEvent, onShipLogWrite } from "./lib/ship-log.ts";
 import { runCheck } from "./lib/ship-checks.ts";
 import { recordToolFailure } from "./lib/tool-failures.ts";
 import { newSession } from "./lib/session-rotate.ts";
+import { OFFICER_SHIP } from "./lib/ship-events.ts";
 
 /**
  * The fleet node: the long-lived local process that runs the fleet's agents.
@@ -428,7 +429,7 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
   if (what === "queue" && req.method === "POST") {
     // The captain's decision queue (lib/decision-queue.ts): a request, not an action; the captain starts it.
     const r = addQueueItem({ kind: String(b.kind ?? ""), ship: String(b.ship ?? ""), title: String(b.title ?? ""), request: String(b.request ?? ""), by: from });
-    if (r.ok) emit("ship", "fleet");
+    if (r.ok) emit("ship", OFFICER_SHIP);
     return reply(r.ok ? { ok: true, message: `Queued for the captain: ${r.item.title} (${r.item.kind} on ${r.item.ship}). It shows on the flagship's Decision queue; the captain starts it.` } : r);
   }
 
@@ -548,7 +549,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     if (!from) return Response.json({ ok: false, message: "Decision calls come from a live agent session." }, { status: 403 });
     const b = await body(req);
     const r = decision[1] === "spec" ? specSubmit(from, b) : designReview(from, b);
-    if (r.ok) emit("ship", "fleet");
+    if (r.ok) emit("ship", OFFICER_SHIP);
     return Response.json(r);
   }
 

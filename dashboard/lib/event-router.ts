@@ -8,6 +8,7 @@ import { dashLog } from "./log.ts";
 import { fleetInboxRoot, nodeStateDir } from "./paths.ts";
 import { notifyCaptain } from "./notify.ts";
 import { logShipEvent } from "./ship-log.ts";
+import { OFFICER_SHIP } from "./ship-events.ts";
 
 /**
  * The event router (resilient fleet runtime, R1), in the fleet node.
@@ -208,15 +209,15 @@ export class EventRouter {
     await dashLog("router", `${owner} ${res.ok ? "woken" : "not woken"}: ${events.map((e) => e.kind).join(",")} ${firstLines(res.detail).slice(0, 120)}`);
     if (res.ok) {
       this.failing.delete(owner);
-      logShipEvent("fleet", "router", "router", `Woke ${owner}: ${kinds}${was ? ` (reachable again after ${was.count} failed tries)` : ""}`, payload);
+      logShipEvent(OFFICER_SHIP, "router", "router", `Woke ${owner}: ${kinds}${was ? ` (reachable again after ${was.count} failed tries)` : ""}`, payload);
       return;
     }
     const f = { count: (was?.count ?? 0) + 1, told: was?.told ?? false };
     this.failing.set(owner, f);
-    if (f.count === 1) logShipEvent("fleet", "router", "router", `Could not wake ${owner}: ${kinds} (${firstLines(res.detail)}); retrying every 5 minutes`, payload);
+    if (f.count === 1) logShipEvent(OFFICER_SHIP, "router", "router", `Could not wake ${owner}: ${kinds} (${firstLines(res.detail)}); retrying every 5 minutes`, payload);
     if (f.count >= UNREACHABLE_AFTER && !f.told) {
       f.told = true;
-      logShipEvent("fleet", "router", "router", `${owner} is unreachable (${f.count} failed wakes); holding its lines and retrying hourly`, payload);
+      logShipEvent(OFFICER_SHIP, "router", "router", `${owner} is unreachable (${f.count} failed wakes); holding its lines and retrying hourly`, payload);
       this.tell(`${owner} cannot be woken; ${events.length} bus line(s) wait for it`, `The event router could not reach ${owner} ${f.count} times in a row: ${firstLines(res.detail)}\n\nWaiting: ${events.map((e) => line(e, 120)).join("\n")}\n\nThey are delivered when ${owner} is back (retried hourly).`);
     }
     // Keep them for the next attempt (Firstmate's TUI may be closed).
@@ -252,7 +253,7 @@ export function startEventRouter(): EventRouter {
 /** Recent wakes for Health (newest first), from the fleet ship log. */
 export async function recentWakes(limit = 8): Promise<{ ts: string; summary: string; ok: boolean }[]> {
   const { recentShipEvents } = await import("./ship-log.ts");
-  return recentShipEvents("fleet", 400)
+  return recentShipEvents(OFFICER_SHIP, 400)
     .filter((e) => e.kind === "router")
     .slice(0, limit)
     .map((e) => ({ ts: e.ts, summary: e.summary, ok: e.payload?.ok !== false }));

@@ -13,6 +13,7 @@ import { laptopSailable, laptopVoyages } from "./laptop-host.ts";
 import { QUEUE_KINDS, queueView, type QueueItem, type QueueKind } from "./decision-queue.ts";
 import { listSpecs, parseSpec } from "./specs.ts";
 import { voyageWorktree } from "./voyage-worktree.ts";
+import { OFFICER_SHIP, shipOf } from "./ship-events.ts";
 import { readMemorySync, voyageMemoryNotes } from "./memory-sync.ts";
 import { voyageId } from "./metrics.ts";
 import { recentManeuvers, type Maneuver } from "./ship-maneuvers.ts";
@@ -69,9 +70,8 @@ export function crewStatus(id: string, events: ShipEvent[], running = hostRunnin
 
 export function crewCards(ship: ShipRow, events: ShipEvent[]): CrewCard[] {
   const totals = shipTurnTotals(ship.id, new Date(Date.now() - 7 * DAY_MS).toISOString());
-  // The fleet ship (this repo) is crewed by the officers: their turns are logged there (lib/ship-events.ts).
   return listChatTargets()
-    .agents.filter((t) => t.ship === ship.id || (ship.id === "fleet" && !t.ship && t.kind === "headless"))
+    .agents.filter((t) => t.ship === ship.id)
     .map((target) => {
       const s = crewStatus(target.id, events);
       const t = totals[target.id];
@@ -157,6 +157,77 @@ export function shipState(ready: boolean, voyage: Voyage | null, cards: CrewCard
 
 // ---------------------------------------------------------------- harbor
 
+/** The officers (Alice, the designer, the architect): their cards with today's spend against their daily budgets. */
+export function officerCards(events: ShipEvent[]): CrewCard[] {
+  const totals = shipTurnTotals(OFFICER_SHIP, new Date(Date.now() - 7 * DAY_MS).toISOString());
+  return listChatTargets()
+    .agents.filter((t) => !t.ship && shipOf(t.id) === OFFICER_SHIP)
+    .map((target) => {
+      const s = crewStatus(target.id, events);
+      const t = totals[target.id];
+      return { target, ...s, cost7d: t?.cost ?? 0, turns7d: t?.turns ?? 0, errors7d: t?.errors ?? 0 };
+    });
+}
+
+/** The Flagship on the Harbor: the officers' ship, with what waits on the captain there. */
+async function flagshipTileHtml(): Promise<string> {
+  const cards = officerCards(recentShipEvents(OFFICER_SHIP, 200));
+  const open = queueView().open.length;
+  const working = cards.filter((c) => c.status === "working").length;
+  const waiting = cards.filter((c) => c.status === "waiting").length;
+  const spend = cards.reduce((n, c) => n + spentToday(OFFICER_SHIP, c.target.id), 0);
+  return `<a class="d-card d-card-border bg-base-100 ship-tile flagship-tile" href="/ships/${OFFICER_SHIP}" data-ship="${OFFICER_SHIP}">
+      <div class="ship-sprite" aria-hidden="true"><span class="ship-hull"></span><span class="ship-mast"></span><span class="ship-sail"></span><span class="ship-flag"></span></div>
+      <div class="stack-tight">
+        <div class="between"><h3 class="ship-name">Flagship</h3>${waiting ? `<span class="d-badge d-badge-sm d-badge-error">${waiting} need${waiting === 1 ? "s" : ""} you</span>` : `<span class="d-badge d-badge-outline d-badge-sm">${working ? "working" : "at anchor"}</span>`}</div>
+        <p class="muted">The officers: ${cards.map((c) => escapeHtml(c.target.label)).join(", ") || "none"} · decision queue ${open} open · today ${usd(spend)}</p>
+      </div>
+    </a>`;
+}
+
+/**
+ * The Flagship's deck: the officers (who decide with the captain and run the
+ * fleet's orders), the decision queue, orders, and the officers' log. It is not
+ * a repo ship: no voyages, rig, or shipyard.
+ */
+export async function flagshipDeckHtml(): Promise<string> {
+  const events = recentShipEvents(OFFICER_SHIP, 200);
+  const cards = officerCards(events);
+  const labels = new Map(cards.map((c) => [c.target.id, c.target.label]));
+  const budgetLine = (c: CrewCard) => {
+    const b = c.target.dailyBudgetUsd ?? 0;
+    return b ? `${escapeHtml(c.target.label)} ${usd(spentToday(OFFICER_SHIP, c.target.id))} of ${usd(b)} today` : "";
+  };
+  const budgets = cards.map(budgetLine).filter(Boolean);
+  const rows = collapseLog(events);
+  return `<div class="ship-deck stack">
+    <div class="ship-head between">
+      <div class="row">
+        <a class="d-btn d-btn-sm" href="/harbor" data-harbor>← Harbor</a>
+        <div>
+          <h3 class="ship-name">Flagship</h3>
+          <p class="muted path">The officers, on the hub: they decide with the captain (design and spec sessions), run orders, and watch the fleet.</p>
+        </div>
+      </div>
+      <div class="row-wrap"><span class="d-badge d-badge-outline d-badge-sm">7d ${usd(cards.reduce((n, c) => n + c.cost7d, 0))}</span></div>
+    </div>
+
+    <section class="stack">
+      <h3>Officers</h3>
+      ${cards.length ? `<div class="crew-grid">${cards.map(crewCardHtml).join("")}</div>` : `<p class="muted">No officers are registered (agents/&lt;id&gt;/agent.yaml).</p>`}
+      ${budgets.length ? `<p class="muted">Daily budgets (daily_budget_usd in each officer's agent.yaml): ${budgets.join(" · ")}</p>` : ""}
+    </section>
+
+    ${await decisionQueueHtml()}
+    ${await ordersPanelHtml()}
+
+    <section class="stack ship-log-wrap">
+      <h3 id="ship-log">Flagship's log</h3>
+      ${rows.length ? `<ol class="ship-log">${rows.slice(0, 80).map((r) => logRowHtml(r.event, labels, r.repeats)).join("")}</ol>` : `<p class="muted">Nothing logged yet. The officers' turns, delegations, router wakes, and orders land here.</p>`}
+    </section>
+  </div>`;
+}
+
 export async function harborHtml(): Promise<string> {
   const ships = await readShips();
   if (!ships.length) return `<p class="muted">No ships yet. Register one with bin/stamp-ship.</p>`;
@@ -209,7 +280,7 @@ export async function harborHtml(): Promise<string> {
       </div>
     </a>`;
   });
-  return `${await laptopBarHtml(ships)}<div class="harbor">${(await Promise.all(tiles)).join("")}</div>
+  return `${await laptopBarHtml(ships)}<div class="harbor">${await flagshipTileHtml()}${(await Promise.all(tiles)).join("")}</div>
   <details class="d-collapse d-collapse-arrow d-collapse-border bg-base-100 new-ship">
     <summary class="d-collapse-title">Build a new ship</summary><div class="d-collapse-content">
     <form class="stack shipyard-form" data-api="/api/ships" data-then="ship">
@@ -447,6 +518,7 @@ async function ledgerParts(ship: ShipRow, voyage: Voyage | null, labels: Map<str
 }
 
 export async function shipDeckHtml(shipId: string): Promise<string | null> {
+  if (shipId === OFFICER_SHIP) return flagshipDeckHtml();
   const ship = (await readShips()).find((s) => s.id === shipId);
   if (!ship) return null;
   const events = recentShipEvents(ship.id, 200);
@@ -497,7 +569,7 @@ export async function shipDeckHtml(shipId: string): Promise<string | null> {
 
     ${supplyGaugeHtml(spendToday, hasBudget ? budget : null)}
 
-    ${ship.id === "fleet" ? `${await decisionQueueHtml()}${await ordersPanelHtml()}` : voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels), tasks, condition, await sailChoice(ship))}
+    ${voyageHtml(ship, voyage, voyages, ready, cards, await ledgerParts(ship, voyage, labels), tasks, condition, await sailChoice(ship))}
 
     ${voyageRigHtml(ship)}
 
@@ -577,7 +649,7 @@ const ORDER_LABEL: Record<OrderMeta["status"], string> = {
 };
 
 /** A running order's progress from the fleet log: the step Alice is on, and whether she paused to answer the captain. */
-export function orderProgress(slug: string, total: number, events = recentShipEvents("fleet", 800)): { step: number; total: number; chatPaused: boolean } {
+export function orderProgress(slug: string, total: number, events = recentShipEvents(OFFICER_SHIP, 800)): { step: number; total: number; chatPaused: boolean } {
   const mine = events.filter((e) => e.payload?.order === slug);
   const done = mine.filter((e) => e.kind === "order-step" && e.payload?.ok === true).map((e) => Number(e.payload?.step) || 0);
   const step = Math.min(total, (done.length ? Math.max(...done) : 0) + 1);
@@ -646,7 +718,7 @@ async function decisionQueueHtml(): Promise<string> {
 
 async function ordersPanelHtml(): Promise<string> {
   const all = (await listOrders()).filter((o) => o.meta);
-  const events = recentShipEvents("fleet", 800);
+  const events = recentShipEvents(OFFICER_SHIP, 800);
   const open = all.filter((o) => !["done", "failed", "cancelled"].includes(o.meta!.status));
   const closed = all.filter((o) => ["done", "failed", "cancelled"].includes(o.meta!.status)).slice(0, 5);
   const row = (o: (typeof all)[number]) => {
