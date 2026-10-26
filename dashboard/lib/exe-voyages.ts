@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { exeClient, exeToken, goldenVmName, voyageVmName, type ExeClient } from "./exe-dev.ts";
+import { clearPaused } from "./exe-paused.ts";
 import { adoptVoyageVm, exeVoyageHost, forgetVoyageVm } from "./exe-host.ts";
 import { nodeStateDir } from "./paths.ts";
 import { readSecret } from "./secret-store.ts";
@@ -147,6 +148,7 @@ export async function releaseVoyageVm(vm: string, deps: { client?: Pick<ExeClien
     if (!/not.?found|no such|does not exist/i.test(m)) return { ok: false, message: `Could not remove the exe.dev VM ${vm}: ${m.slice(0, 200)}` };
   }
   await (deps.forget ?? ((n) => forgetVoyageVm(n)))(vm).catch(() => {});
+  clearPaused(vm);
   return { ok: true, message: `The exe.dev VM ${vm} was removed.` };
 }
 

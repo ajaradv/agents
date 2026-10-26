@@ -15,6 +15,10 @@
 #                                      and the ship's repo (git fetch); prints old -> new HEADs
 #   bin/voyage-vm-setup token          the worker token, read on stdin (never argv); restarts the worker
 #   bin/voyage-vm-setup env <ship>     a tar stream on stdin into the ship's rig env store
+#   bin/voyage-vm-setup wake           after a resume: fix the clock (systemd-timesyncd) and re-join the
+#                                      tailnet if its ephemeral node was removed while paused
+#   bin/voyage-vm-setup seal           before pausing a golden VM: leave the tailnet (copies must not
+#                                      inherit an identity); prints disk use
 #   bin/voyage-vm-setup status         the service, the tailnet, and a health check
 #
 # The worker token belongs to the hub: it makes one and pipes it to `token`.
@@ -186,6 +190,19 @@ cmd_tailnet() {
   echo "tailnet: $(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // "not joined" | rtrimstr(".")')"
 }
 
+# A resumed VM has a stale clock, and its ephemeral tailnet node may be gone.
+cmd_wake() {
+  sudo systemctl restart systemd-timesyncd >/dev/null 2>&1 || true
+  if ! tailnet_up; then sudo tailscale logout >/dev/null 2>&1 || true; tailnet_register; fi
+  echo "awake: $(date -u +%FT%TZ), tailnet $(tailnet_up && echo up || echo down)"
+}
+
+# A golden VM is paused without an identity; its copies join as new nodes.
+cmd_seal() {
+  sudo tailscale logout >/dev/null 2>&1 || true
+  echo "sealed: $(df -h / | awk 'NR == 2 { print $3 " used of " $2 " (" $5 ")" }')"
+}
+
 cmd_refresh() {
   local ship="${1:-}" repo url dir old new lock_old lock_new
   [ -n "$ship" ] || die "usage: bin/voyage-vm-setup refresh <ship>"
@@ -244,6 +261,8 @@ cmd_env() {
 case "${1:-}" in
   setup) shift; cmd_setup "$@" ;;
   tailnet) cmd_tailnet ;;
+  wake) cmd_wake ;;
+  seal) cmd_seal ;;
   refresh) shift; cmd_refresh "$@" ;;
   token) cmd_token ;;
   env) shift; cmd_env "$@" ;;

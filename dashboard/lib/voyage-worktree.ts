@@ -121,8 +121,8 @@ export function voyageHost(shipId: string): ShipHost {
 }
 
 /** A record's host. One exe.dev VM per voyage: its host is made from the record's VM name (shipHost has no "vm" backend and would fall back to this machine). */
-function hostFor(w: Pick<VoyageWorktree, "host" | "vm"> | null | undefined): ShipHost {
-  if (w?.host === "vm" && w.vm) return exeVoyageHost(w.vm);
+function hostFor(w: Pick<VoyageWorktree, "host" | "vm" | "ship"> | null | undefined): ShipHost {
+  if (w?.host === "vm" && w.vm) return exeVoyageHost(w.vm, { ship: w.ship });
   return shipHost(w?.host);
 }
 

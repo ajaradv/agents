@@ -55,3 +55,51 @@ describe("sailHost placement", () => {
     expect(await sailHost(gon, "prefer-laptop", "darwin", { laptop: no("asleep"), exe: ok })).toMatchObject({ ok: true, host: expect.anything() });
   });
 });
+
+describe("moveVoyage to exe.dev", () => {
+  const ship = { id: "kinwork", isolation: "host" as const, crew: ["lead"], path: "/k", rig: null } as never;
+  const voyage = { file: "/v/2026-10-26-fix-it.md", ship: "kinwork", status: "sailing" as const, goal: "Fix it", to: "kinwork-lead", started: "2026-10-26" };
+  const wt = (host?: string) => ({ ship: "kinwork", path: "/w", branch: "fix/it", base: "origin/main", host }) as never;
+  const setup = (o: { host?: string; ship?: unknown; sail?: { ok: boolean; why: string }; provision?: unknown } = {}) => {
+    const calls: string[] = [];
+    const deps = {
+      find: async () => (o.ship ?? ship) as never,
+      open: async () => voyage,
+      worktree: () => wt(o.host),
+      from: () => ({ kind: "laptop", label: "the laptop", exec: async (c: string[]) => (calls.push(`exec ${c.join(" ")}`), { stdout: "", stderr: "", exitCode: 0, timedOut: false, ms: 0 }) }) as never,
+      sailable: async () => o.sail ?? { ok: true, why: "" },
+      provision: (async (s: string, slug: string) => (calls.push(`provision ${s} ${slug}`), o.provision ?? { ok: false, message: "Could not copy kinwork-golden on exe.dev: boom" })) as never,
+      release: async (vm: string) => (calls.push(`release ${vm}`), { ok: true, message: "" }),
+    };
+    const stop = async (id: string) => void calls.push(`stop ${id}`);
+    return { calls, deps, stop };
+  };
+
+  test("refused: already on a VM, a Gondolin ship, or the switch says no", async () => {
+    const { moveVoyage } = await import("./shipyard.ts");
+    let s = setup({ host: "vm" });
+    expect(await moveVoyage("kinwork", "exe", s.stop, s.deps)).toMatchObject({ ok: false, message: expect.stringContaining("already on an exe.dev VM") });
+    s = setup({ host: "laptop", ship: { ...(ship as object), isolation: "vm" } });
+    expect(await moveVoyage("kinwork", "exe", s.stop, s.deps)).toMatchObject({ ok: false, message: expect.stringContaining("Gondolin") });
+    s = setup({ host: "laptop", sail: { ok: false, why: "exe.dev's pool is busy: 1 voyage VM running" } });
+    expect(await moveVoyage("kinwork", "exe", s.stop, s.deps)).toMatchObject({ ok: false, message: expect.stringContaining("pool is busy") });
+    expect(s.calls).toEqual([]);
+  });
+
+  test("a failed VM copy changes nothing: no crew stopped, nothing run on the source", async () => {
+    const { moveVoyage } = await import("./shipyard.ts");
+    const s = setup({ host: "laptop" });
+    const r = await moveVoyage("kinwork", "exe", s.stop, s.deps);
+    expect(r).toMatchObject({ ok: false, message: expect.stringContaining("stays where it is") });
+    expect(s.calls).toEqual(["provision kinwork fix-it"]);
+  });
+
+  test("uncommitted work on the source removes the new VM again", async () => {
+    const { moveVoyage } = await import("./shipyard.ts");
+    const s = setup({ host: "laptop", provision: { ok: true, vm: "kinwork-fix-it", host: { kind: "vm", label: "vm", vm: "kinwork-fix-it" } } });
+    s.deps.from = () => ({ kind: "laptop", label: "the laptop", exec: async (c: string[]) => (s.calls.push(`exec ${c[1]}`), { stdout: c[1] === "status" ? " M a.ts" : "", stderr: "", exitCode: 0, timedOut: false, ms: 0 }) }) as never;
+    const r = await moveVoyage("kinwork", "exe", s.stop, s.deps);
+    expect(r).toMatchObject({ ok: false, message: expect.stringContaining("uncommitted") });
+    expect(s.calls.at(-1)).toBe("release kinwork-fix-it");
+  });
+});

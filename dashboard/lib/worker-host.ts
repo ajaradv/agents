@@ -13,6 +13,8 @@ export type WorkerConfig = {
   /** Headers for every request and the WebSocket (the worker token, and a proxy's own token for a VM). */
   auth: () => Promise<Record<string, string>>;
   available: () => Promise<boolean>;
+  /** Awaited before every HTTP call and the RPC WebSocket (a paused VM wakes here); a rejection fails the call as an unreachable worker does. */
+  before?: () => Promise<void>;
   /** Test seam and the laptop's status cache. */
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
 };
@@ -68,7 +70,10 @@ function remoteRpc(cfg: WorkerConfig, agentId: string, crewToken: string, ctx: L
     };
     sock.onclose = () => end();
   };
-  cfg.auth().then(connect, (e) => end(`no token for the worker on ${cfg.label} (${e instanceof Error ? e.message : String(e)})`));
+  (cfg.before?.() ?? Promise.resolve()).then(
+    () => cfg.auth().then(connect, (e) => end(`no token for the worker on ${cfg.label} (${e instanceof Error ? e.message : String(e)})`)),
+    (e) => end(`could not reach the worker on ${cfg.label} (${e instanceof Error ? e.message : String(e)})`),
+  );
 
   return {
     stdin: {
@@ -100,6 +105,7 @@ export const LINK_LOST = -1;
  */
 export function workerHost(cfg: WorkerConfig): ShipHost {
   const call = async (path: string, init: RequestInit): Promise<Response> => {
+    await cfg.before?.();
     const url = cfg.url();
     if (!url) throw new Error(`no worker configured for ${cfg.label}`);
     const headers = { ...(init.headers as Record<string, string> | undefined), ...(await cfg.auth()) };
