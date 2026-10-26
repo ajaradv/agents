@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import type { ShipRow } from "./fleet-layers.ts";
 import { fleetInboxRoot } from "./paths.ts";
 import type { RigRecord } from "./rig.ts";
+import { exeVoyageHost } from "./exe-host.ts";
 import { readShipConfig } from "./ship-config.ts";
 import { hostGit, localHost, shipHost, type HostKind, type ShipHost } from "./ship-host.ts";
 
@@ -51,6 +52,8 @@ export type VoyageWorktree = {
   rig?: RigRecord;
   /** A design or spec session (lib/sessions.ts): the flagship officer working in this worktree as the ship's guest. */
   guest?: string;
+  /** host "vm": the exe.dev voyage VM holding the worktree (lib/exe-host.ts). */
+  vm?: string;
 };
 
 const recordPath = (shipId: string) => join(fleetInboxRoot(), "ships", shipId, "worktree.json");
@@ -114,7 +117,10 @@ export function rigPortsOn(host: HostKind): number[] {
 
 /** The ship host for a ship's repo work: the open voyage's, else this machine. */
 export function voyageHost(shipId: string): ShipHost {
-  return shipHost(voyageWorktree(shipId)?.host);
+  const w = voyageWorktree(shipId);
+  // One exe.dev VM per voyage: its host is made from the record's VM name.
+  if (w?.host === "vm" && w.vm) return exeVoyageHost(w.vm);
+  return shipHost(w?.host);
 }
 
 /** treehouse on the host: this machine's ~/.local/bin copy when it has one, else from PATH. */
