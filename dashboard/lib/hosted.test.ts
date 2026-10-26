@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -75,5 +75,31 @@ describe("the laptop as a ship host: what the hub may ask", () => {
     expect(hostedExecEnv(rigged, { project: "x; rm -rf ~", port: 4105 }).FLEET_RIG_PORT).toBeUndefined();
     // Env files go into a worktree, never the captain's checkout.
     expect((await hostedRigEnv(REPO, [rigged])).message).toContain("not the captain's checkout");
+  });
+  test("sessions: only the flagship's designer or architect comes aboard as a guest, in a worktree, never the checkout", async () => {
+    expect(await prepareHostedLaunch({ agent: "designer", ship: "fleet", config: {} }, [ship])).toMatchObject({ ok: false, message: expect.stringContaining("only for a session") });
+    expect(await prepareHostedLaunch({ agent: "designer", ship: "nope", config: {}, worktree: { path: REPO, branch: "design/x", base: "main" } }, [ship])).toMatchObject({ ok: false, message: expect.stringContaining("not a ship") });
+    expect(await prepareHostedLaunch({ agent: "designer", ship: "fleet", config: {}, worktree: { path: REPO, branch: "design/x", base: "main" } }, [ship])).toMatchObject({ ok: false, message: expect.stringContaining("not a worktree") });
+    expect(await prepareHostedLaunch({ agent: "alice", ship: "fleet", config: {}, worktree: { path: REPO, branch: "b", base: "main" } }, [ship])).toMatchObject({ ok: false });
+    expect(memoryPathOk("designer/memory/notes.md")).toBe(true);
+    expect(memoryPathOk("architect/sessions/current", "dashboard-architect-20261025-1200\n")).toBe(true);
+    expect(memoryPathOk("alice/memory/notes.md")).toBe(false);
+  });
+  test("sessions: the guest is accepted in a worktree of a ship here, with FLEET_GUEST_SHIP and the guest on its record", async () => {
+    const root = mkdtempSync(join(tmpdir(), "hosted-guest-"));
+    const repo = join(root, "repo");
+    const git = (args: string[], cwd = repo) => Bun.spawnSync(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd });
+    mkdirSync(repo);
+    git(["init", "-q", "-b", "main"]);
+    writeFileSync(join(repo, "a.txt"), "a");
+    git(["add", "."]);
+    git(["commit", "-qm", "a"]);
+    git(["worktree", "add", "-q", "-b", "design/search", join(root, "wt")]);
+    const kin = { id: "kin", path: repo, checks: {}, isolation: "host" as const };
+    const r = await prepareHostedLaunch({ agent: "designer", ship: "kin", config: { crew: ["lead"] }, worktree: { path: join(root, "wt"), branch: "design/search", base: "main" } }, [kin]);
+    expect(r).toMatchObject({ ok: true, env: { FLEET_GUEST_SHIP: "kin", FLEET_HOSTED: "1" } });
+    const rec = JSON.parse(readFileSync(join(process.env.FLEET_HOSTED_INBOX ?? "", "ships", "kin", "worktree.json"), "utf8"));
+    expect(rec.guest).toBe("designer");
+    rmSync(root, { recursive: true, force: true });
   });
 });

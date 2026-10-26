@@ -44,7 +44,8 @@ import { onShipLogWrite } from "./lib/ship-log.ts";
 import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
 import { harborChartJson } from "./lib/harbor-chart.ts";
 import { metricsDashboardHtml, parsePeriod } from "./lib/metrics-view.ts";
-import { dockVoyage, findShip, moveVoyageToHub, openVoyage, registerShip, setCrew, setOrchestrator, startVoyage, voyageBrief } from "./lib/shipyard.ts";
+import { dockVoyage, findShip, moveVoyageToHub, openVoyage, registerShip, setCrew, setOrchestrator, startQueueSession, startVoyage, voyageBrief } from "./lib/shipyard.ts";
+import { addQueueItem, moveQueueItem, readQueue, updateQueueItem } from "./lib/decision-queue.ts";
 import { rigVoyage } from "./lib/rigging.ts";
 import { readShips } from "./lib/fleet-layers.ts";
 import { setLaptopVoyages } from "./lib/laptop-host.ts";
@@ -881,6 +882,25 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       const there = (await readShips()).filter((s) => voyageWorktree(s.id)?.host === "laptop").map((s) => s.id);
       sseBroadcast("rail");
       return Response.json({ ok: true, message: on ? "Ships may sail on the laptop while it is awake." : `New voyages sail on the hub.${there.length ? ` Still on the laptop: ${there.join(", ")} (Move to hub, or they wait while it sleeps).` : ""}` });
+    }
+    // The decision queue (lib/decision-queue.ts): add, order, drop, and start a session (lib/sessions.ts).
+    if (path === "/api/queue" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const r = addQueueItem({ kind: String(b.kind ?? ""), ship: String(b.ship ?? ""), title: String(b.title ?? ""), request: String(b.request ?? ""), by: "captain" });
+      sseBroadcast("ship", "fleet");
+      return Response.json(r.ok ? { ok: true, message: `Queued: ${r.item.title}.` } : r, { status: r.ok ? 200 : 400 });
+    }
+    const queueAct = path.match(/^\/api\/queue\/(q[0-9a-z]{6,12})\/(start|up|down|drop)$/);
+    if (queueAct && req.method === "POST") {
+      const [, id, act] = queueAct as unknown as [string, string, string];
+      let res: { ok: boolean; message: string };
+      if (act === "start") res = await startQueueSession(id, { deliver: deliverBrief, stop: stopHost });
+      else if (act === "drop") res = updateQueueItem(id, { status: "dropped" }) ? { ok: true, message: "Dropped." } : { ok: false, message: "No such item." };
+      else res = moveQueueItem(id, act as "up" | "down") ? { ok: true, message: "Moved." } : { ok: false, message: "It is already at that end." };
+      sseBroadcast("ship", "fleet");
+      const item = readQueue().find((i) => i.id === id);
+      if (item) sseBroadcast("ship", item.ship);
+      return Response.json(res, { status: res.ok ? 200 : 400 });
     }
     // Rig again (lib/rigging.ts): set the open voyage's stack up once more; a held brief goes out when it is ready.
     const rigAgain = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/rig$/);

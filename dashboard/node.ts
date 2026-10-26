@@ -15,7 +15,7 @@ import { allChatTargetIds, chatAllowed, chatTarget, refreshAgentTargets, startCh
 import type { ChatLine } from "./lib/chat.ts";
 import { busPost, busRead } from "./lib/bus-api.ts";
 import { cursorAtEnd, decodeCursor, encodeCursor, eventsAfter, sseFrame, streamShips } from "./lib/ship-stream.ts";
-import { crewAddTask, crewCanvas, crewDockRequest, crewHelper, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
+import { crewAddTask, crewCanvas, crewDockRequest, crewQueueRequest, crewHelper, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
 import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
 import { startRoutines, type Routine } from "./lib/routines.ts";
@@ -24,6 +24,7 @@ import { materializeAllShips } from "./lib/ship-config.ts";
 import { freeRegistryAge, refreshFreeModels } from "./lib/free-models.ts";
 import { readShips } from "./lib/fleet-layers.ts";
 import { SYNC_MS, syncRemoteMemory } from "./lib/memory-sync.ts";
+import { addQueueItem } from "./lib/decision-queue.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos, needsChanged } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
@@ -370,6 +371,7 @@ async function crewApi(req: Request, shipId: string, what: string, num: string |
     else if (what === "message") res = await crewMessage(shipId, { ...b, from } as never);
     else if (what === "crew-request") res = await crewRequestRole(shipId, { ...b, from } as never);
     else if (what === "dock-request") res = await crewDockRequest(shipId, { ...b, from } as never);
+    else if (what === "queue-request") res = await crewQueueRequest(shipId, { ...b, from } as never);
     else if (what === "look") res = await crewLook(shipId, { ...b, from } as never);
     else if (what === "helper") res = await crewHelper(shipId, { ...b, from });
     else if (what === "canvas") res = await crewCanvas(shipId, { ...b, from });
@@ -420,6 +422,13 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
 
   if (what === "public" && req.method === "POST") {
     return reply(await askPublic(from, String(b.question ?? ""), String(b.text ?? "")));
+  }
+
+  if (what === "queue" && req.method === "POST") {
+    // The captain's decision queue (lib/decision-queue.ts): a request, not an action; the captain starts it.
+    const r = addQueueItem({ kind: String(b.kind ?? ""), ship: String(b.ship ?? ""), title: String(b.title ?? ""), request: String(b.request ?? ""), by: from });
+    if (r.ok) emit("ship", "fleet");
+    return reply(r.ok ? { ok: true, message: `Queued for the captain: ${r.item.title} (${r.item.kind} on ${r.item.ship}). It shows on the flagship's Decision queue; the captain starts it.` } : r);
   }
 
   if (what === "notify" && req.method === "POST") {
@@ -534,7 +543,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|delegate|public|recall|vault-tasks)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
-  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm|look|helper|canvas|crew-request|dock-request)(?:\/(\d+))?$/);
+  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm|look|helper|canvas|crew-request|dock-request|queue-request)(?:\/(\d+))?$/);
   if (crew) return crewApi(req, crew[1]!, crew[2]!, crew[3]);
 
   if (!path.startsWith("/v1/")) return new Response("not found", { status: 404 });

@@ -227,6 +227,20 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "queue_request",
+    label: "File a decision for the captain's queue",
+    description: "Lead only. When the goal asks for options, variants, ideas, or a direction rather than something decided, ask the captain first (ask_captain: explore together first, or build as asked?). To explore, file it here: design (looks, with the fleet's designer) or spec (what to build, with the fleet's architect). The captain starts the session from the flagship's Decision queue; the voyage waits for the spec.",
+    parameters: Type.Object({
+      kind: StringEnum(["design", "spec"] as const),
+      title: Type.String({ description: "What needs deciding, in a few words (Search page redesign)" }),
+      request: Type.String({ description: "What the captain asked for and why, constraints, examples to look at" }),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "queue-request", { kind: p.kind, title: p.title, request: p.request }));
+    },
+  });
+
+  pi.registerTool({
     name: "crew_request",
     label: "Request a crew role",
     description: "Lead only. Ask the captain to bring a role aboard that the voyage needs and the ship lacks (for example builder for code: logic, server, tests). It becomes a Go request in the captain's Needs you; on Go the role comes aboard and you get a message. Say why in one sentence. End your turn after asking; do not give the work to a role that does not fit it while you wait.",

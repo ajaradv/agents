@@ -14,6 +14,7 @@ import { logShipEvent, recentShipEvents } from "./ship-log.ts";
 import { recordHandoff, recordRun } from "./metrics.ts";
 import { describeGates, gateFolder, gateStatus, runGates } from "./gates.ts";
 import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
+import { addQueueItem } from "./decision-queue.ts";
 import { describeManeuver, findManeuver, launchRefusal, maneuverAvailability, type ManeuverAvailability } from "./maneuvers.ts";
 import { runCheck, tail, treeState } from "./ship-checks.ts";
 import { freeSlot, helperDefs, HOST_LABEL, HOST_SLOTS, pickHelperHost, runHelperHere, shotUrls, takeShots, takeSlot, type HelperDef, type HelperResult, type ShotOptions } from "./helpers.ts";
@@ -32,9 +33,11 @@ import { existsSync } from "node:fs";
 
 type Res = { ok: boolean; message: string; [k: string]: unknown };
 
-async function aboard(shipId: string, from: string): Promise<{ ship: ShipRow; role: string } | { error: Res }> {
+async function aboard(shipId: string, from: string): Promise<{ ship: ShipRow; role: string; guest?: true } | { error: Res }> {
   const ship = (await readShips()).find((s) => s.id === shipId);
   if (!ship) return { error: { ok: false, message: `No ship named ${shipId}.` } };
+  // A session guest (lib/sessions.ts): the flagship officer the open session brought aboard, in its own role.
+  if (voyageWorktree(shipId)?.guest === from) return { ship, role: from, guest: true };
   const role = from.startsWith(`${shipId}-`) ? from.slice(shipId.length + 1) : "";
   if (!role || !ship.crew.includes(role)) return { error: { ok: false, message: `${from} is not aboard ${shipId}.` } };
   return { ship, role };
@@ -493,11 +496,27 @@ export async function crewRequestRole(shipId: string, b: { from: string; role?: 
   return requestGo(b.from, "crew_change", { ship: shipId, add: role }, why);
 }
 
+/**
+ * The lead files a decision for the captain's queue (lib/decision-queue.ts):
+ * a goal that asks for options, variants, or a direction goes to a design or
+ * spec session with the flagship's designer or architect instead of a voyage.
+ */
+export async function crewQueueRequest(shipId: string, b: { from: string; kind?: string; title?: string; request?: string }): Promise<Res> {
+  const a = await aboard(shipId, b.from);
+  if ("error" in a) return a.error;
+  if (a.role !== "lead") return { ok: false, message: "Only the ship's lead files queue requests. Tell the lead with crew_message." };
+  const kind = b.kind === "spec" ? "spec-session" : b.kind === "design" ? "design-session" : "";
+  if (!kind) return { ok: false, message: "kind is design (looks: the designer) or spec (what to build: the architect)." };
+  const r = addQueueItem({ kind, ship: shipId, title: String(b.title ?? ""), request: String(b.request ?? ""), by: b.from });
+  if (!r.ok) return r;
+  return { ok: true, message: `Filed for the captain's decision queue: ${r.item.title} (${kind}). The captain starts it with the ${kind === "design-session" ? "designer" : "architect"}; the decision comes back as a spec a voyage can sail from.` };
+}
+
 /** The lead asks to dock the voyage (with its summary): a Go request for the captain, never a direct API call. */
 export async function crewDockRequest(shipId: string, b: { from: string; summary?: string }): Promise<Res> {
   const a = await aboard(shipId, b.from);
   if ("error" in a) return a.error;
-  if (a.role !== "lead") return { ok: false, message: "Only the ship's lead asks to dock. Message the lead with crew_message instead." };
+  if (a.role !== "lead" && !a.guest) return { ok: false, message: "Only the ship's lead asks to dock. Message the lead with crew_message instead." };
   const v = await needVoyage(a.ship);
   if ("ok" in v) return v;
   const summary = String(b.summary ?? "").trim().replace(/\s+/g, " ").slice(0, 600);

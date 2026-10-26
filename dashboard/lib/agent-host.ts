@@ -15,7 +15,7 @@ import { notifyCaptain } from "./notify.ts";
 import { recordToolFailure } from "./tool-failures.ts";
 import { LINK_LOST } from "./laptop-host.ts";
 import { localHost, type RpcProc } from "./ship-host.ts";
-import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
+import { guestShip, voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 import { parseRig, rigEnv } from "./rig.ts";
 import { readShipConfig } from "./ship-config.ts";
 import { toolFailed } from "../../extensions/cache-watch.ts";
@@ -475,7 +475,8 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
   // On the ship host of the crewmate's voyage (lib/ship-host.ts); officers and idle ships run here.
   // Crewmates call back into the fleet node (extensions/crew.ts) and prove
   // who they are with FLEET_CREW_TOKEN, never with a name in the request.
-  const ship = chatTarget(agentId)?.ship;
+  // A crewmate's ship, or the ship whose open session has this officer as its guest (lib/sessions.ts).
+  const ship = chatTarget(agentId)?.ship ?? guestShip(agentId);
   const host = ship ? voyageHost(ship) : localHost;
   const worktree = ship ? voyageWorktree(ship) : null;
   // A rigged voyage (lib/rig.ts): the crew's shells reach the voyage's own stack. The laptop adds the same from its config.

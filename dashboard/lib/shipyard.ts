@@ -19,8 +19,10 @@ import { endVoyageMemory, freshSession as freshCrewSession, memoryFiles, startVo
 import { laptopSailable } from "./laptop-host.ts";
 import { ledgerLine, ledgerMarkdown, recordVoyageDock, recordVoyageStart, voyageId, voyageLedger } from "./metrics.ts";
 import { hostRunner, localHost, shipHost, type ShipHost } from "./ship-host.ts";
-import { leaseVoyageWorktree, releaseVoyageWorktree, updateVoyageRig, usesVoyageWorktrees, voyageHost, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
+import { leaseVoyageWorktree, releaseVoyageWorktree, setVoyageGuest, updateVoyageRig, usesVoyageWorktrees, voyageHost, voyageWorktree, type VoyageWorktree } from "./voyage-worktree.ts";
 import { planRig, rigVoyage, unrigVoyage, type Deliver } from "./rigging.ts";
+import { briefHeading, extractBrief, SESSION_KINDS, sessionBranch, sessionBrief, type SessionKind } from "./sessions.ts";
+import { finishQueueItem, readQueue, updateQueueItem } from "./decision-queue.ts";
 
 /**
  * The shipyard: build a ship (register it, check what it is missing), crew it
@@ -179,7 +181,7 @@ export function readyToSail(items: CheckItem[]): boolean {
 
 // ---------------------------------------------------------------- voyages
 
-export type Voyage = { file: string; ship: string; status: "sailing" | "docked"; goal: string; to: string; started: string; ended?: string; worktree?: VoyageWorktree };
+export type Voyage = { file: string; ship: string; status: "sailing" | "docked"; goal: string; to: string; started: string; ended?: string; worktree?: VoyageWorktree; session?: SessionKind };
 
 function voyageDir(shipId: string): string {
   return join(aliceVault(), "fleet", "voyages", shipId);
@@ -208,6 +210,7 @@ export async function listVoyages(shipId: string): Promise<Voyage[]> {
         goal: String(fm.goal ?? ""),
         to: String(fm.to ?? ""),
         started: String(fm.started ?? ""),
+        ...(fm.kind === "session" && (fm.session === "design" || fm.session === "spec") ? { session: fm.session as SessionKind } : {}),
         ...(fm.ended ? { ended: String(fm.ended) } : {}),
       });
     } catch {
@@ -246,12 +249,17 @@ export async function sailHost(ship: Pick<ShipRow, "id" | "isolation">, requeste
  * brief (held until a rigged ship's stack is ready) and how to stop crew
  * processes left from before (they must start again with the voyage's rig).
  */
-export type SailOpts = { deliver?: Deliver; stop?: (agentId: string) => Promise<void> };
+export type SailOpts = { deliver?: Deliver; stop?: (agentId: string) => Promise<void>; session?: SessionKind };
 
 export async function startVoyage(shipId: string, goal: string, to: string, on?: string, opts: SailOpts = {}): Promise<{ ok: boolean; message: string; voyage?: Voyage; rigging?: boolean }> {
   const ship = await findShip(shipId);
   if (!ship) return { ok: false, message: `No ship named ${shipId}.` };
-  const where = await sailHost(ship, on);
+  // A session (lib/sessions.ts): the flagship officer as the ship's guest, on the laptop (the captain opens its preview there).
+  const session = opts.session;
+  if (session && to !== SESSION_KINDS[session]) return { ok: false, message: `A ${session} session goes to the ${SESSION_KINDS[session]}.` };
+  if (session && ship.orchestrator !== "lead") return { ok: false, message: `${shipId} is run by Firstmate; sessions need a lead-run ship.` };
+  const where = await sailHost(ship, session ? "laptop" : on);
+  if (session && !where.ok) return { ok: false, message: `${where.message} Design and spec sessions run on the laptop; this one waits in the queue until it is awake.` };
   if (!where.ok) return { ok: false, message: where.message };
   const host = where.host;
   const g = goal.trim().replace(/\s+/g, " ");
@@ -266,11 +274,11 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
   // Fleet-crewed ships work in a leased worktree on a crew/ branch, never in the captain's checkout.
   let worktree: VoyageWorktree | undefined;
   if (usesVoyageWorktrees(ship, host)) {
-    const lease = await leaseVoyageWorktree(ship, slug, g, host);
+    const lease = session ? await leaseVoyageWorktree(ship, sessionBranch(session, slug.slice(0, 40).replace(/-+$/, "")), "", host) : await leaseVoyageWorktree(ship, slug, g, host);
     if ("message" in lease) return { ok: false, message: lease.message };
     worktree = lease.worktree;
   }
-  const crew = ship.crew.map((r) => `${shipId}-${r}`);
+  const crew = session ? [to] : ship.crew.map((r) => `${shipId}-${r}`);
   await writeFile(
     file,
     [
@@ -280,6 +288,7 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
       "status: sailing",
       `goal: ${yamlStr(g)}`,
       `to: ${to}`,
+      ...(session ? ["kind: session", `session: ${session}`] : []),
       `orchestrator: ${ship.orchestrator}`,
       `crew: [${crew.join(", ")}]`,
       ...(worktree ? [`branch: ${worktree.branch}`, `worktree: ${yamlStr(worktree.path)}`] : []),
@@ -299,7 +308,8 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
     "utf8",
   );
   logShipEvent(shipId, "captain", "voyage-start", g, { file, to, ...(worktree ? { branch: worktree.branch, worktree: worktree.path } : {}) });
-  const voyage: Voyage = { file, ship: shipId, status: "sailing", goal: g, to, started: now.toISOString(), ...(worktree ? { worktree } : {}) };
+  const voyage: Voyage = { file, ship: shipId, status: "sailing", goal: g, to, started: now.toISOString(), ...(worktree ? { worktree } : {}), ...(session ? { session } : {}) };
+  if (session && worktree) setVoyageGuest(shipId, to);
   recordVoyageStart({ id: voyageId(file), ship: shipId, goal: g, to, branch: worktree?.branch, worktree: worktree?.path, started: now.toISOString() });
   // Tiered crew memory (lib/crew-memory.ts): a fresh voyage scratchpad, fresh crew sessions, no leftovers.
   if (ship.orchestrator === "lead") {
@@ -316,10 +326,15 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
       logShipEvent(shipId, "helm", "rig", `Not rigged: ${plan.error}`);
       return { ok: true, message: `${shipId} set sail, but its stack was not rigged: ${plan.error} The brief was not sent.`, voyage, rigging: true };
     }
-    updateVoyageRig(shipId, { brief: { to, text: voyageBrief(ship, voyage) } });
+    updateVoyageRig(shipId, { brief: { to, text: session && worktree ? sessionBrief({ ship: shipId, kind: session, topic: g, record: file, branch: worktree.branch }) : voyageBrief(ship, voyage) } });
     if (opts.stop) for (const id of crew) await opts.stop(id).catch(() => {});
     void rigVoyage(ship, opts.deliver ?? null).catch((e) => console.error("[rig]", e));
-    return { ok: true, message: `${shipId} set sail${host.kind === "local" ? "" : ` on ${host.label}`}; rigging its stack first (port ${plan?.port}). The brief goes to ${to} when the app is ready.`, voyage, rigging: true };
+    return { ok: true, message: `${shipId} ${session ? `${session} session opened` : "set sail"}${host.kind === "local" ? "" : ` on ${host.label}`}; rigging its stack first (port ${plan?.port}). The brief goes to ${to} when the app is ready.`, voyage, rigging: true };
+  }
+  if (session && worktree) {
+    if (opts.stop) await opts.stop(to).catch(() => {});
+    await opts.deliver?.(to, sessionBrief({ ship: shipId, kind: session, topic: g, record: file, branch: worktree.branch }));
+    return { ok: true, message: `${shipId} ${session} session opened on ${host.label}.`, voyage, rigging: true };
   }
   return { ok: true, message: `${shipId} set sail${host.kind === "local" ? "" : ` on ${host.label}`}.`, voyage };
 }
@@ -329,13 +344,14 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   if (!v) return { ok: false, message: `${shipId} is not under sail.` };
   // Dock gates first: the branch's latest commit must have passed them (run them with Run gates).
   const ship = await findShip(shipId);
-  if (ship?.gates.dock.length) {
+  if (ship?.gates.dock.length && !v.session) {
     const gates = await gateStatus(ship, "dock");
     if (!gates.green) return { ok: false, message: `${shipId} cannot dock yet: ${describeGates(gates)} Run the gates (Run gates on the deck, or ask the lead), then dock again.` };
   }
   // The ship host holding the voyage's repo (lib/ship-host.ts), and the repo there: read before the release drops the record.
   const host = voyageHost(shipId);
   const repo = voyageWorktree(shipId)?.repo ?? ship?.path ?? "";
+  const guest = voyageWorktree(shipId)?.guest;
   // The voyage's stack goes first (lib/rigging.ts), then the worktree: uncommitted work keeps the voyage open.
   if (ship) await unrigVoyage(ship);
   const released = ship ? await releaseVoyageWorktree(ship) : { ok: true, message: "" };
@@ -348,10 +364,14 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   const ledger = voyageLedger(id);
   // Dock review (lib/dock-review.ts): how closely the captain should review the branch before merging. Advisory.
   const branchInfo = released.message.match(/^Branch (\S+) has \d+ commit\(s\) on (\S+?),/);
-  const review = ship && branchInfo && commits > 0 ? await reviewBranch(repo, branchInfo[2]!, branchInfo[1]!, undefined, host).catch(() => null) : null;
+  const review = ship && branchInfo && commits > 0 && !v.session ? await reviewBranch(repo, branchInfo[2]!, branchInfo[1]!, undefined, host).catch(() => null) : null;
   // Land through the ship's delivery mode (lib/dock-delivery.ts): a pull request for direct-PR and no-mistakes ships.
   let delivered = "";
-  if (ship && branchInfo && commits > 0 && deliveryFor(ship.mode) === "pr") {
+  // A session delivers nothing: its prototype branch is pushed (no pull request) for the voyage that builds the decision.
+  if (v.session && branchInfo && commits > 0) {
+    const push = await host.exec(["git", "push", "-u", "origin", branchInfo[1]!], { timeoutMs: 120_000, cwd: repo });
+    delivered = push.exitCode === 0 ? `Prototype branch pushed: ${branchInfo[1]} (no pull request; a voyage starts from it).` : `The prototype branch ${branchInfo[1]} was not pushed: ${(push.stderr || push.stdout).split("\n").pop()?.slice(0, 160)}.`;
+  } else if (ship && branchInfo && commits > 0 && deliveryFor(ship.mode) === "pr") {
     const body = [
       summary.trim() || "Docked voyage.",
       ledger ? ledgerMarkdown(ledger) : "",
@@ -364,7 +384,7 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
     delivered = pr.ok ? `Pull request: ${pr.url}.` : `Delivery (${ship.mode}): ${pr.message}.`;
   }
   // The voyage's memory is archived into its note, then discarded.
-  const crewIds = ship ? ship.crew.map((r) => `${shipId}-${r}`) : [];
+  const crewIds = v.session && guest ? [guest] : ship ? ship.crew.map((r) => `${shipId}-${r}`) : [];
   // A remote host kept the crew's memory: bring it back first, then clear the voyage's part there.
   if (ship?.orchestrator === "lead" && host.getMemory) {
     await host.getMemory(shipId, crewIds).then(writeMemoryFiles).catch((e) => logShipEvent(shipId, "helm", "notice", `Crew memory on ${host.label} was not brought back: ${e instanceof Error ? e.message : String(e)}`));
@@ -376,6 +396,16 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   let text = await readFile(v.file, "utf8");
   text = text.replace(/^status: sailing$/m, "status: docked").replace(/^started: (.*)$/m, `started: $1\nended: ${now}`);
   const note = summary.trim();
+  // A session's outcome: the brief the officer wrote into the scratchpad becomes a section of its record.
+  const brief = v.session ? extractBrief(scratch, v.session) : "";
+  if (v.session) {
+    text = text.replace(/^status: docked$/m, "status: wrapped");
+    text = text.trimEnd() + `\n- ${now} wrapped up${delivered ? `; ${delivered}` : ""}\n` + (note ? `\n## Summary\n\n${note}\n` : "") + `\n## ${briefHeading(v.session)}\n\n${brief || "(The session ended without a brief in the scratchpad; see the memory below.)"}\n` + (scratch ? `\n## Session memory (archived at wrap-up)\n\n${scratch}\n` : "") + (canvas.dir ? `\nCanvas: ${canvas.items} item(s) archived to fleet/inbox/${canvas.dir} (kept 30 days).\n` : "");
+    await writeFile(v.file, text, "utf8");
+    finishQueueItem(v.file, brief ? "done" : "done-without-brief");
+    logShipEvent(shipId, "captain", "voyage-end", note || `${v.session} session wrapped up`, { file: v.file });
+    return { ok: true, message: `${shipId}'s ${v.session} session wrapped up. ${delivered}${brief ? ` The ${briefHeading(v.session).toLowerCase()} is in the record.` : " No brief was written."}` };
+  }
   text = text.trimEnd() + `\n- ${now} docked${released.message ? `; ${released.message}` : ""}\n` + (delivered ? `\n${delivered}\n` : "") + (note ? `\n## Summary\n\n${note}\n` : "") + (ledger ? `\n${ledgerMarkdown(ledger)}` : "") + (review ? `\n## Dock review\n\n${reviewLine(review)}\n` : "") + (scratch ? `\n## Voyage memory (archived at dock)\n\n${scratch}\n` : "") + (canvas.dir ? `\nCanvas: ${canvas.items} item(s) archived to fleet/inbox/${canvas.dir} (kept 30 days).\n` : "");
   await writeFile(v.file, text, "utf8");
   logShipEvent(shipId, "captain", "voyage-end", note || "Docked", { file: v.file });
@@ -480,4 +510,17 @@ export async function registerShip(input: { id: string; path: string; mode: stri
   if (res.exitCode !== 0) return { ok: false, message: `stamp-ship failed (exit ${res.exitCode}${res.timedOut ? ", timed out" : ""}).`, output };
   logShipEvent(input.id, "captain", "shipyard", `ship registered at ${input.path}`);
   return { ok: true, message: `${input.id} is in the yard.`, output };
+}
+
+/** Open the session a queue item asks for (lib/decision-queue.ts): the item goes active and names its record. */
+export async function startQueueSession(id: string, opts: Omit<SailOpts, "session"> = {}): Promise<{ ok: boolean; message: string }> {
+  const item = readQueue().find((i) => i.id === id);
+  if (!item) return { ok: false, message: "No such queue item." };
+  if (item.status !== "queued") return { ok: false, message: `That item is ${item.status}.` };
+  const kind: SessionKind | null = item.kind === "design-session" ? "design" : item.kind === "spec-session" ? "spec" : null;
+  if (!kind) return { ok: false, message: "Only design and spec sessions start from the queue; reviews open their document." };
+  const goal = `${item.title}${item.request ? `. ${item.request}` : ""}`;
+  const r = await startVoyage(item.ship, goal, SESSION_KINDS[kind], "laptop", { ...opts, session: kind });
+  if (r.ok && r.voyage) updateQueueItem(id, { status: "active", record: r.voyage.file });
+  return { ok: r.ok, message: r.message };
 }

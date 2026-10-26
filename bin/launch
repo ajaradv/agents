@@ -54,6 +54,14 @@ def code_graph_line(ship_path: Path, isolation: str) -> str:
 def preview_line(ship: dict) -> str:
     """The ship's `preview:` URL: where the captain opens the app on their own stack. Crews screenshot
     through the same entry (a backend port can skip the CSS) and hand the captain URLs that work there."""
+    rigged = os.environ.get("FLEET_RIG_PREVIEW", "").strip()
+    if rigged:
+        # A rigged voyage or session (dashboard/lib/rig.ts) has its own running copy: that is the one to use.
+        return (
+            f"- **Preview:** this voyage's own copy of the app runs at `{rigged}` (its own stack, migrated and seeded). "
+            "Take screenshots and give the captain links there, never on the captain's own stack. "
+            "If it stops answering, run the `rig` maneuver.\n"
+        )
     url = str(ship.get("preview") or "").strip()
     if not url:
         return ""
@@ -707,6 +715,14 @@ def prepare_pi_launch(
         print(f"missing {ROOT / 'agents' / agent_id / 'agent.yaml'} (and no ship crewmate by that id)", file=sys.stderr)
         return None
     agent, aboard = loaded
+    # A session guest (dashboard/lib/sessions.ts): the flagship's designer or architect aboard a ship for a design or
+    # spec session, in the session's worktree; the laptop worker sets FLEET_GUEST_SHIP only for those two.
+    guest_ship = os.environ.get("FLEET_GUEST_SHIP", "")
+    if aboard is None and guest_ship and agent_id in ("designer", "architect"):
+        y = ships_dir() / f"{guest_ship}.yaml"
+        if y.is_file():
+            aboard = ship_config(y)
+            aboard["id"] = guest_ship
     agent_type = str(agent.get("type") or "")
     uses_hermes = "hermes-memory" in [str(e) for e in agent.get("extensions") or []]
     harness = str(agent.get("harness") or "pi")
@@ -765,7 +781,7 @@ def prepare_pi_launch(
         crew = ", ".join(f"`{aboard['id']}-{r}`" for r in aboard.get("crew") or [])
         path_block = (
             "## Resolved paths (this session)\n\n"
-            f"- **Aboard ship:** `{aboard['id']}`; you are its `{role}` crewmate (`{agent_id}`)\n"
+            + (f"- **Aboard ship:** `{aboard['id']}` as the fleet's {role}, for a {'design' if role == 'designer' else 'spec'} session (the session brief says how it runs)\n" if guest_ship and agent_id in ("designer", "architect") else f"- **Aboard ship:** `{aboard['id']}`; you are its `{role}` crewmate (`{agent_id}`)\n")
             + f"- **Ship repo:** `{ship_path}`; stay in this project. Work for other ships belongs to their crews. "
             "During a voyage your working folder is the voyage's worktree (see This voyage, at the end).\n"
             + f"- **Delivery mode:** `{aboard.get('mode') or 'unset'}`\n"

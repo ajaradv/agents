@@ -53,6 +53,8 @@ const SAFE_TOOLS = new Set([
   "helper",
   // An agent's own bus, through the node (dashboard/lib/bus-api.ts).
   "bus_read",
+  // The captain's decision queue (dashboard/lib/decision-queue.ts): adds an item the captain orders and starts.
+  "queue_add", "queue_request",
 ]);
 
 /** Tools whose free text reaches another agent: screened for steering. */
