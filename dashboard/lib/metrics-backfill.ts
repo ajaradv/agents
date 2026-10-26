@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { frontmatter } from "./fleet-layers.ts";
 import { metricsDb, roleOf, shipMode, voyageId } from "./metrics.ts";
 import { aliceVault, fleetInboxRoot } from "./paths.ts";
+import { ulid } from "./ulid.ts";
 
 /**
  * Fill the fleet metrics database with what happened before it existed, so
@@ -62,19 +63,19 @@ export function backfillMetrics(opts: { inbox?: string; vault?: string } = {}): 
         const v = voyageAt(ship, e.ts);
         if (e.kind === "turn-end") {
           const failed = e.summary.startsWith("Turn failed");
-          d.query("INSERT INTO turns (ts, agent, role, ship, voyage, model, mode, ok, ms, cost, tokens, cache_read, prompt, error) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)").run(
-            e.ts, e.actor, roleOf(e.actor, crewShip), crewShip, v, crewShip ? mode : "host", failed ? 0 : 1,
+          d.query("INSERT INTO turns (event_key, project_id, ts, agent, role, ship, voyage, model, mode, ok, ms, cost, tokens, cache_read, prompt, error) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)").run(
+            ulid(), crewShip || "flagship", e.ts, e.actor, roleOf(e.actor, crewShip), crewShip, v, crewShip ? mode : "host", failed ? 0 : 1,
             Number(p.ms) || 0, Number(p.cost) || 0, Number(p.tokens) || 0, Number(p.cacheRead) || 0, Number(p.prompt) || 0, failed ? e.summary.slice(0, 300) : "",
           );
           counts.turns++;
         } else if (e.kind === "check" && typeof p.name === "string" && (p.exitCode !== undefined || p.timedOut !== undefined)) {
-          d.query("INSERT INTO runs (ts, ship, voyage, agent, kind, name, deterministic, ok, ms, cost, detail) VALUES (?, ?, ?, ?, 'check', ?, 1, ?, ?, 0, ?)").run(
-            e.ts, ship, v, e.actor, p.name, p.exitCode === 0 && !p.timedOut ? 1 : 0, (Number(p.secs) || 0) * 1000, e.summary.slice(0, 300),
+          d.query("INSERT INTO runs (event_key, project_id, ts, ship, voyage, agent, kind, name, deterministic, ok, ms, cost, detail) VALUES (?, ?, ?, ?, ?, ?, 'check', ?, 1, ?, ?, 0, ?)").run(
+            ulid(), ship, e.ts, ship, v, e.actor, p.name, p.exitCode === 0 && !p.timedOut ? 1 : 0, (Number(p.secs) || 0) * 1000, e.summary.slice(0, 300),
           );
           counts.runs++;
         } else if (e.kind === "crew") {
           const to = e.summary.match(/^→ ([a-z0-9_-]+):/)?.[1] ?? "";
-          d.query("INSERT INTO handoffs (ts, ship, voyage, from_agent, to_agent, kind, size) VALUES (?, ?, ?, ?, ?, 'message', ?)").run(e.ts, ship, v, e.actor, to, e.summary.length);
+          d.query("INSERT INTO handoffs (event_key, project_id, ts, ship, voyage, from_agent, to_agent, kind, size) VALUES (?, ?, ?, ?, ?, ?, ?, 'message', ?)").run(ulid(), ship, e.ts, ship, v, e.actor, to, e.summary.length);
           counts.handoffs++;
         }
       }
