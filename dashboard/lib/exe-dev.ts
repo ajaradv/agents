@@ -17,6 +17,21 @@ type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
 export const vmNameOk = (name: string) => NAME_RE.test(name);
 
+const EXIT_MARK = "__fleet_exit=";
+
+/** An `ssh` result with the status the VM's shell printed last (stderr may follow it: exe.dev appends it). */
+export function sshResult(r: ExecResult): ExecResult {
+  const lines = r.body.split("\n");
+  let at = -1;
+  lines.forEach((l, i) => {
+    if (/^__fleet_exit=\d+$/.test(l.trim())) at = i;
+  });
+  if (at < 0) return { ok: false, exit: r.ok ? -1 : r.exit, body: r.body };
+  const exit = Number(lines[at]!.trim().slice(EXIT_MARK.length));
+  const body = [...lines.slice(0, at), ...lines.slice(at + 1)].join("\n");
+  return { ok: r.ok && exit === 0, exit, body };
+}
+
 /** The hub's exe.dev token (secret "exe-dev-voyage-token": Keychain on the laptop, a 0600 file on the hub). */
 export const exeToken = () => readSecret("exe-dev-voyage-token");
 
@@ -66,7 +81,10 @@ export function exeClient(deps: { token?: () => Promise<string>; fetch?: Fetch; 
      * so callers pass only fixed strings built from validated ids (ship ids), never user text.
      */
     async ssh(vm: string, command: string, timeoutMs = 300_000): Promise<ExecResult> {
-      return exec(`ssh ${named(vm)} ${command}`, timeoutMs);
+      // exe.dev answers 200 with no exit header for `ssh` whatever the command did (verified live:
+      // `false` and `exit 3` both came back "ok"), so the VM's shell reports the status itself.
+      const r = await exec(`ssh ${named(vm)} ${command}; echo ${EXIT_MARK}$?`, timeoutMs);
+      return sshResult(r);
     },
     /**
      * A VM token for the worker behind exe.dev's proxy (X-Exedev-Authorization), expiring with the voyage.

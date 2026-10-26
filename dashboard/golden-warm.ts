@@ -6,7 +6,9 @@
  *
  *   bun dashboard/golden-warm.ts <ship>
  */
+import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { hostedExecEnv, type HostedShip } from "./lib/hosted.ts";
 import { readShips } from "./lib/fleet-layers.ts";
@@ -87,24 +89,33 @@ if (import.meta.main) {
   const rig = ship.rig;
   const hosted: HostedShip = { id: ship.id, path: ship.path, checks: ship.checks, isolation: ship.isolation, rig };
   const env = { ...process.env, CI: "1", ...hostedExecEnv(hosted, { project: goldenProject(ship.id), port: GOLDEN_PORT, slug: GOLDEN_SLUG }) };
+  // The rig runs in a linked worktree, as a voyage's does: some ships' rigs refuse the main checkout
+  // (lineage_atria's dev_worktree.sh attach), and the checkout stays clean for copies.
+  const wt = join(homedir(), ".fleet-golden-warm", ship.id);
+  await rm(wt, { recursive: true, force: true });
+  await spawnTimed(["git", "worktree", "prune"], { timeoutMs: 30_000, cwd: ship.path });
+  const added = await spawnTimed(["git", "worktree", "add", "--detach", wt, "HEAD"], { timeoutMs: 120_000, cwd: ship.path });
+  if (added.exitCode !== 0) {
+    console.error(`golden-warm: could not make a worktree: ${tailOf(added)}`);
+    process.exit(1);
+  }
   const r = await warmGolden(ship.id, rig, {
     run: async (script, timeoutMs) => {
-      const res = await spawnTimed(["bash", "-lc", script], { timeoutMs, cwd: ship.path, env });
+      const res = await spawnTimed(["bash", "-lc", script], { timeoutMs, cwd: wt, env });
       return { ok: res.exitCode === 0 && !res.timedOut, tail: tailOf(res) };
     },
     ready: async (url) => {
-      const res = await spawnTimed([join(ROOT, "bin", "rig-ready"), url, "--timeout", "300"], { timeoutMs: 330_000, cwd: ship.path, env });
+      const res = await spawnTimed([join(ROOT, "bin", "rig-ready"), url, "--timeout", "300"], { timeoutMs: 330_000, cwd: wt, env });
       return { ok: res.exitCode === 0, tail: tailOf(res) };
     },
-    copyEnv: () => copyRigEnv(ship.id, rig, ship.path),
-    removeEnv: async () => {
-      for (const rel of rig.env) {
-        await rm(join(ship.path, rel), { recursive: true, force: true });
-        // An env directory may hold tracked files too: put those back.
-        await spawnTimed(["git", "checkout", "--", rel], { timeoutMs: 30_000, cwd: ship.path }).catch(() => {});
-      }
-    },
+    copyEnv: () => copyRigEnv(ship.id, rig, wt),
+    // The worktree goes as a whole, env files with it.
+    removeEnv: async () => {},
   });
+  await spawnTimed(["git", "worktree", "remove", "--force", wt], { timeoutMs: 120_000, cwd: ship.path });
+  // Containers may have left root-owned files that git cannot remove.
+  if (existsSync(wt)) await spawnTimed(["sudo", "-n", "rm", "-rf", wt], { timeoutMs: 120_000, cwd: ship.path });
+  await spawnTimed(["git", "worktree", "prune"], { timeoutMs: 30_000, cwd: ship.path });
   console.log(r.ok ? `warm in ${r.seconds}s` : `warm failed after ${r.seconds}s\n${r.message}`);
   process.exit(r.ok ? 0 : 1);
 }

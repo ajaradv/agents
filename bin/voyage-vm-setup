@@ -206,6 +206,9 @@ cmd_wake() {
 # A golden VM is paused without an identity; its copies join as new nodes.
 cmd_seal() {
   sudo tailscale logout >/dev/null 2>&1 || true
+  # exe.dev's cp copies the disk, not memory: anything still in the page cache is lost in copies
+  # (a copy once got an empty fleet-worker unit file, so systemd saw it masked). Flush first.
+  sync
   echo "sealed: $(df -h / | awk 'NR == 2 { print $3 " used of " $2 " (" $5 ")" }')"
 }
 

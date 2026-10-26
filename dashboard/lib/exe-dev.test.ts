@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { exeClient, goldenVmName, voyageVmName } from "./exe-dev.ts";
+import { exeClient, goldenVmName, sshResult, voyageVmName } from "./exe-dev.ts";
 
 /** A fake exe.dev /exec: records the commands, answers from a table. */
 function fakeExe(answers: Record<string, { body: unknown; exit?: number }>) {
@@ -72,5 +72,21 @@ describe("an exe.dev voyage VM as a ship host", () => {
     expect(r.stdout).toBe("ok");
     expect(calls[0]!.url).toBe("https://kinwork-search.exe.xyz:8790/host/exec");
     expect(calls[0]!.headers).toMatchObject({ "X-Exedev-Authorization": "Bearer exe1.vm", Authorization: "Bearer w0rker" });
+  });
+});
+
+describe("ssh results", () => {
+  test("the status comes from the VM's shell: exe.dev answers ok for any ssh", () => {
+    expect(sshResult({ ok: true, exit: 0, body: "made\n__fleet_exit=0\n" })).toEqual({ ok: true, exit: 0, body: "made\n" });
+    expect(sshResult({ ok: true, exit: 0, body: "boom\n__fleet_exit=1\nerror on stderr\n" })).toEqual({ ok: false, exit: 1, body: "boom\nerror on stderr\n" });
+    // No marker: the command never got to report (the VM or exe.dev failed first).
+    expect(sshResult({ ok: true, exit: 0, body: "" }).ok).toBe(false);
+  });
+
+  test("ssh appends the status marker to the command", async () => {
+    const { seen, client } = fakeExe({ "ssh v1 ": { body: "hi\n__fleet_exit=3\n" } });
+    const r = await client.ssh("v1", "exit 3");
+    expect(seen[0]).toBe("ssh v1 exit 3; echo __fleet_exit=$?");
+    expect([r.ok, r.exit, r.body]).toEqual([false, 3, "hi\n"]);
   });
 });
