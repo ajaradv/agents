@@ -5,10 +5,6 @@ import { ROOT } from "./paths.ts";
 
 // The fleet tool standard (docs/tool-standards.md): the code passes a strict typecheck.
 describe("typecheck", () => {
-  test("ci gate probe (reverted after the red run)", () => {
-    expect(1).toBe(2);
-  });
-
   const tsc = join(ROOT, "node_modules", ".bin", "tsc");
   const missing = !existsSync(tsc);
   // A checkout without node_modules skips. CI must fail when tsc was not installed.
