@@ -487,53 +487,99 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
 }
 
 /**
- * Move an open laptop (or exe.dev VM) voyage to the hub (the captain is closing the laptop for
- * the day): the crew stops, the voyage branch is pushed from the laptop, the
- * crew's memory comes back, the laptop's worktree is returned, and a hub
- * worktree carries on from the pushed branch. Crew sessions start fresh on the
- * hub; their plan and state notes carry the voyage. Uncommitted work on the
- * laptop keeps the voyage where it is.
+ * Move an open voyage to the hub or to an exe.dev VM (the captain is closing the
+ * laptop for the day, or wants the hub's room): the crew stops, the voyage
+ * branch is pushed from where it is, the crew's memory comes back, that
+ * worktree is returned, and a worktree on the new host carries on from the
+ * pushed branch. Crew sessions start fresh there; their plan and state notes
+ * carry the voyage. Uncommitted work keeps the voyage where it is. A move to
+ * exe.dev makes its VM first, so a refusal or a failed copy changes nothing.
  */
-export async function moveVoyageToHub(shipId: string, stop: (agentId: string) => Promise<void>): Promise<{ ok: boolean; message: string }> {
-  const ship = await findShip(shipId);
-  const v = await openVoyage(shipId);
-  const w = voyageWorktree(shipId);
+export type MoveDeps = {
+  find?: (shipId: string) => Promise<ShipRow | undefined>;
+  open?: (shipId: string) => Promise<Voyage | null>;
+  worktree?: (shipId: string) => VoyageWorktree | null;
+  from?: (shipId: string) => ShipHost;
+  sailable?: typeof exeSailable;
+  provision?: typeof provisionVoyageVm;
+  release?: typeof releaseVoyageVm;
+};
+
+export async function moveVoyage(shipId: string, to: "hub" | "exe", stop: (agentId: string) => Promise<void>, deps: MoveDeps = {}): Promise<{ ok: boolean; message: string }> {
+  const ship = await (deps.find ?? findShip)(shipId);
+  const v = await (deps.open ?? openVoyage)(shipId);
+  const w = (deps.worktree ?? voyageWorktree)(shipId);
   if (!ship || !v || !w) return { ok: false, message: `${shipId} has no open voyage with a worktree.` };
-  if ((w.host ?? "local") === "local") return { ok: false, message: `${shipId}'s voyage is already on the hub.` };
-  if (ship.isolation === "vm" && process.platform !== "darwin") return { ok: false, message: `${shipId}'s crew works in Gondolin VMs, which the hub cannot run; leave the voyage on the laptop (it waits while the laptop sleeps).` };
-  const from = voyageHost(shipId);
+  const where = w.host ?? "local";
+  if (to === "hub") {
+    if (where === "local") return { ok: false, message: `${shipId}'s voyage is already on the hub.` };
+    if (ship.isolation === "vm" && process.platform !== "darwin") return { ok: false, message: `${shipId}'s crew works in Gondolin VMs, which the hub cannot run; leave the voyage on the laptop (it waits while the laptop sleeps).` };
+  } else {
+    if (where === "vm") return { ok: false, message: `${shipId}'s voyage is already on an exe.dev VM.` };
+    if (ship.isolation === "vm") return { ok: false, message: `${shipId}'s crew works in Gondolin VMs, which exe.dev's Linux VMs cannot run; leave the voyage where it is.` };
+    const can = await (deps.sailable ?? exeSailable)(shipId);
+    if (!can.ok) return { ok: false, message: `${shipId}'s voyage cannot move to exe.dev: ${can.why}.` };
+  }
+  const slug = v.file.split("/").pop()!.replace(/^\d{4}-\d{2}-\d{2}-/, "").replace(/\.md$/, "");
+  // The VM first, before anything stops: a failed copy leaves the voyage as it was.
+  let target: ShipHost = localHost;
+  if (to === "exe") {
+    const made = await (deps.provision ?? provisionVoyageVm)(shipId, slug);
+    if (!made.ok) return { ok: false, message: `${made.message} The voyage stays where it is.` };
+    target = made.host;
+  }
+  const dropTarget = async () => {
+    if (target.vm) await (deps.release ?? releaseVoyageVm)(target.vm).catch(() => {});
+  };
+  const from = (deps.from ?? voyageHost)(shipId);
   const crewIds = ship.crew.map((r) => `${shipId}-${r}`);
   for (const id of crewIds) await stop(id);
   const branch = (await from.exec(["git", "branch", "--show-current"], { timeoutMs: 15_000, cwd: w.path })).stdout.trim() || w.branch;
   const dirty = (await from.exec(["git", "status", "--porcelain"], { timeoutMs: 30_000, cwd: w.path }));
-  if (dirty.exitCode !== 0) return { ok: false, message: `${from.label} did not answer (${dirty.stderr.slice(0, 160)}); the voyage stays there.` };
-  if (dirty.stdout.trim()) return { ok: false, message: `${shipId}'s worktree on ${from.label} has uncommitted work; have the crew commit it, then move the voyage.` };
+  if (dirty.exitCode !== 0) {
+    await dropTarget();
+    return { ok: false, message: `${from.label} did not answer (${dirty.stderr.slice(0, 160)}); the voyage stays there.` };
+  }
+  if (dirty.stdout.trim()) {
+    await dropTarget();
+    return { ok: false, message: `${shipId}'s worktree on ${from.label} has uncommitted work; have the crew commit it, then move the voyage.` };
+  }
   const push = await from.exec(["git", "push", "-u", "origin", branch], { timeoutMs: 120_000, cwd: w.path });
-  if (push.exitCode !== 0) return { ok: false, message: `Could not push ${branch} from ${from.label}: ${(push.stderr || push.stdout).split("\n").pop()?.slice(0, 160)}` };
+  if (push.exitCode !== 0) {
+    await dropTarget();
+    return { ok: false, message: `Could not push ${branch} from ${from.label}: ${(push.stderr || push.stdout).split("\n").pop()?.slice(0, 160)}` };
+  }
   if (from.getMemory) await writeMemoryFiles(await from.getMemory(shipId, crewIds)).catch(() => {});
   const fromVm = w.vm;
   await unrigVoyage(ship);
   const released = await releaseVoyageWorktree(ship);
-  if (!released.ok) return { ok: false, message: `The branch is pushed, but ${from.label}'s worktree was not returned: ${released.message}` };
-  const slug = v.file.split("/").pop()!.replace(/^\d{4}-\d{2}-\d{2}-/, "").replace(/\.md$/, "");
-  const lease = await leaseVoyageWorktree(ship, slug, v.goal, localHost, { branch, base: w.base });
-  if (!lease.ok) return { ok: false, message: `${branch} is pushed and ${from.label}'s worktree returned, but the hub could not take the voyage: ${lease.message} Start it again, or lease a worktree by hand.` };
-  // The hub has the voyage: the VM it came from is no longer needed.
+  if (!released.ok) {
+    await dropTarget();
+    return { ok: false, message: `The branch is pushed, but ${from.label}'s worktree was not returned: ${released.message}` };
+  }
+  const lease = await leaseVoyageWorktree(ship, slug, v.goal, target, { branch, base: w.base });
+  if (!lease.ok) {
+    await dropTarget();
+    return { ok: false, message: to === "exe" ? `${branch} is pushed and ${from.label}'s worktree returned, but the new VM could not take the voyage: ${lease.message} The VM was removed. Start the voyage again from the pushed branch.` : `${branch} is pushed and ${from.label}'s worktree returned, but the hub could not take the voyage: ${lease.message} Start it again, or lease a worktree by hand.` };
+  }
+  // The new host has the voyage: the VM it came from is no longer needed.
   if (fromVm) {
-    const gone = await releaseVoyageVm(fromVm);
+    const gone = await (deps.release ?? releaseVoyageVm)(fromVm);
     logShipEvent(shipId, "helm", "notice", gone.message);
   }
   for (const id of crewIds) await freshCrewSession(id);
-  // The stack comes up again on the hub; the crew already has its brief.
-  const replan = planRig(ship, slug, "local");
+  // The stack comes up again on the new host; the crew already has its brief.
+  const replan = planRig(ship, slug, target.kind);
   if (replan && !("error" in replan)) void rigVoyage(ship, null).catch((e) => console.error("[rig]", e));
   const now = new Date().toISOString();
   let text = await readFile(v.file, "utf8");
-  text = text.replace(/^host: .*$/m, "host: hub").replace(/^worktree: .*$/m, `worktree: ${yamlStr(lease.worktree.path)}`);
-  await writeFile(v.file, text.trimEnd() + `\n- ${now} moved from ${from.label} to the hub; branch ${branch} pushed and checked out in ${lease.worktree.path}\n`, "utf8");
-  logShipEvent(shipId, "captain", "voyage-move", `Voyage moved from ${from.label} to the hub (branch ${branch})`, { branch, worktree: lease.worktree.path });
-  return { ok: true, message: `${shipId}'s voyage moved to the hub: ${branch} pushed from ${from.label} and checked out here. The crew starts fresh sessions; their plan and notes carry on.` };
+  text = text.replace(/^host: .*$/m, `host: ${target.kind === "local" ? "hub" : target.kind}`).replace(/^worktree: .*$/m, `worktree: ${yamlStr(lease.worktree.path)}`);
+  await writeFile(v.file, text.trimEnd() + `\n- ${now} moved from ${from.label} to ${target.kind === "local" ? "the hub" : target.label}; branch ${branch} pushed and checked out in ${lease.worktree.path}\n`, "utf8");
+  logShipEvent(shipId, "captain", "voyage-move", `Voyage moved from ${from.label} to ${target.kind === "local" ? "the hub" : target.label} (branch ${branch})`, { branch, worktree: lease.worktree.path });
+  return { ok: true, message: `${shipId}'s voyage moved to ${target.kind === "local" ? "the hub" : target.label}: ${branch} pushed from ${from.label} and checked out there. The crew starts fresh sessions; their plan and notes carry on.` };
 }
+
+export const moveVoyageToHub = (shipId: string, stop: (agentId: string) => Promise<void>) => moveVoyage(shipId, "hub", stop);
 
 /** The lead's view of the ship's maneuvers, for the voyage brief. */
 function maneuverBrief(ship: ShipRow): string[] {

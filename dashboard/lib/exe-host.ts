@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { exeClient, type ExeClient } from "./exe-dev.ts";
+import { wakeVoyageVm } from "./exe-paused.ts";
 import { deleteSecret, readSecret, writeSecret } from "./secret-store.ts";
 import type { ShipHost } from "./ship-host.ts";
-import { workerHost } from "./worker-host.ts";
+import { workerHost, type WorkerConfig } from "./worker-host.ts";
 
 /**
  * An exe.dev voyage VM as a ship host (R2 of vault plan fleet/plans/feature/ship-rigging):
@@ -16,9 +17,12 @@ import { workerHost } from "./worker-host.ts";
 
 export const EXE_WORKER_PORT = Number(process.env.FLEET_EXE_WORKER_PORT ?? 8790);
 
-export function exeVoyageHost(vm: string, deps: { fetch?: (url: string, init: RequestInit) => Promise<Response>; secret?: (name: string) => Promise<string> } = {}): ShipHost {
+export function exeVoyageHost(vm: string, deps: { fetch?: (url: string, init: RequestInit) => Promise<Response>; secret?: (name: string) => Promise<string>; wake?: (vm: string, probe: () => Promise<boolean>) => Promise<{ ok: boolean; message: string }>; ship?: string } = {}): ShipHost {
   const secret = deps.secret ?? readSecret;
-  const host = workerHost({
+  const wake = deps.wake ?? ((n, probe) => wakeVoyageVm(n, { probe }));
+  // The probe goes through a host without the wake hook: waking must not wait on itself.
+  const probe = async () => Boolean(await raw.repoPath({ id: deps.ship ?? "fleet", path: "" }));
+  const config: WorkerConfig = {
     kind: "vm",
     label: `the exe.dev VM ${vm}`,
     url: () => `https://${vm}.exe.xyz:${EXE_WORKER_PORT}`,
@@ -29,6 +33,15 @@ export function exeVoyageHost(vm: string, deps: { fetch?: (url: string, init: Re
     ...(deps.fetch ? { fetch: deps.fetch } : {}),
     // A voyage already on a VM may always continue there; new voyages are placed by the shipyard.
     available: async () => true,
+  };
+  const raw = workerHost(config);
+  // A paused VM (lib/exe-paused.ts) is resumed before any call to its worker.
+  const host = workerHost({
+    ...config,
+    before: async () => {
+      const r = await wake(vm, probe);
+      if (!r.ok) throw new Error(r.message);
+    },
   });
   return { ...host, vm };
 }

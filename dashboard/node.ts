@@ -18,6 +18,7 @@ import { cursorAtEnd, decodeCursor, encodeCursor, eventsAfter, sseFrame, streamS
 import { crewAddTask, crewCanvas, crewDockRequest, crewQueueRequest, crewHelper, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
 import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
+import { exeIdleJob, refreshGoldens } from "./lib/exe-pool.ts";
 import { startRoutines, type Routine } from "./lib/routines.ts";
 import { budgetRefusal, findShip } from "./lib/shipyard.ts";
 import { materializeAllShips } from "./lib/ship-config.ts";
@@ -229,8 +230,11 @@ function startRuntime(): void {
     }
     return synced.length ? `synced ${synced.join(", ")}` : "skipped: no ship repo has a code graph yet";
   };
+  // exe.dev pool (lib/exe-pool.ts): pause a quiet voyage VM; refresh the paused golden VMs at night.
+  const exeIdle = exeIdleJob();
+  const goldenRefresh = () => refreshGoldens();
   startRoutines({
-    jobs: { "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview, "codegraph-sync": codegraphSync, "session-archive": sessionArchive },
+    jobs: { "exe-idle": exeIdle, "golden-refresh": goldenRefresh, "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview, "codegraph-sync": codegraphSync, "session-archive": sessionArchive },
     runAgent: async (agentId, text) => void (await acceptCrewLine(agentId, "routine", text)),
     agentExists: (agentId) => allChatTargetIds().includes(agentId),
     budgetRefusal: (ship, agentId) => budgetRefusal(ship, agentId),

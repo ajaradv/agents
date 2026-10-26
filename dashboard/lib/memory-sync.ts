@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isPaused } from "./exe-paused.ts";
 import type { ShipRow } from "./fleet-layers.ts";
 import { fleetInboxRoot } from "./paths.ts";
 import type { ShipHost } from "./ship-host.ts";
@@ -62,12 +63,14 @@ export function mirrorMemory(files: Record<string, string>): string[] {
  * the dashboard). A host that does not answer (the laptop asleep) is recorded,
  * not logged: the next pass tries again.
  */
-export async function syncRemoteMemory(ships: ShipRow[], hostFor: (ship: string) => ShipHost = voyageHost): Promise<string[]> {
+export async function syncRemoteMemory(ships: ShipRow[], hostFor: (ship: string) => ShipHost = voyageHost, paused: (vm: string) => boolean = isPaused): Promise<string[]> {
   const changedShips: string[] = [];
   for (const ship of ships) {
     if (ship.orchestrator !== "lead") continue;
     const host = hostFor(ship.id);
     if (host.kind === "local" || !host.getMemory) continue;
+    // A paused VM's memory cannot change, and asking would wake it (lib/exe-paused.ts).
+    if (host.vm && paused(host.vm)) continue;
     const prev = readMemorySync(ship.id);
     const tried = new Date().toISOString();
     try {

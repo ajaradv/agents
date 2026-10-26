@@ -45,6 +45,14 @@ describe("live crew memory for remote voyages (S3d)", () => {
     expect(await m.syncRemoteMemory([ship("p")], () => remote(files))).toEqual([]);
   });
 
+  test("a voyage on a paused exe.dev VM is skipped: asking would wake it", async () => {
+    const seen: string[][] = [];
+    const onVm = { ...remote({ "t-lead/memory/state.md": "x" }, seen), kind: "vm", vm: "t-fix" } as unknown as ShipHost;
+    expect(await m.syncRemoteMemory([ship("t")], () => onVm, (vm) => vm === "t-fix")).toEqual([]);
+    expect(seen).toEqual([]);
+    expect(await m.syncRemoteMemory([ship("t")], () => onVm, () => false)).toEqual(["t"]);
+  });
+
   test("a host that does not answer keeps the last good sync time and says why", async () => {
     await m.syncRemoteMemory([ship("r")], () => remote({ "r-lead/memory/state.md": "a" }));
     const good = m.readMemorySync("r")!.synced;

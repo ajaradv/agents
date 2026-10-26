@@ -44,7 +44,7 @@ import { onShipLogWrite } from "./lib/ship-log.ts";
 import { harborHtml, shipDeckHtml } from "./lib/ship-view.ts";
 import { harborChartJson } from "./lib/harbor-chart.ts";
 import { metricsDashboardHtml, parsePeriod } from "./lib/metrics-view.ts";
-import { dockVoyage, findShip, moveVoyageToHub, openVoyage, registerShip, setCrew, setOrchestrator, startQueueSession, startVoyage, voyageBrief } from "./lib/shipyard.ts";
+import { dockVoyage, findShip, moveVoyage, moveVoyageToHub, openVoyage, registerShip, setCrew, setOrchestrator, startQueueSession, startVoyage, voyageBrief } from "./lib/shipyard.ts";
 import { addQueueItem, moveQueueItem, readQueue, updateQueueItem } from "./lib/decision-queue.ts";
 import { reviewQueueItem } from "./lib/decisions.ts";
 import { rigVoyage } from "./lib/rigging.ts";
@@ -927,10 +927,16 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       sseBroadcast("ship", ship.id);
       return Response.json({ ok: true, message: `Rigging ${ship.id}'s voyage again; the deck shows how it goes.` });
     }
-    const moveVoyage = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/move$/);
-    if (moveVoyage && req.method === "POST") {
-      const res = await moveVoyageToHub(moveVoyage[1]!, stopHost);
-      sseBroadcast("ship", moveVoyage[1]!);
+    const moveToHub = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/move$/);
+    if (moveToHub && req.method === "POST") {
+      const res = await moveVoyageToHub(moveToHub[1]!, stopHost);
+      sseBroadcast("ship", moveToHub[1]!);
+      return Response.json(res, { status: res.ok ? 200 : 400 });
+    }
+    const moveToExe = path.match(/^\/api\/ships\/([a-z][a-z0-9_-]{0,40})\/move-exe$/);
+    if (moveToExe && req.method === "POST") {
+      const res = await moveVoyage(moveToExe[1]!, "exe", stopHost);
+      sseBroadcast("ship", moveToExe[1]!);
       return Response.json(res, { status: res.ok ? 200 : 400 });
     }
 

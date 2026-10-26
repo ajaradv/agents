@@ -10,6 +10,7 @@ import { hasHelmsman, listProposals, proposalLine, type Proposal } from "./helm.
 import { readShipConfig, recentConfigChanges, shipTemplates } from "./ship-config.ts";
 import { laptopStatus } from "./laptop.ts";
 import { exeSailable, exeVoyages, vmPreview } from "./exe-voyages.ts";
+import { isPaused } from "./exe-paused.ts";
 import { laptopSailable, laptopVoyages } from "./laptop-host.ts";
 import { QUEUE_KINDS, queueView, type QueueItem, type QueueKind } from "./decision-queue.ts";
 import { listSpecs, parseSpec } from "./specs.ts";
@@ -311,7 +312,7 @@ export function voyageRigHtml(ship: ShipRow): string {
   const rec = ship.rig ? voyageWorktree(ship.id)?.rig : undefined;
   if (!rec) return "";
   const w = voyageWorktree(ship.id);
-  const where = w?.host === "laptop" ? "on the laptop" : w?.host === "vm" ? "on an exe.dev VM" : "on the hub";
+  const where = w?.host === "laptop" ? "on the laptop" : w?.host === "vm" ? (w.vm && isPaused(w.vm) ? "on an exe.dev VM (paused; resumes on the next crew turn)" : "on an exe.dev VM") : "on the hub";
   // The crew keeps the localhost URL in its brief (it runs on the VM); the captain's is the VM's.
   const preview = w?.vm ? vmPreview(w.vm, rec.preview) : rec.preview;
   const held = rec.brief ? ` The brief to ${escapeHtml(rec.brief.to)} waits until it is ready.` : "";
@@ -875,13 +876,18 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
   }
   if (voyage) {
     const to = cards.find((c) => c.target.id === voyage.to)?.target.label ?? voyage.to;
-    const onLaptop = voyageWorktree(ship.id)?.host === "laptop";
+    const wt = voyageWorktree(ship.id);
+    const onLaptop = wt?.host === "laptop";
+    // New voyages may go to exe.dev, so can one under way on the laptop or the hub (not a Gondolin ship, which needs macOS).
+    const canExe = Boolean(wt) && (wt?.host === "laptop" || (wt?.host ?? "local") === "local") && ship.isolation !== "vm" && exeVoyages().on;
+    const pausedVm = wt?.host === "vm" && wt.vm && isPaused(wt.vm);
     return `<section class="voyage is-sailing stack">
       <div class="between"><div class="row"><h3>Under sail</h3>${condition === "needs-you" ? `<span class="masthead-flag" aria-hidden="true"></span>` : ""}</div><span class="muted">since ${escapeHtml(new Date(voyage.started).toLocaleString())}</span></div>
       <p class="voyage-goal">${escapeHtml(voyage.goal)}</p>
       ${tasksHtml(tasks, cards, condition)}
       ${ledger.live}
-      <p class="muted">Goal sent to ${escapeHtml(to)}${onLaptop ? " · <strong>sailing on the laptop</strong>" : ""} · record: <code>${escapeHtml(voyage.file.replace(/^.*\/fleet\/voyages\//, "vault fleet/voyages/"))}</code></p>
+      <p class="muted">Goal sent to ${escapeHtml(to)}${onLaptop ? " · <strong>sailing on the laptop</strong>" : ""}${pausedVm ? " · <strong>paused on exe.dev (resumes on the next crew turn)</strong>" : ""} · record: <code>${escapeHtml(voyage.file.replace(/^.*\/fleet\/voyages\//, "vault fleet/voyages/"))}</code></p>
+      ${canExe ? `<form class="row shipyard-form" data-api="${api}/move-exe" data-confirm="Move this voyage to an exe.dev VM? A VM is made first, then the crew stops, the branch is pushed, and the VM carries on from it."><button class="d-btn d-btn-sm" type="submit">Move to exe.dev</button><span class="muted" data-note></span></form>` : ""}
       ${onLaptop && ship.isolation !== "vm" ? `<form class="row shipyard-form" data-api="${api}/move" data-confirm="Move this voyage to the hub? The crew stops, the branch is pushed from the laptop, and the hub carries on from it."><button class="d-btn d-btn-sm" type="submit">Move to hub</button><span class="muted" data-note></span></form>` : ""}
       <form class="row shipyard-form" data-api="${api}/dock">
         <input class="d-input d-input-sm" name="summary" placeholder="How it ended (optional, goes in the voyage record)" />
