@@ -13,6 +13,7 @@
  *   GET  /host/ships   {ships: [{id, path}]}
  *   POST /host/exec    {cmd, cwd, timeoutMs} → {stdout, stderr, exitCode, timedOut, ms}
  *   POST /host/memory  {put: {relpath: text}} or {ship, agents} → {files}
+ *   POST /host/token   {token} → {ok, message}: replace this worker's token (the hub rotates a VM's, copied from its golden VM)
  *   POST /host/rig-env {cwd} → {ok, message}: a ship's rig env files from this machine's store into a worktree
  *   WS   /host/rpc     a crewmate's pi in RPC mode: first message {start: {agent, config,
  *                     worktree, hubUrl, crewToken}}; then {i} stdin in, {o}/{e} out, {x} exit code
@@ -21,9 +22,13 @@
  *                     long job outlives any one request)
  *
  * Listens on 127.0.0.1 (FLEET_WORKER_HOST on an exe.dev voyage VM, whose proxy reaches it from outside and lets
- * only token holders through); Tailscale Serve publishes the laptop's to the tailnet
- * (bin/laptop-worker --install). Every request needs the shared token
+ * only token holders through; there, peers on the tailnet are refused outright); Tailscale Serve publishes the
+ * laptop's to the tailnet (bin/laptop-worker --install). Every request needs the shared token
  * (secret "laptop-worker-token", the Keychain here, a 0600 file on the hub).
+ *
+ * Env: FLEET_WORKER_SECRET  the token's secret name (default "laptop-worker-token")
+ *      FLEET_WORKER_KIND    what /health reports as host (default "laptop"; "vm" on a voyage VM)
+ *      FLEET_WORKER_HOST    bind address (default 127.0.0.1); FLEET_WORKER_PORT (default 8790)
  */
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -37,7 +42,7 @@ import { freeSlot, helperDefs, runHelperHere, shotUrls, takeShots, takeSlot, typ
 import { commandRefusal, getMemory, hostedExecEnv, hostedRigEnv, hostedShips, prepareHostedLaunch, putMemory, shipForFolder, type LaunchContext } from "./lib/hosted.ts";
 import { ROOT } from "./lib/paths.ts";
 import { spawnTimed } from "./lib/proc.ts";
-import { readSecret } from "./lib/secret-store.ts";
+import { readSecret, writeSecret } from "./lib/secret-store.ts";
 import { synthesize, ttsAvailable } from "./lib/voice.ts";
 
 const PORT = Number(process.env.FLEET_WORKER_PORT) || 8790;
@@ -48,6 +53,21 @@ export function authorized(header: string | null, token: string): boolean {
   const a = Buffer.from(header.slice(7));
   const b = Buffer.from(token);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** A token the hub may set: URL-safe, long enough to be a secret (the hub makes 64 hex characters). */
+export const validWorkerToken = (t: unknown): t is string => typeof t === "string" && /^[A-Za-z0-9_-]{32,256}$/.test(t);
+
+/** An address on the tailnet: IPv4 100.64.0.0/10 or IPv6 fd7a:115c:a1e0::/48, also IPv4-mapped (::ffff:100.101.2.3). */
+export function isTailscaleAddress(addr: string | null | undefined): boolean {
+  if (!addr) return false;
+  const a = addr.toLowerCase().replace(/^\[|\]$/g, "").replace(/%.*$/, "");
+  const v4 = a.replace(/^::ffff:/, "").match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [o1, o2] = [Number(v4[1]), Number(v4[2])];
+    return o1 === 100 && o2 >= 64 && o2 <= 127;
+  }
+  return /^fd7a:0*115c:0*a1e0:/.test(a);
 }
 
 async function capabilities(): Promise<string[]> {
@@ -185,17 +205,22 @@ async function rpcMessage(ws: import("bun").ServerWebSocket<RpcSocket>, raw: str
 }
 
 if (import.meta.main) {
-  let token = await readSecret("laptop-worker-token");
+  const secretName = process.env.FLEET_WORKER_SECRET || "laptop-worker-token";
+  const kind = process.env.FLEET_WORKER_KIND || "laptop";
+  const beyondLoopback = Boolean(process.env.FLEET_WORKER_HOST);
+  let token = await readSecret(secretName);
   const shots = new Gate(MAX_JOBS);
   Bun.serve<RpcSocket>({
     hostname: process.env.FLEET_WORKER_HOST || "127.0.0.1",
     port: PORT,
     idleTimeout: 120,
     async fetch(req, server) {
-      if (!token) token = await readSecret("laptop-worker-token");
+      // On a VM only exe.dev's proxy may reach the worker, never another tailnet device.
+      if (beyondLoopback && isTailscaleAddress(server.requestIP(req)?.address)) return new Response("forbidden", { status: 403 });
+      if (!token) token = await readSecret(secretName);
       if (!authorized(req.headers.get("authorization"), token)) return new Response("unauthorized", { status: 401 });
       const path = new URL(req.url).pathname;
-      if (path === "/health" && req.method === "GET") return Response.json({ ok: true, capabilities: await capabilities(), host: "laptop" });
+      if (path === "/health" && req.method === "GET") return Response.json({ ok: true, capabilities: await capabilities(), host: kind });
       if (path === "/tts" && req.method === "POST") {
         const b = (await req.json().catch(() => ({}))) as { text?: string; voice?: string; speed?: number };
         const text = String(b.text ?? "").slice(0, 2000);
@@ -220,6 +245,14 @@ if (import.meta.main) {
         // The captain's provider quota windows (quota-axi reads this machine's logins), for the hub's Health.
         const q = await runQuotaAxi();
         return Response.json({ ok: q.ok, raw: q.raw, error: q.error });
+      }
+      if (path === "/host/token" && req.method === "POST") {
+        const b = (await req.json().catch(() => ({}))) as { token?: unknown };
+        if (!validWorkerToken(b.token)) return Response.json({ ok: false, message: "a token of 32 to 256 letters, digits, - or _" }, { status: 400 });
+        // Switch only once it is saved: a failed write must not strand the worker on a token nobody can reload.
+        if (!(await writeSecret(secretName, b.token))) return Response.json({ ok: false, message: "could not store the token" }, { status: 500 });
+        token = b.token;
+        return Response.json({ ok: true, message: "worker token replaced" });
       }
       if (path === "/host/rig-env" && req.method === "POST") {
         const b = (await req.json().catch(() => ({}))) as { cwd?: unknown };

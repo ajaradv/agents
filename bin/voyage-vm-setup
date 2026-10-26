@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# voyage-vm-setup - make an exe.dev VM a ship's worker. Runs ON the VM, as the
+# user exedev (exe.dev's "exeuntu" image); the hub side is dashboard/lib/exe-host.ts.
+# A golden VM per ship is set up once; each voyage gets a `cp` of it.
+#
+# Usage:
+#   bin/voyage-vm-setup setup <ship>   fleet | kinwork | pochteca | lineage_atria: clone the repos,
+#                                      install the tools (bin/hub-install --worker), point pi at
+#                                      exe.dev's model gateway, join the tailnet, run the worker as
+#                                      the systemd service fleet-worker (port 8790)
+#   bin/voyage-vm-setup token          the worker token, read on stdin (never argv); restarts the worker
+#   bin/voyage-vm-setup env <ship>     a tar stream on stdin into the ship's rig env store
+#   bin/voyage-vm-setup status         the service, the tailnet, and a health check
+#
+# The worker token belongs to the hub: it makes one and pipes it to `token`.
+# Nothing else secret lives on the VM (models, GitHub, and the tailnet join go
+# through exe.dev's integrations).
+set -euo pipefail
+
+WS="$HOME/Workspace"
+AGENTS="$WS/agents"
+PORT=8790
+SECRETS="$HOME/.config/fleet/secrets"
+TOKEN_FILE="$SECRETS/laptop-worker-token"
+UNIT=fleet-worker
+UNIT_FILE="/etc/systemd/system/$UNIT.service"
+GH_HOST_VM=github.int.exe.xyz
+INTEGRATION=https://tailscale-integration.int.exe.xyz
+
+step() { printf '\n== %s\n' "$1"; }
+die() { echo "error: $*" >&2; exit 1; }
+sc() { sudo systemctl "$@"; }
+valid_token() { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] && [ "${#1}" -ge 32 ] && [ "${#1}" -le 256 ]; }
+
+# ship -> repo URL and directory (the same paths as on the hub)
+ship_repo() {
+  case "$1" in
+    fleet) echo "" ;;
+    kinwork) echo "https://github.com/ajaradv/Kinwork.git Kinwork" ;;
+    pochteca) echo "https://github.com/ajaradv/pochteca.git pochteca" ;;
+    lineage_atria) echo "https://github.com/ajaradv/rl-registry.git lineage_atria" ;;
+    *) die "unknown ship '$1' (fleet, kinwork, pochteca, lineage_atria)" ;;
+  esac
+}
+
+# clone, or bring an existing clone up to date on its default branch
+sync_repo() { # url dir
+  local url="$1" dir="$2" branch
+  if [ -d "$dir/.git" ]; then
+    git -C "$dir" fetch --quiet origin
+    branch="$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
+    branch="${branch:-main}"
+    git -C "$dir" checkout --quiet "$branch"
+    git -C "$dir" pull --quiet --ff-only
+  else
+    mkdir -p "$(dirname "$dir")"
+    git clone --quiet "$url" "$dir"
+  fi
+  echo "$(basename "$dir"): $(git -C "$dir" rev-parse --short HEAD)"
+}
+
+# the ship's overlay on this machine: at least where its repo is
+write_overlay() { # ship path
+  local f="$AGENTS/fleet/home/ships/$1.yaml"
+  mkdir -p "$(dirname "$f")"
+  if [ ! -f "$f" ]; then
+    printf 'path: %s\n' "$2" > "$f"
+  elif grep -q '^path:' "$f"; then
+    if ! grep -qxF "path: $2" "$f"; then
+      sed "s|^path:.*|path: $2|" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    fi
+  else
+    printf 'path: %s\n' "$2" >> "$f"
+  fi
+}
+
+# pi reaches models through exe.dev's gateway; other providers in the file stay
+pi_models() {
+  local f="$HOME/.pi/agent/models.json"
+  mkdir -p "$(dirname "$f")"
+  [ -f "$f" ] || echo '{}' > "$f"
+  jq '.providers = ((.providers // {}) + {openrouter: {baseUrl: "https://openrouter.int.exe.xyz/v1", apiKey: "exe-dev-gateway"}})' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+
+tailnet_up() { [ "$(tailscale status --json 2>/dev/null | jq -r '.BackendState // empty')" = Running ]; }
+
+tailnet_join() {
+  if tailnet_up; then echo "already on the tailnet"; return 0; fi
+  local meta client tags id_token
+  meta="$(curl -fsS "$INTEGRATION/metadata")" || { echo "note: the tailscale integration is not attached to this VM; skipped"; return 0; }
+  client="$(jq -er .client_id <<<"$meta")"
+  tags="$(jq -r '.tags // "tag:fleet-voyage"' <<<"$meta")"
+  id_token="$(curl -fsS "$INTEGRATION/token" | jq -er .token)"
+  sudo systemctl enable --now tailscaled
+  sudo tailscale up --client-id="${client}?ephemeral=true&preauthorized=true" --id-token="$id_token" --advertise-tags="$tags"
+  unset id_token
+}
+
+install_unit() {
+  local bun
+  bun="$(command -v bun)" || die "bun is not installed (bin/hub-install --worker failed?)"
+  {
+    printf '[Unit]\nDescription=Fleet worker (ship host for voyages)\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\n'
+    printf 'User=%s\nWorkingDirectory=%s\nExecStart=%s run %s\n' "$(id -un)" "$AGENTS" "$bun" "$AGENTS/dashboard/worker.ts"
+    printf 'Environment=PATH=%s/.local/bin:%s/.local/node/bin:%s/.bun/bin:/usr/local/bin:/usr/bin:/bin\nEnvironment=HOME=%s\n' "$HOME" "$HOME" "$HOME" "$HOME"
+    printf 'Environment=FLEET_WORKER_HOST=0.0.0.0\nEnvironment=FLEET_WORKER_PORT=%s\nEnvironment=FLEET_WORKER_KIND=vm\nEnvironment=FLEET_WORKER_SECRET=laptop-worker-token\n' "$PORT"
+    printf 'Environment=OPENROUTER_API_KEY=exe-dev-gateway\nEnvironment=GH_HOST=%s\n' "$GH_HOST_VM"
+    printf 'Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n'
+  } | sudo tee "$UNIT_FILE" >/dev/null
+  sc daemon-reload
+  sc enable --now "$UNIT.service" >/dev/null 2>&1
+  sc restart "$UNIT.service"
+}
+
+cmd_status() {
+  if sc is-active --quiet "$UNIT.service" 2>/dev/null; then echo "service: running (pid $(sc show -p MainPID --value "$UNIT.service"))"
+  elif [ -f "$UNIT_FILE" ]; then echo "service: installed, not running"
+  else echo "service: not installed"; fi
+  if tailnet_up; then echo "tailnet: $(tailscale status --json | jq -r '.Self.DNSName | rtrimstr(".")')"; else echo "tailnet: not joined"; fi
+  for d in agents Kinwork pochteca lineage_atria; do
+    if [ -d "$WS/$d/.git" ]; then echo "repo $d: $(git -C "$WS/$d" rev-parse --short HEAD)"; fi
+  done
+  if [ -s "$TOKEN_FILE" ]; then
+    # The token goes to curl on stdin (-H @-), never on a command line.
+    echo "health: $(printf 'Authorization: Bearer %s' "$(tr -d '\n' < "$TOKEN_FILE")" | curl -s -w ' (HTTP %{http_code})' -H @- "http://127.0.0.1:$PORT/health" 2>/dev/null || true)"
+  else
+    echo "health: no worker token yet (pipe one to: bin/voyage-vm-setup token)"
+  fi
+}
+
+cmd_setup() {
+  local ship="${1:-}" repo url dir
+  [ "$(uname)" = Linux ] || die "voyage-vm-setup runs on the VM (Linux)"
+  [ -n "$ship" ] || die "usage: bin/voyage-vm-setup setup <fleet|kinwork|pochteca|lineage_atria>"
+  repo="$(ship_repo "$ship")"
+
+  step "GitHub through exe.dev (no token on the VM)"
+  git config --global url."https://$GH_HOST_VM/".insteadOf "https://github.com/"
+  grep -qxF "export GH_HOST=$GH_HOST_VM" "$HOME/.profile" 2>/dev/null || echo "export GH_HOST=$GH_HOST_VM" >> "$HOME/.profile"
+
+  step "repositories"
+  sync_repo https://github.com/ajaradv/agents.git "$AGENTS"
+  if [ -n "$repo" ]; then
+    read -r url dir <<<"$repo"
+    sync_repo "$url" "$WS/$dir"
+  fi
+
+  step "tools (bin/hub-install --worker)"
+  "$AGENTS/bin/hub-install" --worker
+  export PATH="$HOME/.local/bin:$HOME/.local/node/bin:$HOME/.bun/bin:$PATH"
+  # package.json and bun.lock are at the agents repo root
+  (cd "$AGENTS" && bun install --frozen-lockfile)
+
+  step "models through exe.dev's gateway"
+  pi_models
+
+  step "the ship's config here"
+  if [ "$ship" = fleet ]; then write_overlay fleet "$AGENTS"; else write_overlay "$ship" "$WS/${dir}"; fi
+
+  step "tailnet"
+  tailnet_join
+
+  step "the worker service"
+  [ -s "$TOKEN_FILE" ] || echo "note: no worker token yet; the hub pipes one to: bin/voyage-vm-setup token"
+  install_unit
+
+  step "status"
+  sleep 2
+  cmd_status
+}
+
+cmd_token() {
+  local t
+  t="$(cat | tr -d '\r\n')"
+  valid_token "$t" || die "not a worker token (32 to 256 letters, digits, - or _)"
+  (umask 077; mkdir -p "$SECRETS"; chmod 700 "$SECRETS"; printf '%s' "$t" > "$TOKEN_FILE.tmp"; chmod 600 "$TOKEN_FILE.tmp"; mv "$TOKEN_FILE.tmp" "$TOKEN_FILE")
+  unset t
+  echo "worker token saved"
+  if sc is-active --quiet "$UNIT.service" 2>/dev/null; then sc restart "$UNIT.service" && echo "restarted $UNIT"; fi
+}
+
+cmd_env() {
+  local ship="${1:-}" dest m
+  [ -n "$ship" ] || die "usage: bin/voyage-vm-setup env <ship>"
+  ship_repo "$ship" >/dev/null
+  dest="$AGENTS/fleet/home/ships/$ship/env"
+  TMP="$(mktemp)"
+  trap 'rm -f "$TMP"' EXIT
+  cat > "$TMP"
+  # Refuse a stream that could write outside the store: absolute or .. members, links.
+  while IFS= read -r m; do
+    case "$m" in
+      /*|..|../*|*/..|*/../*) die "refusing archive member '$m'" ;;
+    esac
+  done < <(tar -tf "$TMP")
+  if tar -tvf "$TMP" | grep -q '^[lh]'; then die "refusing an archive with links"; fi
+  (umask 077; mkdir -p "$dest"; chmod 700 "$dest" "$(dirname "$dest")"; tar -xf "$TMP" -C "$dest" --no-same-owner --no-same-permissions)
+  echo "env files for $ship stored"
+}
+
+case "${1:-}" in
+  setup) shift; cmd_setup "$@" ;;
+  token) cmd_token ;;
+  env) shift; cmd_env "$@" ;;
+  status) cmd_status ;;
+  *) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 2 ;;
+esac
