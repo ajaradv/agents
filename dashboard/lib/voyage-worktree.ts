@@ -201,7 +201,7 @@ const realLocal = (p: string) => {
 /** A voyage moving between hosts carries on its branch instead of starting one. */
 export type Resume = { branch: string; base: string };
 
-export async function leaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">, slug: string, goal = "", host: ShipHost = localHost, resume?: Resume): Promise<{ ok: true; worktree: VoyageWorktree } | { ok: false; message: string }> {
+export async function leaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">, slug: string, goal = "", host: ShipHost = localHost, resume?: Resume, from?: string): Promise<{ ok: true; worktree: VoyageWorktree } | { ok: false; message: string }> {
   const primary = await host.repoPath(ship);
   const git: Git = (cwd, args) => hostGit(host, cwd, args);
   if (!primary || !(await host.hasRepo(primary))) return { ok: false, message: `${ship.id} has no git repo ${host.kind === "local" ? `at ${primary || "(no path)"}` : `on ${host.label}`}; voyage not started.` };
@@ -220,7 +220,7 @@ export async function leaseVoyageWorktree(ship: Pick<ShipRow, "id" | "path">, sl
   const path = info.path;
   const release = () => host.exec([treehouseBin(host), "return", "--force", "--if-lease-id", info.lease_id!, path], { timeoutMs: 120_000, cwd: primary });
   try {
-    return await prepareLease(ship, host, goal ? branchForGoal(goal) : slug, primary, path, info.lease_id, release, resume);
+    return await prepareLease(ship, host, goal ? branchForGoal(goal) : slug, primary, path, info.lease_id, release, resume, from);
   } catch (e) {
     // Never leak a lease: anything unexpected after leasing returns the worktree.
     await release();
@@ -237,6 +237,7 @@ async function prepareLease(
   leaseId: string,
   release: () => Promise<unknown>,
   resume?: Resume,
+  from?: string,
 ): Promise<{ ok: true; worktree: VoyageWorktree } | { ok: false; message: string }> {
   const git: Git = (cwd, args) => hostGit(host, cwd, args);
   // Paths are the host's own: only this machine's can be resolved through symlinks here.
@@ -273,10 +274,16 @@ async function prepareLease(
     }
     const existing = new Set((await git(primary, ["for-each-ref", "--format=%(refname:short)", "refs/heads/"])).out.split("\n").filter(Boolean));
     branch = voyageBranch(name, (b) => existing.has(b));
-    const sw = await git(path, ["switch", "-c", branch, base]);
+    // A voyage from a spec with a prototype (lib/specs.ts) starts from that pushed branch; the PR still targets base.
+    let start = base;
+    if (from) {
+      await git(path, ["fetch", "origin", from]);
+      start = `origin/${from}`;
+    }
+    const sw = await git(path, ["switch", "-c", branch, start]);
     if (!sw.ok) {
       await release();
-      return { ok: false, message: `Could not create ${branch} from ${base}: ${sw.out.slice(0, 200)}` };
+      return { ok: false, message: `Could not create ${branch} from ${start}: ${sw.out.slice(0, 200)}` };
     }
   }
   const primaryBranch = (await git(primary, ["branch", "--show-current"])).out;

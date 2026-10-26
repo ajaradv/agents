@@ -520,7 +520,7 @@ def with_rig(ship: dict) -> dict:
     if rig.get("down"):
         checks.setdefault("rig-down", str(rig["down"]))
     maneuvers = dict(ship.get("maneuvers") or {}) if isinstance(ship.get("maneuvers"), dict) else {}
-    maneuvers.setdefault("rig", {"checks": ["rig"], "by": ["lead", "builder", "designer"]})
+    maneuvers.setdefault("rig", {"checks": ["rig"], "by": ["lead", "builder"]})
     return {**ship, "checks": checks, "maneuvers": maneuvers}
 
 
@@ -908,7 +908,7 @@ def prepare_pi_launch(
     if agent_type == "assistant":
         # Crewmates also work as a crew: tasks, crew messages, maneuvers (crew.ts).
         isolated = bool(aboard) and str(aboard.get("isolation") or "") == "vm"
-        for name in ("tool-gate", "ask-captain", "canvas", "bus", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()) + (("gondolin",) if isolated else ()) + tuple(experiments_for(agent_id)):
+        for name in ("tool-gate", "ask-captain", "canvas", "bus", "image-window", "context-guard", "cache-watch") + (("crew",) if aboard else ()) + (("decisions",) if agent_id in ("designer", "architect") else ()) + (("gondolin",) if isolated else ()) + tuple(experiments_for(agent_id)):
             ref = str(ROOT / "extensions" / f"{name}.ts")
             if ref not in ext_refs:
                 ext_refs.append(ref)

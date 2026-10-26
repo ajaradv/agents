@@ -1,16 +1,18 @@
 id: kinwork
 path: /Users/avega/Workspace/Kinwork
-orchestrator: firstmate
+orchestrator: lead
 # Crewmates: role templates from agents/<role>/ deployed aboard this ship as
 # <ship>-<role> (persistent session, cwd = path). crew_models overrides a role's model.
 crew:
-  - designer
+  - lead
+  - builder
 factory: null
 mode: no-mistakes-prod-only
 # Where the captain opens the app: the webpack dev server, which proxies Django (:8000 alone has no CSS).
 preview: http://localhost:3000
 crew_budgets:
-  designer: 6
+  lead: 3
+  builder: 3
 # Rigging (dashboard/lib/rig.ts; vault plan fleet/plans/feature/ship-rigging): each voyage gets its own stack
 # (Compose project and port of its own, beside the captain's), migrated and seeded before the crew starts.
 # .envs comes from this host's store, fleet/home/ships/kinwork/env/kinwork/.envs. Celery is not started.
@@ -43,7 +45,7 @@ gates:
 maneuvers:
   tidy:
     checks: [fix-lint]
-    by: [lead, builder, designer]
+    by: [lead, builder]
   verify:
     checks: [lint, migrations, pytest]
-    by: [lead, builder, designer, scout]
+    by: [lead, builder, scout]

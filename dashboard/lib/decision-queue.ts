@@ -28,8 +28,12 @@ export type QueueItem = {
   by: string;
   created: string;
   updated: string;
-  /** The session's record (vault voyage note) once it starts. */
+  /** The session's record (vault voyage note) once it starts; for a spec review, the spec file once drafted. */
   record?: string;
+  /** What it came from: the session record a spec review drafts from, the voyage a design review checks. */
+  source?: string;
+  /** The captain's last "changes, please" on a review. */
+  note?: string;
 };
 
 const path = () => join(nodeStateDir(), "decision-queue.json");
@@ -58,18 +62,18 @@ export function queueView(items = readQueue()): { open: QueueItem[]; done: Queue
   return { open, done };
 }
 
-export function addQueueItem(b: { kind: string; ship: string; title: string; request?: string; by?: string }): { ok: true; item: QueueItem } | { ok: false; message: string } {
+export function addQueueItem(b: { kind: string; ship: string; title: string; request?: string; by?: string; source?: string }): { ok: true; item: QueueItem } | { ok: false; message: string } {
   if (!QUEUE_KINDS.includes(b.kind as QueueKind)) return { ok: false, message: `Kind is one of ${QUEUE_KINDS.join(", ")}.` };
   if (!/^[a-z][a-z0-9_-]{0,40}$/.test(b.ship)) return { ok: false, message: "Name the ship." };
   const title = b.title.trim().replace(/\s+/g, " ").slice(0, 160);
   if (title.length < 4) return { ok: false, message: "Give it a title (what is to be decided)." };
   const now = new Date().toISOString();
-  const item: QueueItem = { id: `q${Date.now().toString(36)}`, kind: b.kind as QueueKind, ship: b.ship, title, request: (b.request ?? "").trim().slice(0, 4000), status: "queued", by: b.by || "captain", created: now, updated: now };
+  const item: QueueItem = { id: `q${Date.now().toString(36)}`, kind: b.kind as QueueKind, ship: b.ship, title, request: (b.request ?? "").trim().slice(0, 4000), status: "queued", by: b.by || "captain", created: now, updated: now, ...(b.source ? { source: b.source } : {}) };
   writeQueue([...readQueue(), item]);
   return { ok: true, item };
 }
 
-export function updateQueueItem(id: string, patch: Partial<Pick<QueueItem, "status" | "record" | "title" | "request">>): QueueItem | null {
+export function updateQueueItem(id: string, patch: Partial<Pick<QueueItem, "status" | "record" | "title" | "request" | "note">>): QueueItem | null {
   if (!ID_RE.test(id)) return null;
   const items = readQueue();
   const i = items.findIndex((x) => x.id === id);

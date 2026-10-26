@@ -40,7 +40,7 @@ describe("the rig contract", () => {
     expect(Object.keys(row.checks)).toEqual(["lint", "rig", "rig-down"]);
     expect(row.maneuvers.map((m) => [m.name, m.checks, m.by])).toEqual([
       ["tidy", ["lint"], ["lead"]],
-      ["rig", ["rig"], ["lead", "builder", "designer"]],
+      ["rig", ["rig"], ["lead", "builder"]],
     ]);
     const own = parseShipConfig({ id: "k", rig: decl, maneuvers: { rig: { checks: ["rig"], by: ["lead"] } } }, "k");
     expect(own.maneuvers.filter((m) => m.name === "rig").map((m) => m.by)).toEqual([["lead"]]);

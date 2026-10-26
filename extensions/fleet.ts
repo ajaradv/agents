@@ -238,16 +238,18 @@ export default function (pi: ExtensionAPI) {
     name: "voyage_start",
     ...RARE,
     label: "Set sail",
-    description: "Start a voyage on a ship: a goal sent to the crewmate (or Firstmate) who runs it; they get the brief." + GO,
+    description: "Start a voyage on a ship: a goal sent to the crewmate (or Firstmate) who runs it; they get the brief. On lead-run ships a voyage builds decided work: give spec (an approved spec's vault path, fleet/specs/<ship>/<slug>.md), or chore: true for a fix, docs, or a small change with no new UI or behaviour. Anything still to decide goes on the Decision queue (queue_add) first." + GO,
     parameters: Type.Object({
       ship: Type.String(),
       goal: Type.String({ description: "What the voyage should achieve, in one or two sentences" }),
       to: Type.String({ description: "Who runs it: <ship>-lead (usual), another crewmate aboard, or firstmate on Firstmate ships" }),
       on: Type.Optional(Type.String({ description: "Where it sails: hub, or laptop (only while the captain has laptop voyages on and the laptop is awake). Leave out for the ship's default" })),
+      spec: Type.Optional(Type.String({ description: "The approved spec it builds (vault path fleet/specs/<ship>/<slug>.md)" })),
+      chore: Type.Optional(Type.Boolean({ description: "true for a chore: a fix, docs, or a small change with no new UI or behaviour" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await action("voyage_start", { ship: p.ship, goal: p.goal, to: p.to, on: p.on }, p));
+      return text(await action("voyage_start", { ship: p.ship, goal: p.goal, to: p.to, on: p.on, spec: p.spec, chore: p.chore ? "true" : undefined }, p));
     },
   });
 

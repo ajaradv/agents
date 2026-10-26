@@ -11,6 +11,7 @@ import { readShipConfig, recentConfigChanges, shipTemplates } from "./ship-confi
 import { laptopStatus } from "./laptop.ts";
 import { laptopSailable, laptopVoyages } from "./laptop-host.ts";
 import { QUEUE_KINDS, queueView, type QueueItem, type QueueKind } from "./decision-queue.ts";
+import { listSpecs, parseSpec } from "./specs.ts";
 import { voyageWorktree } from "./voyage-worktree.ts";
 import { readMemorySync, voyageMemoryNotes } from "./memory-sync.ts";
 import { voyageId } from "./metrics.ts";
@@ -588,6 +589,23 @@ export function orderProgress(slug: string, total: number, events = recentShipEv
 /** The fleet deck's orders panel: Go, Retry, Cancel, edit and delete, and what each order did. */
 const QUEUE_KIND_LABEL: Record<QueueKind, string> = { "design-session": "Design session", "spec-session": "Spec session", "spec-review": "Spec review", "design-review": "Design review" };
 
+/** A review's state and the captain's two answers (lib/decisions.ts reviewQueueItem). */
+function reviewHtml(i: QueueItem, api: string): string {
+  if (i.status !== "queued") return "";
+  const answer = (approve: string, changes: string, placeholder: string) => `<div class="row-wrap">
+      <form class="shipyard-form" data-api="${api}/approve"><button class="d-btn d-btn-sm d-btn-neutral" type="submit">${approve}</button><span class="muted" data-note></span></form>
+      <form class="row shipyard-form" data-api="${api}/changes"><input class="d-input d-input-sm" name="note" placeholder="${placeholder}" /><button class="d-btn d-btn-sm" type="submit">${changes}</button><span class="muted" data-note></span></form>
+    </div>`;
+  if (i.kind === "spec-review") {
+    if (!i.record) return `<p class="muted">Waiting for the architect's draft${i.note ? `; your changes: ${escapeHtml(i.note.slice(0, 200))}` : ""}.</p>`;
+    const spec = parseSpec(i.record);
+    const path = i.record.replace(/^.*\/fleet\/specs\//, "fleet/specs/");
+    return `<details class="spec-preview"><summary>Spec <code>${escapeHtml(path)}</code> · ${spec?.criteria.length ?? 0} acceptance criteria${spec?.prototype ? ` · from <code>${escapeHtml(spec.prototype)}</code>` : ""}</summary><ol>${(spec?.criteria ?? []).map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ol></details>${answer("Approve", "Ask for changes", "What to change")}`;
+  }
+  if (i.kind === "design-review") return answer("Accept as built", "Send to the lead", "Anything to add (optional)");
+  return "";
+}
+
 /**
  * The captain's decision queue (lib/decision-queue.ts) on the flagship's deck:
  * design and spec sessions with the fleet's designer and architect, and the
@@ -607,7 +625,7 @@ async function decisionQueueHtml(): Promise<string> {
         : `<span class="muted" title="${escapeHtml(laptop.why)}">waits for the laptop</span>`
       : "";
     const where = i.status === "active" ? `<a href="/ships/${encodeURIComponent(i.ship)}">in session on ${escapeHtml(i.ship)}</a>` : escapeHtml(i.ship);
-    return `<li class="queue-item is-${i.status}"><div class="between"><span><strong>${escapeHtml(QUEUE_KIND_LABEL[i.kind])}</strong> · ${where} · ${escapeHtml(i.title)}</span><span class="row">${start}${i.status === "queued" ? `${btn("up", "↑")}${btn("down", "↓")}${btn("drop", "Drop", ` data-confirm="Drop this from the queue?"`)}` : ""}</span></div>${i.request ? `<p class="muted">${escapeHtml(i.request.slice(0, 300))}</p>` : ""}</li>`;
+    return `<li class="queue-item is-${i.status}"><div class="between"><span><strong>${escapeHtml(QUEUE_KIND_LABEL[i.kind])}</strong> · ${where} · ${escapeHtml(i.title)}</span><span class="row">${start}${i.status === "queued" ? `${btn("up", "↑")}${btn("down", "↓")}${btn("drop", "Drop", ` data-confirm="Drop this from the queue?"`)}` : ""}</span></div>${i.request ? `<p class="muted">${escapeHtml(i.request.slice(0, 300))}</p>` : ""}${reviewHtml(i, api)}</li>`;
   };
   const kinds = QUEUE_KINDS.filter((k) => k.endsWith("-session")).map((k) => `<option value="${k}">${QUEUE_KIND_LABEL[k]}</option>`).join("");
   return `<section class="stack decision-queue">
@@ -781,7 +799,8 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
   return `<section class="voyage stack">
     <h3>Set a course</h3>
     <form class="stack shipyard-form" data-api="${api}/voyage">
-      <textarea class="d-textarea w-full" name="goal" rows="2" required placeholder="What should this voyage achieve? e.g. Ship the V4 home page with mobile fixes"></textarea>
+      ${decidedHtml(ship)}
+      <textarea class="d-textarea w-full" name="goal" rows="2" placeholder="${ship.orchestrator === "lead" ? "The goal (a spec's title is used when left empty)" : "What should this voyage achieve? e.g. Ship the V4 home page with mobile fixes"}"></textarea>
       <div class="row">
         <label class="row">Send to <select class="d-select d-select-sm" name="to">${targets.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.label)}</option>`).join("")}</select></label>
         ${sail.show ? `<label class="row">Sail on <select class="d-select d-select-sm" name="on"><option value="hub"${sail.prefer === "hub" ? " selected" : ""}>the hub</option><option value="laptop"${sail.laptop ? "" : " disabled"}${sail.prefer === "laptop" ? " selected" : ""}>the laptop${sail.laptop ? "" : ` (${escapeHtml(sail.why)})`}</option></select></label>` : ""}
@@ -790,6 +809,17 @@ function voyageHtml(ship: ShipRow, voyage: Voyage | null, all: Voyage[], ready: 
     </form>
     ${pastHtml}
   </section>`;
+}
+
+/** What a lead-run voyage builds (D3): an approved spec, or a chore; anything else goes to the Decision queue. */
+function decidedHtml(ship: ShipRow): string {
+  if (ship.orchestrator !== "lead") return "";
+  const specs = listSpecs(ship.id, "approved");
+  return `<div class="row-wrap">
+      <label class="row">Builds <select class="d-select d-select-sm" name="spec"><option value="">${specs.length ? "a chore (tick below)" : "no approved spec yet"}</option>${specs.map((sp) => `<option value="${escapeHtml(sp.file)}">${escapeHtml(sp.title)} · ${sp.criteria.length} criteria</option>`).join("")}</select></label>
+      <label class="row"><input type="checkbox" class="d-checkbox d-checkbox-sm" name="chore" /> Chore (a fix, docs, a small change with no new UI or behaviour)</label>
+      <span class="muted">Still to decide? Put it on the flagship's <a href="/ships/fleet">Decision queue</a>.</span>
+    </div>`;
 }
 
 function checkRow(c: CheckItem): string {

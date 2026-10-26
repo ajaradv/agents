@@ -15,6 +15,8 @@ import { recordHandoff, recordRun } from "./metrics.ts";
 import { describeGates, gateFolder, gateStatus, runGates } from "./gates.ts";
 import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 import { addQueueItem } from "./decision-queue.ts";
+import { parseSpec } from "./specs.ts";
+import { busPost } from "./bus-api.ts";
 import { describeManeuver, findManeuver, launchRefusal, maneuverAvailability, type ManeuverAvailability } from "./maneuvers.ts";
 import { runCheck, tail, treeState } from "./ship-checks.ts";
 import { freeSlot, helperDefs, HOST_LABEL, HOST_SLOTS, pickHelperHost, runHelperHere, shotUrls, takeShots, takeSlot, type HelperDef, type HelperResult, type ShotOptions } from "./helpers.ts";
@@ -521,8 +523,13 @@ export async function crewDockRequest(shipId: string, b: { from: string; summary
   if ("ok" in v) return v;
   const summary = String(b.summary ?? "").trim().replace(/\s+/g, " ").slice(0, 600);
   if (summary.length < 10) return { ok: false, message: "Give the dock a summary: what the voyage delivered and how it was checked." };
+  // A voyage from a design (D3): the fleet's designer compares its screenshots with the approved design; only a difference reaches the queue.
+  const spec = "spec" in v && v.spec ? parseSpec(v.spec) : null;
+  if (spec?.prototype.startsWith("design/")) {
+    await busPost(b.from, { to: "designer", kind: "design-review-request", summary: `${shipId}'s voyage built from your design asks to dock. Compare its screenshots (the lead's canvas, the voyage preview ${voyageWorktree(shipId)?.rig?.preview ?? ""}) with the spec's design, then call design_review.`, ref: spec.file, ship: shipId }, async (id) => id === "designer").catch(() => null);
+  }
   const { requestGo } = await import("./fleet-api.ts");
-  return requestGo(b.from, "voyage_dock", { ship: shipId, summary });
+  return requestGo(b.from, "voyage_dock", { ship: shipId, summary: spec ? `${summary} (spec: ${spec.criteria.length} acceptance criteria)` : summary });
 }
 
 /**
