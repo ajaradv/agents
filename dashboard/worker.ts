@@ -14,6 +14,7 @@
  *   POST /host/exec    {cmd, cwd, timeoutMs} → {stdout, stderr, exitCode, timedOut, ms}
  *   POST /host/memory  {put: {relpath: text}} or {ship, agents} → {files}
  *   POST /host/token   {token} → {ok, message}: replace this worker's token (the hub rotates a VM's, copied from its golden VM)
+ *   POST /host/env-store {ship, files: {relpath: text}} → {ok, message, written}: files into this machine's rig env store (a golden VM's, from the hub)
  *   POST /host/rig-env {cwd} → {ok, message}: a ship's rig env files from this machine's store into a worktree
  *   WS   /host/rpc     a crewmate's pi in RPC mode: first message {start: {agent, config,
  *                     worktree, hubUrl, crewToken}}; then {i} stdin in, {o}/{e} out, {x} exit code
@@ -39,7 +40,7 @@ import { runQuotaAxi } from "./lib/quota.ts";
 import { firstmateTuiReachable, sendToFirstmateTui } from "./lib/firstmate-chat.ts";
 import { agentKeyEnv } from "./lib/fleet-env.ts";
 import { freeSlot, helperDefs, runHelperHere, shotUrls, takeShots, takeSlot, type HelperResult } from "./lib/helpers.ts";
-import { commandRefusal, getMemory, hostedExecEnv, hostedRigEnv, hostedShips, prepareHostedLaunch, putMemory, shipForFolder, type LaunchContext } from "./lib/hosted.ts";
+import { chownAfter, commandRefusal, getMemory, hostedExecEnv, hostedRigEnv, hostedShips, prepareHostedLaunch, putEnvStore, putMemory, shipForFolder, type LaunchContext } from "./lib/hosted.ts";
 import { ROOT } from "./lib/paths.ts";
 import { spawnTimed } from "./lib/proc.ts";
 import { readSecret, writeSecret } from "./lib/secret-store.ts";
@@ -130,7 +131,12 @@ async function hostExec(req: Request): Promise<Response> {
   const timeoutMs = Math.min(3_600_000, Math.max(1000, Number(b.timeoutMs) || 60_000));
   // A check runs as in a terminal here (the captain's PATH via the login shell), marked as CI;
   // FLEET_SHIP_REPO is the captain's checkout here, as on the hub (lib/ship-checks.ts), plus the voyage's rig.
-  return Response.json(await spawnTimed(cmd, { timeoutMs, cwd, env: { ...process.env, CI: "1", ...hostedExecEnv(ship!, b.rig) } }));
+  const result = await spawnTimed(cmd, { timeoutMs, cwd, env: { ...process.env, CI: "1", ...hostedExecEnv(ship!, b.rig) } });
+  // Containers on a VM run as root and leave root-owned files in the worktree; hand them back before answering.
+  if (chownAfter(cmd, process.env.FLEET_WORKER_KIND) && process.getuid && process.getgid) {
+    await spawnTimed(["sudo", "-n", "chown", "-R", `${process.getuid()}:${process.getgid()}`, cwd], { timeoutMs: 30_000 }).catch(() => {});
+  }
+  return Response.json(result);
 }
 
 /** One hosted crewmate's link: its process, and stdin that arrived while it was starting. */
@@ -257,6 +263,11 @@ if (import.meta.main) {
       if (path === "/host/rig-env" && req.method === "POST") {
         const b = (await req.json().catch(() => ({}))) as { cwd?: unknown };
         return Response.json(await hostedRigEnv(String(b.cwd ?? "")));
+      }
+      if (path === "/host/env-store" && req.method === "POST") {
+        const b = (await req.json().catch(() => ({}))) as { ship?: unknown; files?: unknown };
+        const r = await putEnvStore(String(b.ship ?? ""), b.files);
+        return Response.json(r, { status: r.ok ? 200 : 400 });
       }
       if (path === "/host/memory" && req.method === "POST") {
         const b = (await req.json().catch(() => ({}))) as { put?: Record<string, string>; ship?: string; agents?: string[] };

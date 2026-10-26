@@ -14,9 +14,15 @@
 #                                      install if bun.lock changed, restart the worker if HEAD moved)
 #                                      and the ship's repo (git fetch); prints old -> new HEADs
 #   bin/voyage-vm-setup token          the worker token, read on stdin (never argv); restarts the worker
+#   bin/voyage-vm-setup token --generate [--force]
+#                                      make the worker token here and print only it (the hub calls this over
+#                                      exe.dev's HTTPS exec, so no secret rides in a command line); refuses
+#                                      when a token exists unless --force
 #   bin/voyage-vm-setup env <ship>     a tar stream on stdin into the ship's rig env store
 #   bin/voyage-vm-setup wake           after a resume: fix the clock (systemd-timesyncd) and re-join the
 #                                      tailnet if its ephemeral node was removed while paused
+#   bin/voyage-vm-setup warm <ship>    build the ship's rig once (dashboard/golden-warm.ts) so copies of
+#                                      this golden VM start with its images; run before seal
 #   bin/voyage-vm-setup seal           before pausing a golden VM: leave the tailnet (copies must not
 #                                      inherit an identity); prints disk use
 #   bin/voyage-vm-setup status         the service, the tailnet, and a health check
@@ -230,13 +236,40 @@ cmd_refresh() {
 }
 
 cmd_token() {
-  local t
-  t="$(cat | tr -d '\r\n')"
+  local t gen=0 force=0 a
+  for a in "$@"; do
+    case "$a" in
+      --generate) gen=1 ;;
+      --force) force=1 ;;
+      *) die "usage: bin/voyage-vm-setup token [--generate [--force]]" ;;
+    esac
+  done
+  if [ "$gen" = 1 ]; then
+    if [ -s "$TOKEN_FILE" ] && [ "$force" = 0 ]; then die "a worker token already exists (use --force to replace it)"; fi
+    t="$(openssl rand -hex 32)"
+  else
+    t="$(cat | tr -d '\r\n')"
+  fi
   valid_token "$t" || die "not a worker token (32 to 256 letters, digits, - or _)"
   (umask 077; mkdir -p "$SECRETS"; chmod 700 "$SECRETS"; printf '%s' "$t" > "$TOKEN_FILE.tmp"; chmod 600 "$TOKEN_FILE.tmp"; mv "$TOKEN_FILE.tmp" "$TOKEN_FILE")
+  # With --generate stdout carries only the token; the notes go to stderr.
+  if [ "$gen" = 1 ]; then
+    printf '%s\n' "$t"
+    exec 1>&2
+  else
+    echo "worker token saved"
+  fi
   unset t
-  echo "worker token saved"
   if sc is-active --quiet "$UNIT.service" 2>/dev/null; then sc restart "$UNIT.service" && echo "restarted $UNIT"; fi
+}
+
+# Build the ship's rig once on this golden VM so its copies start with the images (dashboard/golden-warm.ts).
+cmd_warm() {
+  local ship="${1:-}"
+  [ -n "$ship" ] || die "usage: bin/voyage-vm-setup warm <ship>"
+  ship_repo "$ship" >/dev/null
+  export PATH="$HOME/.local/bin:$HOME/.local/node/bin:$HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin"
+  bun "$AGENTS/dashboard/golden-warm.ts" "$ship"
 }
 
 cmd_env() {
@@ -264,7 +297,8 @@ case "${1:-}" in
   wake) cmd_wake ;;
   seal) cmd_seal ;;
   refresh) shift; cmd_refresh "$@" ;;
-  token) cmd_token ;;
+  token) shift; cmd_token "$@" ;;
+  warm) shift; cmd_warm "$@" ;;
   env) shift; cmd_env "$@" ;;
   status) cmd_status ;;
   *) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 2 ;;

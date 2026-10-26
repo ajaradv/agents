@@ -1,11 +1,11 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const inbox = mkdtempSync(join(tmpdir(), "hosted-"));
 process.env.FLEET_HOSTED_INBOX = inbox;
-const { commandRefusal, getMemory, hostedExecEnv, hostedRigEnv, memoryPathOk, prepareHostedLaunch, putMemory, shipForFolder, workerDockerEnv } = await import("./hosted.ts");
+const { chownAfter, commandRefusal, envStoreRefusal, putEnvStore, getMemory, hostedExecEnv, hostedRigEnv, memoryPathOk, prepareHostedLaunch, putMemory, shipForFolder, workerDockerEnv } = await import("./hosted.ts");
 const { parseRig, rigChecks } = await import("./rig.ts");
 afterAll(() => {
   delete process.env.FLEET_HOSTED_INBOX;
@@ -119,5 +119,45 @@ describe("the laptop as a ship host: what the hub may ask", () => {
     writeFileSync(join(home, ".docker", "config.json"), JSON.stringify({ auths: {} }));
     expect(workerDockerEnv(home, dir, "darwin")).toEqual({});
     rmSync(home, { recursive: true, force: true });
+  });
+});
+
+describe("the env store the hub fills on a golden VM", () => {
+  const ships = [{ id: "kinwork" }];
+  test("refuses unknown ships, escaping or hidden paths, production files, and too much", () => {
+    expect(envStoreRefusal("kinwork", { "kinwork/.envs/.local/django": "A=1" }, ships)).toBeNull();
+    expect(envStoreRefusal("other", { a: "1" }, ships)).toContain("not a ship");
+    for (const rel of ["/etc/passwd", "../x", "a/../../x", "a//b", "a/._b", "._a", "k/.envs/.production/django", "k/.Production.env"]) expect(envStoreRefusal("kinwork", { [rel]: "1" }, ships)).not.toBeNull();
+    expect(envStoreRefusal("kinwork", Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`f${i}`, "1"])), ships)).toContain("50 files");
+    expect(envStoreRefusal("kinwork", { a: "x".repeat(257 * 1024) }, ships)).toContain("256 KB");
+    expect(envStoreRefusal("kinwork", { a: 1 }, ships)).toContain("text");
+  });
+  test("writes dirs 0700 and files 0600 into the ship's rig store", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "overlay-"));
+    process.env.FLEET_SHIP_OVERLAY_DIR = dir;
+    try {
+      const r = await putEnvStore("kinwork", { "kinwork/.envs/.local/django": "A=1" }, ships as never);
+      expect(r).toMatchObject({ ok: true, written: 1 });
+      const f = join(dir, "kinwork", "env", "kinwork/.envs/.local/django");
+      expect(readFileSync(f, "utf8")).toBe("A=1");
+      expect(statSync(f).mode & 0o777).toBe(0o600);
+      expect(statSync(join(dir, "kinwork", "env", "kinwork/.envs")).mode & 0o777).toBe(0o700);
+      expect(statSync(join(dir, "kinwork", "env")).mode & 0o777).toBe(0o700);
+      expect(await putEnvStore("kinwork", { "../x": "1" }, ships as never)).toMatchObject({ ok: false, written: 0 });
+    } finally {
+      delete process.env.FLEET_SHIP_OVERLAY_DIR;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("root-owned files on a VM", () => {
+  test("chown only after a ship check (login shell) on a VM worker", () => {
+    expect(chownAfter(["/bin/bash", "-lc", "just test"], "vm")).toBe(true);
+    expect(chownAfter(["/bin/zsh", "-lc", "just test"], "vm")).toBe(true);
+    expect(chownAfter(["/bin/bash", "-lc", "just test"], "laptop")).toBe(false);
+    expect(chownAfter(["/bin/bash", "-lc", "just test"], undefined)).toBe(false);
+    expect(chownAfter(["git", "status"], "vm")).toBe(false);
+    expect(chownAfter(["/bin/bash", "-c", "x"], "vm")).toBe(false);
   });
 });
