@@ -2,7 +2,8 @@
  * The laptop worker: what the always-on hub borrows from the captain's laptop
  * while it is awake (lib/laptop.ts is the hub's side).
  *
- * - GET  /health      capabilities right now: "tts" (Kokoro is set up), "firstmate" (its TUI answers)
+ * - GET  /health      capabilities right now: "tts" (Kokoro is set up), "firstmate" (its TUI answers), "quota" (quota-axi)
+ * - GET  /host/quota  the captain's provider quota windows (quota-axi --json), for the hub's Health
  * - POST /tts         {text, voice, speed} → WAV (lib/voice.ts synthesize, the M2 Max's Kokoro)
  * - POST /firstmate   {text} → typed into Firstmate's TUI (lib/firstmate-chat.ts)
  * - POST /shot        {url, width, height, mobile, wait} → PNG (browser.ts: Chrome here, started
@@ -29,6 +30,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromeBin, Gate, gatedShot, MAX_JOBS, shotResponse } from "./browser.ts";
+import { runQuotaAxi } from "./lib/quota.ts";
 import { firstmateTuiReachable, sendToFirstmateTui } from "./lib/firstmate-chat.ts";
 import { agentKeyEnv } from "./lib/fleet-env.ts";
 import { freeSlot, helperDefs, runHelperHere, shotUrls, takeShots, takeSlot, type HelperResult } from "./lib/helpers.ts";
@@ -53,6 +55,7 @@ async function capabilities(): Promise<string[]> {
   if (ttsAvailable()) caps.push("tts");
   if ((await firstmateTuiReachable().catch(() => ({ ok: false }))).ok) caps.push("firstmate");
   if (chromeBin()) caps.push("browser");
+  if (Bun.which("quota-axi")) caps.push("quota");
   caps.push("ship-host", "helpers");
   return caps;
 }
@@ -213,6 +216,11 @@ if (import.meta.main) {
       if (path === "/shot" && req.method === "POST") return shotResponse(req, shots);
       if (path === "/host/ships" && req.method === "GET") return Response.json({ ships: (await hostedShips()).map((s) => ({ id: s.id, path: s.path })) });
       if (path === "/host/exec" && req.method === "POST") return hostExec(req);
+      if (path === "/host/quota" && req.method === "GET") {
+        // The captain's provider quota windows (quota-axi reads this machine's logins), for the hub's Health.
+        const q = await runQuotaAxi();
+        return Response.json({ ok: q.ok, raw: q.raw, error: q.error });
+      }
       if (path === "/host/rig-env" && req.method === "POST") {
         const b = (await req.json().catch(() => ({}))) as { cwd?: unknown };
         return Response.json(await hostedRigEnv(String(b.cwd ?? "")));

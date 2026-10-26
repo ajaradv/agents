@@ -46,8 +46,31 @@ async function commandOnPath(name: string): Promise<boolean> {
   return r.exitCode === 0 && r.stdout.length > 0;
 }
 
-async function runQuotaAxi(): Promise<QuotaCache> {
+/**
+ * quota-axi reads the captain's provider logins (Claude, Codex, Cursor), which
+ * live on the laptop. The hub has neither the tool nor those logins, so it asks
+ * the laptop worker (GET /host/quota) and keeps the last reading while the
+ * laptop sleeps.
+ */
+async function quotaFromLaptop(): Promise<QuotaCache | null> {
+  const { laptopCan, laptopFetch } = await import("./laptop.ts");
+  if (!process.env.FLEET_LAPTOP_URL) return null;
+  const stale = (why: string): QuotaCache => ({ at: cache.at || new Date().toISOString(), ok: cache.ok, raw: cache.raw, parsed: cache.parsed, error: cache.ok ? `${why}; showing the last reading` : why, loading: false, stale: true });
+  if (!(await laptopCan("quota"))) return stale("quota comes from the laptop, which is asleep or offline");
+  try {
+    const r = await laptopFetch("/host/quota", { signal: AbortSignal.timeout(30_000) });
+    const j = (await r.json()) as { ok?: boolean; raw?: string; error?: string };
+    const raw = String(j.raw ?? "");
+    return { at: new Date().toISOString(), ok: Boolean(j.ok) && raw.length > 0, raw, parsed: parseQuotaFromJson(raw), error: j.ok ? undefined : (j.error ?? "the laptop's quota-axi failed"), loading: false, stale: false };
+  } catch (e) {
+    return stale(`the laptop did not answer (${e instanceof Error ? e.message : String(e)})`);
+  }
+}
+
+export async function runQuotaAxi(): Promise<QuotaCache> {
   if (!(await commandOnPath("quota-axi"))) {
+    const remote = await quotaFromLaptop();
+    if (remote) return remote;
     return {
       at: new Date().toISOString(),
       ok: false,
