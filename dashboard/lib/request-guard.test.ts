@@ -33,4 +33,28 @@ describe("request guard", () => {
     expect(requestRefusal(req({ host: TS, "tailscale-user-login": "Captain@example.com" }), 8787)).toBeNull();
     expect(requestRefusal(req({ host: TS, "tailscale-user-login": "guest@example.com" }), 8787)).toContain("not allowed");
   });
+  test("a tagged tailnet device (no login) passes only with a crew token", () => {
+    const h = { host: `${TS}:8786`, "x-fleet-crew-token": "tok" };
+    const node = { tagged: true };
+    expect(requestRefusal(req(h), 8786, node)).toBeNull();
+    expect(requestRefusal(req(h, "POST"), 8786, node)).toBeNull();
+    expect(requestRefusal(req({ host: `${TS}:8786` }, "POST"), 8786, node)).toBe("unknown host");
+    expect(requestRefusal(req({ ...h, "x-fleet-crew-token": " " }), 8786, node)).toBe("unknown host");
+    // No browser is involved, so the https origin is not admitted for it.
+    expect(requestRefusal(req({ ...h, origin: `https://${TS}:8786` }, "POST"), 8786, node)).toBe("cross-origin request");
+  });
+  test("the dashboard never admits a tagged device: its routes trust the guard alone", () => {
+    const h = { host: TS, "x-fleet-crew-token": "tok" };
+    expect(requestRefusal(req(h, "POST"), 8787)).toBe("unknown host");
+    expect(requestRefusal(req(h), 8787)).toBe("unknown host");
+  });
+  test("a user request with a login still passes, token or not", () => {
+    const h = { host: TS, "tailscale-user-login": "captain@example.com" };
+    expect(requestRefusal(req(h, "POST"), 8787)).toBeNull();
+    expect(requestRefusal(req({ ...h, "x-fleet-crew-token": "tok" }, "POST"), 8787)).toBeNull();
+  });
+  test("a crew token does not admit a non-tailnet unknown host", () => {
+    expect(requestRefusal(req({ host: "evil.example", "x-fleet-crew-token": "tok" }), 8786, { tagged: true })).toBe("unknown host");
+    expect(requestRefusal(req({ host: `${TS}.evil.example`, "x-fleet-crew-token": "tok" }), 8786, { tagged: true })).toBe("unknown host");
+  });
 });

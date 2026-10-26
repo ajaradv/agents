@@ -16,11 +16,17 @@
  * the client sent). Such a request is allowed when both are there; set
  * FLEET_TAILNET_USERS (comma-separated logins) to admit only those people.
  * A rebinding page cannot fake it: it cannot make a ts.net name point here.
+ * Tagged devices (the exe.dev voyage VMs) get no login header from Serve. Only
+ * the node admits them (`tagged: true`), and only with an X-Fleet-Crew-Token
+ * header: every node route checks its token itself (crew routes the crew token,
+ * /v1 the node token), and a web page cannot add a custom header cross-site
+ * without a CORS preflight, which the node never grants. The dashboard never
+ * admits them: its routes trust this guard alone.
  */
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-export function requestRefusal(req: Request, port: number): string | null {
+export function requestRefusal(req: Request, port: number, opts: { tagged?: boolean } = {}): string | null {
   const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
   const host = (req.headers.get("host") ?? "").toLowerCase();
   const origins = hosts.map((h) => `http://${h}`);
@@ -28,10 +34,13 @@ export function requestRefusal(req: Request, port: number): string | null {
     // Serve on another port than 443 (the node's :8786, for crew on the laptop) keeps it in Host.
     const tailnet = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.ts\.net(:\d{1,5})?$/.test(host);
     const login = (req.headers.get("tailscale-user-login") ?? "").toLowerCase();
-    if (!tailnet || !login) return "unknown host";
-    const allowed = (process.env.FLEET_TAILNET_USERS ?? "").toLowerCase().split(",").map((x) => x.trim()).filter(Boolean);
-    if (allowed.length && !allowed.includes(login)) return `tailnet user ${login} not allowed`;
-    origins.push(`https://${host}`);
+    const crewToken = opts.tagged ? (req.headers.get("x-fleet-crew-token") ?? "").trim() : "";
+    if (!tailnet || (!login && !crewToken)) return "unknown host";
+    if (login) {
+      const allowed = (process.env.FLEET_TAILNET_USERS ?? "").toLowerCase().split(",").map((x) => x.trim()).filter(Boolean);
+      if (allowed.length && !allowed.includes(login)) return `tailnet user ${login} not allowed`;
+      origins.push(`https://${host}`);
+    }
   }
 
   const upgrade = (req.headers.get("upgrade") ?? "").toLowerCase() === "websocket";
