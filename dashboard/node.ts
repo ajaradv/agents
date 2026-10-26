@@ -628,7 +628,7 @@ function serve() {
   async fetch(req, srv) {
     // Browsers never talk to the node: a page in the captain's browser could
     // otherwise reach loopback. Only local processes holding a token get in.
-    if (req.headers.get("origin") || requestRefusal(req, NODE_PORT)) return new Response("forbidden", { status: 403 });
+    if (req.headers.get("origin") || requestRefusal(req, NODE_PORT, { tagged: true })) return new Response("forbidden", { status: 403 });
     try {
       return await handle(req, srv);
     } catch (e) {
