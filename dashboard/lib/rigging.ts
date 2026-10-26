@@ -1,6 +1,6 @@
 import type { ShipRow } from "./fleet-layers.ts";
 import { notifyCaptain } from "./notify.ts";
-import { copyRigEnv, freePort, previewUrl, rigProject, type RigRecord } from "./rig.ts";
+import { copyRigEnv, freePort, previewUrl, rigProject, rigSlug, type RigRecord } from "./rig.ts";
 import { runCheck } from "./ship-checks.ts";
 import type { HostKind } from "./ship-host.ts";
 import { logShipEvent } from "./ship-log.ts";
@@ -26,8 +26,8 @@ export function planRig(ship: Pick<ShipRow, "id" | "rig">, slug: string, host: H
   if (!ship.rig) return null;
   const port = freePort(rigPortsOn(host));
   if (port === null) return { error: "every rig port on that host is taken (4100–4199); dock a voyage first" };
-  const short = slug.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "voyage";
-  return updateVoyageRig(ship.id, { project: rigProject(ship.id, short), port, slug: short, preview: previewUrl(ship.rig.ready, port), state: "pending", message: "" });
+  const short = rigSlug(slug);
+  return updateVoyageRig(ship.id, { project: rigProject(ship.id, short), port, slug: short, preview: previewUrl(ship.rig.ready, port, short), state: "pending", message: "" });
 }
 
 /** The lines a rigged voyage's brief gains: where the app runs and how to set it up again. */

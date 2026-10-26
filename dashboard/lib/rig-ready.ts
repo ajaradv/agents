@@ -15,3 +15,15 @@ export function stylesheetHrefs(html: string, base: string): string[] {
   }
   return out;
 }
+
+/**
+ * A request for `url` that works where `*.localhost` does not resolve (Linux without systemd-resolved, such
+ * as the hub): sent to 127.0.0.1 with the original Host, which is all a local reverse proxy (Traefik) needs.
+ */
+export function loopbackRequest(url: string): { url: string; headers: Record<string, string> } {
+  const u = new URL(url);
+  if (!u.hostname.endsWith(".localhost")) return { url, headers: {} };
+  const host = u.host;
+  u.hostname = "127.0.0.1";
+  return { url: u.toString(), headers: { Host: host } };
+}

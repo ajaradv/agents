@@ -167,7 +167,7 @@ export async function shipChecklist(ship: ShipRow): Promise<CheckItem[]> {
       ? { item: "Registered with Firstmate", ok: await firstmateRegistered(ship.id), required: true, note: "Firstmate runs this ship's voyages" }
       : { item: "Crew aboard", ok: ship.crew.length > 0, required: true, note: ship.crew.length ? ship.crew.join(", ") : "add at least one crewmate" },
     ...(firstmate ? [] : [{ item: "A lead aboard", ok: ship.crew.includes("lead"), required: false, note: ship.crew.includes("lead") ? "the lead plans voyages into tasks for the crew" : "without a lead, a voyage goes to one crewmate who works it alone" }]),
-    ...(firstmate ? [] : [{ item: "Rigging declared", ok: Boolean(ship.rig), required: false, note: ship.rig ? `each voyage gets its own running copy${ship.rig.ready ? `, ready at ${ship.rig.ready}` : ""}` : "add rig: (up steps, a ready URL, down) so every voyage starts with a running, migrated copy of the app" }]),
+    ...(firstmate ? [] : [{ item: "Rigging declared", ok: Boolean(ship.rig), required: true, note: ship.rig ? `each voyage gets its own running copy${ship.rig.ready ? `, ready at ${ship.rig.ready}` : ""}` : "add rig: (up steps, a ready URL, down) so every voyage starts with a running, migrated copy of the app" }]),
     { item: "PRODUCT.md", ok: repo && existsSync(join(ship.path, "PRODUCT.md")), required: false, note: "what the product is and who it is for; the Designer writes it with impeccable init" },
     { item: "SSSF factory", ok: ship.adws.length > 0, required: false, note: ship.adws.length ? `${ship.adws.length} ADW chains` : "repeatable maneuvers (plan, build, test) need /sssf install" },
   ];

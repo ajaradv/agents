@@ -8,7 +8,7 @@
 //
 // Output is TOON (docs/tool-standards.md). Exit 0 when ready, 1 when not.
 import { encode } from "@toon-format/toon";
-import { stylesheetHrefs } from "../dashboard/lib/rig-ready.ts";
+import { loopbackRequest, stylesheetHrefs } from "../dashboard/lib/rig-ready.ts";
 
 const HELP = `command: rig-ready
 summary: Wait until a rigged app answers 200 with every linked stylesheet loading
@@ -47,13 +47,16 @@ let tries = 0;
 while (Date.now() - t0 < timeout * 1000) {
   tries++;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(20_000), redirect: "follow" });
+    const page = loopbackRequest(url);
+    const res = await fetch(page.url, { headers: page.headers, signal: AbortSignal.timeout(20_000), redirect: "follow" });
     if (!res.ok) last = `${url} answered HTTP ${res.status}`;
     else {
-      const sheets = stylesheetHrefs(await res.text(), res.url || url);
+      // Stylesheets resolve against the page's own URL (its *.localhost host), then go the same way.
+      const sheets = stylesheetHrefs(await res.text(), url);
       const bad: string[] = [];
       for (const href of sheets) {
-        const s = await fetch(href, { signal: AbortSignal.timeout(20_000) }).catch(() => null);
+        const sheet = loopbackRequest(href);
+        const s = await fetch(sheet.url, { headers: sheet.headers, signal: AbortSignal.timeout(20_000) }).catch(() => null);
         if (!s?.ok) bad.push(`${href} (${s ? `HTTP ${s.status}` : "no answer"})`);
       }
       if (!bad.length) {
