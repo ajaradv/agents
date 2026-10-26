@@ -51,9 +51,13 @@ export async function adoptVoyageVm(vm: string, golden: string, deps: AdoptDeps 
   const write = deps.write ?? writeSecret;
   const doFetch = deps.fetch ?? ((url, init) => fetch(url, init));
   try {
-    const mint = deps.vmToken ?? ((n: string) => exeClient().vmToken(n));
-    const proxy = await mint(vm);
-    if (!(await write(`exe-vm-${vm}`, proxy))) return { ok: false, message: `could not store the VM token for ${vm}` };
+    // Minted once: callers retry adoption until the copy's worker answers, and each mint adds a key to the account.
+    let proxy = await read(`exe-vm-${vm}`);
+    if (!proxy) {
+      const mint = deps.vmToken ?? ((n: string) => exeClient().vmToken(n));
+      proxy = await mint(vm);
+      if (!(await write(`exe-vm-${vm}`, proxy))) return { ok: false, message: `could not store the VM token for ${vm}` };
+    }
     const goldenToken = await read(`exe-worker-${golden}`);
     if (!goldenToken) return { ok: false, message: `no worker token for the golden VM ${golden}` };
     const token = deps.random ? deps.random() : randomBytes(32).toString("hex");

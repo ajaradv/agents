@@ -45,8 +45,8 @@ describe("the exe.dev driver", () => {
 
   test("VM tokens expire with the voyage", async () => {
     const { seen, client } = fakeExe({ "ssh-key generate-api-key": { body: { token: "exe1.vm" } } });
-    expect(await client.vmToken("kinwork-search")).toBe("exe1.vm");
-    expect(seen[0]).toBe("ssh-key generate-api-key --vm=kinwork-search --label=fleet-kinwork-search --exp=14d --json");
+    expect(await client.vmToken("kinwork-search", "14d", "k1")).toBe("exe1.vm");
+    expect(seen[0]).toBe("ssh-key generate-api-key --vm=kinwork-search --label=fleet-kinwork-search-k1 --exp=14d --json");
   });
 
   test("VM names: the ship and the voyage, lowercase, inside exe.dev's limits", () => {

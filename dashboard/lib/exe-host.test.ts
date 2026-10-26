@@ -54,6 +54,18 @@ describe("adoptVoyageVm", () => {
     expect(s.m.get("exe-worker-v1")).not.toBe(golden);
   });
 
+  test("a retry reuses the VM token minted before: each mint adds a key to the account", async () => {
+    let mints = 0;
+    let up = false;
+    const { s, deps } = setup(() => (up ? Response.json({ ok: true, message: "ok" }) : Promise.reject(new Error("not up yet"))));
+    const d = { ...deps, vmToken: async () => (mints++, "proxy-new") };
+    expect((await adoptVoyageVm("v1", "gold", d)).ok).toBe(false);
+    up = true;
+    expect((await adoptVoyageVm("v1", "gold", d)).ok).toBe(true);
+    expect(mints).toBe(1);
+    expect(s.m.get("exe-vm-v1")).toBe("proxy-new");
+  });
+
   test("stores no worker token when the VM refuses", async () => {
     const { s, deps } = setup(() => Response.json({ ok: false, message: "no" }, { status: 401 }));
     const r = await adoptVoyageVm("v1", "gold", deps);
