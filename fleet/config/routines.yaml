@@ -50,9 +50,13 @@ routines:
     every: daily 03:30
     job: golden-refresh
 
+  # 15 minutes is the backstop for a database created outside the fleet (a copy,
+  # a restore). A ship.db the fleet itself creates is picked up within a few
+  # seconds: lib/ship-log.ts runs bin/fleet-backup reconcile, which restarts
+  # Litestream only when the config gained or lost a database.
   - id: backups
     title: Hub database backups (Litestream to R2) kept in step with the databases on disk; a notice when replication stops
-    every: every 6h
+    every: every 15m
     job: backups
 
   # Agent routines.

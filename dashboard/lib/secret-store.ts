@@ -3,8 +3,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Where the fleet keeps its two local secrets: the 1Password service-account
- * token (bin/fleet-op-token) and the cached provider keys (lib/op-sdk.ts).
+ * Where the fleet keeps local secrets: the 1Password service-account token
+ * (bin/fleet-op-token), the cached provider keys (lib/op-sdk.ts), and, on the
+ * Linux hub, the Litestream R2 keys (`bin/fleet-backup creds`).
  *
  * - macOS: the login Keychain (account "fleet"), as before.
  * - Linux (the exe.dev hub): one file per secret in ~/.config/fleet/secrets

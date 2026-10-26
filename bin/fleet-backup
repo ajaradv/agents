@@ -1,43 +1,58 @@
 #!/usr/bin/env bash
-# fleet-backup - continuous backup of the hub's SQLite databases to a Cloudflare R2
-# bucket with Litestream (sync every 10 s, a snapshot a day, 30 days kept).
-# Linux hub only. Safe to run again: each step changes only what differs.
+# fleet-backup - continuous backup of the hub's SQLite databases to Cloudflare R2
+# with Litestream v0.5 (sync every 10s, a snapshot a day, 30 days kept).
+# The hub is the exe.dev Linux VM (systemd). Safe to run again: each step
+# changes only what differs. macOS is not wired up (see docs/backups.md).
 #
 # Usage:
-#   bin/fleet-backup config      write ~/.config/fleet/litestream.yml (every database on disk)
-#   bin/fleet-backup install     config, then the fleet-litestream systemd service (enabled, started)
-#   bin/fleet-backup status      the service, and each database's latest snapshot and position
-#   bin/fleet-backup drill       timed restore drill: restore every database to a temp dir,
-#                                integrity-check it, compare row counts with the live one
-#   bin/fleet-backup reconcile   a new ship database? rewrite the config and restart the service
-#                                (the node's `backups` job runs this every 6 hours)
+#   bin/fleet-backup creds       store the R2 keys (hidden prompt, or KEY=value
+#                                on stdin). Never as arguments. Writes the secret
+#                                store and ~/.config/fleet/secrets/litestream.env
+#                                (mode 0600). Does not start the service.
+#   bin/fleet-backup config      write ~/.config/fleet/litestream.yml
+#   bin/fleet-backup install     config, then the fleet-litestream systemd unit.
+#                                Refuses, and does not enable the unit, until the
+#                                env file exists.
+#   bin/fleet-backup status      the service, local status, and latest level-9 snapshot
+#   bin/fleet-backup drill       timed restore drill into a temp dir
+#   bin/fleet-backup reconcile   a new ship database? rewrite the config and restart
+#   bin/fleet-backup restore [--timestamp RFC3339] [db]
+#                                stop the fleet, move each db and its -wal/-shm aside,
+#                                restore, integrity-check, start the fleet again
 #
-# Replicated: fleet/inbox/.node/metrics.db, .node/journal.db, and ships/<ship>/ship.db
-# for every ship (test ships `zz-*` are skipped). Setup, restore: docs/backups.md.
+# Replicated: fleet/inbox/.node/metrics.db, .node/journal.db, and ships/<ship>/ship.db.
+# Skipped: test ships zz-*, ships named fixture or rig, sssf.db, and anything under
+# a fixture/ or rig/ directory. Setup: docs/backups.md.
 #
-# The R2 settings are KEY=VALUE lines in ~/.config/fleet/secrets/litestream.env (0600):
-# LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY, R2_ACCOUNT_ID, R2_BUCKET.
-# The keys never go in the config file or on a command line; the service reads the
-# file as its environment, and this script only checks they are present.
+# LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY, R2_ACCOUNT_ID, and
+# R2_BUCKET live in the 0600 env file. The systemd unit reads that file. The keys
+# are not written into the unit or the yml, and creds never takes them as arguments.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INBOX="${FLEET_INBOX:-$ROOT/fleet/inbox}"
 CONF_DIR="${FLEET_CONFIG_DIR:-$HOME/.config/fleet}"
 CONF="$CONF_DIR/litestream.yml"
-ENV_FILE="${FLEET_SECRETS_DIR:-$CONF_DIR/secrets}/litestream.env"
+SECRETS_DIR="${FLEET_SECRETS_DIR:-$CONF_DIR/secrets}"
+ENV_FILE="$SECRETS_DIR/litestream.env"
 UNIT=fleet-litestream
-UNIT_FILE="/etc/systemd/system/$UNIT.service"
+SYSTEMD_DIR="${FLEET_SYSTEMD_DIR:-/etc/systemd/system}"
+UNIT_FILE="$SYSTEMD_DIR/$UNIT.service"
+LOG_DIR="$INBOX/.node"
 export PATH="$HOME/.local/bin:$PATH"
 
 die() { printf 'error: %s\n' "$1" >&2; exit "${2:-1}"; }
 usage() { sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; }
 sc() { sudo -n systemctl "$@"; }
 
-[ "$(uname)" = Linux ] || die "fleet-backup is for the Linux hub" 2
+[ "$(uname)" = Linux ] || die "fleet-backup runs on the Linux hub (systemd). macOS is not wired up yet (docs/backups.md)" 2
 
-# KEY from the env file (never sourced: it is data, not a script).
-envval() { sed -n "s/^$1=//p" "$ENV_FILE" 2>/dev/null | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"; }
+# KEY from a KEY=VALUE file (never sourced: it is data, not a script).
+envval() {
+  local key="$1"
+  [ -f "$ENV_FILE" ] || return 0
+  sed -n "s/^$key=//p" "$ENV_FILE" | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+}
 
 need_env() {
   local missing=() k
@@ -47,24 +62,29 @@ need_env() {
       [ -n "$(envval "$k")" ] || missing+=("$k")
     done
   fi
-  [ ${#missing[@]} = 0 ] && return 0
+  [ ${#missing[@]} -eq 0 ] && return 0
   cat >&2 <<MSG
 Backups are not set up: $ENV_FILE is missing or incomplete${missing[0]:+ (${missing[*]})}.
 
 The captain needs to:
-  1. Create a Cloudflare R2 bucket (any name; no public access).
-  2. Create an R2 API token with "Object Read & Write" on that bucket only.
-  3. On the hub, create $ENV_FILE (mode 0600) with four lines:
+  1. Create the private R2 bucket ajaradv-fleet-hub-backups (ENAM).
+     Lifecycle: abort incomplete multipart uploads after 1 day. No age-based delete.
+  2. Create an Account API token with Object Read & Write on that bucket only.
+  3. Store the keys (hidden prompt, or KEY=value on stdin; never as arguments):
+       bin/fleet-backup creds
+     That writes the secret store and $ENV_FILE (mode 0600). Creating the file
+     by hand, mode 0600, with the four lines below, also works:
        LITESTREAM_ACCESS_KEY_ID=<the token's Access Key ID>
        LITESTREAM_SECRET_ACCESS_KEY=<the token's Secret Access Key>
        R2_ACCOUNT_ID=<the Cloudflare account id>
-       R2_BUCKET=<the bucket name>
-  4. Run bin/fleet-backup install.
+       R2_BUCKET=ajaradv-fleet-hub-backups
+  4. bin/hub-install --litestream    (if the pinned binary is not installed yet)
+  5. bin/fleet-backup install        (this enables the systemd unit; it stays off until then)
 MSG
   exit 3
 }
 
-# The credentials Litestream reads from its environment (for status and drill).
+# What the litestream child can see. The values come from the env file, not argv.
 load_env() {
   need_env
   LITESTREAM_ACCESS_KEY_ID="$(envval LITESTREAM_ACCESS_KEY_ID)"
@@ -73,72 +93,108 @@ load_env() {
 }
 
 LITESTREAM="$(command -v litestream || true)"
-need_litestream() { [ -n "$LITESTREAM" ] || die "litestream is not installed (run bin/hub-install)"; }
+need_litestream() { [ -n "$LITESTREAM" ] || die "litestream is not installed (bin/hub-install --litestream)"; }
+
+# A path we refuse to replicate even if a broader scan finds it.
+skip_db() {
+  case "$1" in
+    */sssf.db|*/sssf.db-*) return 0 ;;
+    */fixture/*|*/fixtures/*|*/rig/*|*/rigs/*) return 0 ;;
+    */ships/zz-*/*) return 0 ;;
+  esac
+  return 1
+}
 
 # Every database on disk, one absolute path per line, sorted.
 databases() {
-  local f
-  for f in "$INBOX/.node/metrics.db" "$INBOX/.node/journal.db" "$INBOX"/ships/*/ship.db; do
-    [ -f "$f" ] || continue
-    case "$f" in */ships/zz-*/ship.db) continue ;; esac
-    printf '%s\n' "$f"
-  done | sort
+  local f ship
+  {
+    for f in "$INBOX/.node/metrics.db" "$INBOX/.node/journal.db"; do
+      [ -f "$f" ] || continue
+      skip_db "$f" && continue
+      printf '%s\n' "$f"
+    done
+    for f in "$INBOX"/ships/*/ship.db; do
+      [ -f "$f" ] || continue
+      ship="$(basename "$(dirname "$f")")"
+      case "$ship" in
+        zz-*|fixture|fixtures|rig|rigs) continue ;;
+      esac
+      skip_db "$f" && continue
+      printf '%s\n' "$f"
+    done
+  } | sort
 }
 
 render_config() {
-  local account bucket db rel
+  local account bucket db rel list n
   account="$(envval R2_ACCOUNT_ID)"
   bucket="$(envval R2_BUCKET)"
-  [[ "$account" =~ ^[A-Za-z0-9]+$ ]] || die "R2_ACCOUNT_ID in $ENV_FILE is not an account id"
-  [[ "$bucket" =~ ^[A-Za-z0-9._-]+$ ]] || die "R2_BUCKET in $ENV_FILE is not a bucket name"
-  echo "# Written by bin/fleet-backup config; edits are overwritten. Keys come from the environment."
+  [[ "$account" =~ ^[A-Za-z0-9]+$ ]] || die "R2_ACCOUNT_ID is not an account id"
+  [[ "$bucket" =~ ^[A-Za-z0-9._-]+$ ]] || die "R2_BUCKET is not a bucket name"
+  list="$(mktemp)"
+  databases > "$list"
+  echo "# Written by bin/fleet-backup config; edits are overwritten."
+  echo "# No credentials in this file. Litestream v0.5: one replica, global snapshot retention."
+  echo "sync-interval: 10s"
+  echo "snapshot:"
+  echo "  interval: 24h"
+  echo "  retention: 720h"
+  n=0
+  while IFS= read -r db; do
+    [ -n "$db" ] || continue
+    n=$((n + 1))
+  done < "$list"
+  if [ "$n" -eq 0 ]; then
+    echo "dbs: []"
+    rm -f "$list"
+    return 0
+  fi
   echo "dbs:"
   while IFS= read -r db; do
+    [ -n "$db" ] || continue
     rel="${db#"$INBOX"/}"
     rel="${rel%.db}"
     cat <<YML
   - path: $db
-    replicas:
-      - type: s3
-        endpoint: https://$account.r2.cloudflarestorage.com
-        region: auto
-        bucket: $bucket
-        path: fleet-hub/$rel
-        force-path-style: true
-        sync-interval: 10s
-        snapshot-interval: 24h
-        retention: 720h
+    replica:
+      type: s3
+      endpoint: https://$account.r2.cloudflarestorage.com
+      region: auto
+      bucket: $bucket
+      path: fleet-hub/$rel
+      force-path-style: true
 YML
-  done < <(databases)
+  done < "$list"
+  rm -f "$list"
 }
 
-# Replace $1 with stdin when it differs (0600, atomic). Prints "changed" or "unchanged".
+# Replace $1 with stdin when it differs (mode $2, atomic). Prints "changed" or "unchanged".
 write_if_changed() {
-  local dest="$1" tmp
+  local dest="$1" mode="${2:-0600}" tmp
+  mkdir -p "$(dirname "$dest")"
   tmp="$(mktemp "$dest.XXXXXX")"
   cat > "$tmp"
-  chmod 0600 "$tmp"
+  chmod "$mode" "$tmp"
   if [ -f "$dest" ] && cmp -s "$tmp" "$dest"; then rm -f "$tmp"; echo unchanged; else mv "$tmp" "$dest"; echo changed; fi
 }
 
 db_paths_in() { { sed -n 's/^  - path: //p' "$1" 2>/dev/null || true; } | sort; }
 
-# Writes the config; sets CONFIG_CHANGED (1/0) and prints what changed in databases.
 do_config() {
-  load_env
+  need_env
   mkdir -p "$CONF_DIR"
-  local before after old new
-  before="$(mktemp)"; after="$(mktemp)"
+  local before after
+  before="$(mktemp)"
+  after="$(mktemp)"
   db_paths_in "$CONF" > "$before"
   CONFIG_CHANGED=0
-  [ "$(render_config | write_if_changed "$CONF")" = changed ] && CONFIG_CHANGED=1
+  [ "$(render_config | write_if_changed "$CONF" 0600)" = changed ] && CONFIG_CHANGED=1
   db_paths_in "$CONF" > "$after"
   if [ "$CONFIG_CHANGED" = 1 ]; then
-    new="$(comm -13 "$before" "$after" | sed 's/^/  added   /')"
-    old="$(comm -23 "$before" "$after" | sed 's/^/  removed /')"
     echo "wrote $CONF ($(wc -l < "$after" | tr -d ' ') databases)"
-    [ -z "$new" ] || echo "$new"
-    [ -z "$old" ] || echo "$old"
+    comm -13 "$before" "$after" | sed 's/^/  added   /' || true
+    comm -23 "$before" "$after" | sed 's/^/  removed /' || true
   else
     echo "$CONF is current ($(wc -l < "$after" | tr -d ' ') databases)"
   fi
@@ -151,6 +207,7 @@ render_unit() {
 Description=Fleet backups (Litestream to Cloudflare R2)
 After=network-online.target
 Wants=network-online.target
+ConditionPathExists=$ENV_FILE
 
 [Service]
 User=$(id -un)
@@ -164,7 +221,158 @@ WantedBy=multi-user.target
 UNIT
 }
 
+service_running() { systemctl is-active --quiet "$UNIT.service"; }
+
+service_line() {
+  echo "$UNIT: $(systemctl is-active "$UNIT.service" 2>/dev/null || true) ($(systemctl is-enabled "$UNIT.service" 2>/dev/null || echo not installed))"
+}
+
+read_hidden() {
+  local prompt="$1" old="" val="" c
+  printf '%s' "$prompt" >&2
+  old="$(stty -g 2>/dev/null || true)"
+  stty -echo -icanon min 1 time 0 2>/dev/null || true
+  while IFS= read -r -n 1 c; do
+    [ -z "$c" ] && break
+    val="$val$c"
+  done
+  if [ -n "$old" ]; then stty "$old" 2>/dev/null || true; else stty echo 2>/dev/null || true; fi
+  printf '\n' >&2
+  printf '%s' "$val"
+}
+
+# Values stay in this shell and on the bun script's stdin. Never argv.
+do_creds() {
+  local id="" secret="" account="" bucket="" line
+  [ -z "${1:-}" ] || die "creds does not take arguments or key values (they would show up in the process list). Run bin/fleet-backup creds" 2
+  if [ -t 0 ]; then
+    id="$(read_hidden "R2 access key id (input hidden): ")"
+    secret="$(read_hidden "R2 secret access key (input hidden): ")"
+    printf 'R2 account id: ' >&2
+    IFS= read -r account
+    printf 'R2 bucket [ajaradv-fleet-hub-backups]: ' >&2
+    IFS= read -r bucket
+    [ -n "$bucket" ] || bucket="ajaradv-fleet-hub-backups"
+  else
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        ""|\#*) continue ;;
+        LITESTREAM_ACCESS_KEY_ID=*) id="${line#LITESTREAM_ACCESS_KEY_ID=}" ;;
+        LITESTREAM_SECRET_ACCESS_KEY=*) secret="${line#LITESTREAM_SECRET_ACCESS_KEY=}" ;;
+        R2_ACCOUNT_ID=*) account="${line#R2_ACCOUNT_ID=}" ;;
+        R2_BUCKET=*) bucket="${line#R2_BUCKET=}" ;;
+      esac
+    done
+  fi
+  if [ -z "$id" ] || [ -z "$secret" ] || [ -z "$account" ] || [ -z "$bucket" ]; then
+    die "LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY, R2_ACCOUNT_ID, and R2_BUCKET are required"
+  fi
+  # printf is a builtin, so the values are not a separate process's argv.
+  printf '%s\n' \
+    "LITESTREAM_ACCESS_KEY_ID=$id" \
+    "LITESTREAM_SECRET_ACCESS_KEY=$secret" \
+    "R2_ACCOUNT_ID=$account" \
+    "R2_BUCKET=$bucket" \
+    | bun "$ROOT/dashboard/lib/litestream-creds.ts"
+  unset id secret account bucket line
+}
+
+install_linux() {
+  local unit_changed=0 was_active=0
+  if ! render_unit | cmp -s - "$UNIT_FILE" 2>/dev/null; then
+    mkdir -p "$SYSTEMD_DIR"
+    render_unit | sudo tee "$UNIT_FILE" >/dev/null
+    sc daemon-reload
+    unit_changed=1
+    echo "wrote $UNIT_FILE"
+  fi
+  systemctl is-active --quiet "$UNIT.service" && was_active=1
+  sc enable --now "$UNIT.service" >/dev/null 2>&1 || die "could not start $UNIT (journalctl -u $UNIT)"
+  if [ "$was_active" = 1 ] && { [ "$CONFIG_CHANGED" = 1 ] || [ "$unit_changed" = 1 ]; }; then
+    sc restart "$UNIT.service"
+    echo "restarted $UNIT"
+  fi
+  service_line
+}
+
+unit_installed() { [ -f "$SYSTEMD_DIR/$1.service" ]; }
+
+stop_unit() {
+  unit_installed "$1" || return 0
+  sudo -n systemctl stop "$1" 2>/dev/null || true
+  echo "stopped $1"
+}
+
+start_unit() {
+  unit_installed "$1" || { echo "$1: not installed"; return 0; }
+  sudo -n systemctl start "$1" || { echo "error: could not start $1" >&2; return 1; }
+  echo "started $1"
+}
+
+move_aside() {
+  local f="$1" stamp="$2"
+  [ -e "$f" ] || return 0
+  mv "$f" "$f.aside-$stamp"
+  echo "moved $f aside to $f.aside-$stamp"
+}
+
+do_restore() {
+  local ts="$1" only="$2" stamp db meta check args start_fail=0 fail=0
+  need_litestream
+  load_env
+  [ -f "$CONF" ] || die "no $CONF yet (run bin/fleet-backup install)"
+  if [ -n "$ts" ]; then
+    [[ "$ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || die "--timestamp must be UTC RFC3339 (2006-01-02T15:04:05Z)"
+  fi
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  echo "stopping the fleet"
+  stop_unit fleet-node
+  stop_unit fleet-dashboard
+  stop_unit fleet-browser
+  stop_unit "$UNIT"
+  while IFS= read -r db; do
+    [ -n "$only" ] && [ "$db" != "$only" ] && continue
+    echo "restoring $db"
+    move_aside "$db" "$stamp"
+    move_aside "$db-wal" "$stamp"
+    move_aside "$db-shm" "$stamp"
+    meta="$(dirname "$db")/.$(basename "$db")-litestream"
+    move_aside "$meta" "$stamp"
+    args=(-config "$CONF")
+    [ -n "$ts" ] && args+=(-timestamp "$ts")
+    if ! "$LITESTREAM" restore "${args[@]}" "$db" >"$LOG_DIR/restore.log" 2>&1; then
+      printf 'FAIL  %s: restore failed (%s)\n' "$db" "$(tail -n 1 "$LOG_DIR/restore.log")"
+      fail=1
+      continue
+    fi
+    if [ ! -s "$db" ]; then printf 'FAIL  %s: restored file is empty\n' "$db"; fail=1; continue; fi
+    check="$(sqlite3 "$db" 'PRAGMA integrity_check' 2>&1 | head -n 5 | tr '\n' ' ')"
+    if [ "${check% }" != ok ]; then printf 'FAIL  %s: integrity_check: %s\n' "$db" "$check"; fail=1; continue; fi
+    echo "ok    $db"
+  done < <(db_paths_in "$CONF")
+  if [ -n "$only" ] && ! grep -Fxq "$only" <(db_paths_in "$CONF"); then
+    echo "FAIL  $only is not in $CONF" >&2
+    fail=1
+  fi
+  if [ "$fail" != 0 ]; then
+    echo "restore FAILED; the fleet is still stopped. Previous files are the *.aside-$stamp copies." >&2
+    exit 1
+  fi
+  echo "starting the fleet"
+  start_unit "$UNIT" || start_fail=1
+  start_unit fleet-node || start_fail=1
+  start_unit fleet-dashboard || start_fail=1
+  start_unit fleet-browser || start_fail=1
+  [ "$start_fail" = 0 ] || die "databases were restored but a service did not start"
+  echo "restore passed (previous files kept as *.aside-$stamp)"
+}
+
 case "${1:-}" in
+  creds)
+    shift
+    do_creds "$@"
+    ;;
+
   config)
     do_config
     ;;
@@ -172,33 +380,21 @@ case "${1:-}" in
   install)
     need_litestream
     do_config
-    unit_changed=0
-    if ! render_unit | cmp -s - "$UNIT_FILE" 2>/dev/null; then
-      render_unit | sudo tee "$UNIT_FILE" >/dev/null
-      sc daemon-reload
-      unit_changed=1
-      echo "wrote $UNIT_FILE"
-    fi
-    was_active=0
-    systemctl is-active --quiet "$UNIT.service" && was_active=1
-    sc enable --now "$UNIT.service" >/dev/null 2>&1 || die "could not start $UNIT (journalctl -u $UNIT)"
-    if [ "$was_active" = 1 ] && { [ "$CONFIG_CHANGED" = 1 ] || [ "$unit_changed" = 1 ]; }; then
-      sc restart "$UNIT.service"
-      echo "restarted $UNIT"
-    fi
-    echo "$UNIT: $(systemctl is-active "$UNIT.service" || true)"
+    install_linux
     ;;
 
   status)
     need_litestream
     load_env
-    echo "$UNIT: $(systemctl is-active "$UNIT.service" 2>/dev/null || true) ($(systemctl is-enabled "$UNIT.service" 2>/dev/null || echo not installed))"
+    service_line
     [ -f "$CONF" ] || die "no $CONF yet (run bin/fleet-backup install)"
     while IFS= read -r db; do
       echo
       echo "$db"
-      "$LITESTREAM" snapshots -config "$CONF" "$db" 2>&1 | tail -n 3 || true
-      "$LITESTREAM" generations -config "$CONF" "$db" 2>&1 | tail -n 3 || true
+      echo "status:"
+      "$LITESTREAM" status -config "$CONF" "$db" 2>&1 | tail -n 4 || true
+      echo "snapshots (level 9):"
+      "$LITESTREAM" ltx -config "$CONF" -level 9 "$db" 2>&1 | tail -n 3 || true
     done < <(db_paths_in "$CONF")
     ;;
 
@@ -215,14 +411,15 @@ case "${1:-}" in
       out="$tmp/$name"
       start=$SECONDS
       if ! "$LITESTREAM" restore -config "$CONF" -o "$out" "$db" >"$tmp/restore.log" 2>&1; then
-        printf 'FAIL  %s: restore failed (%s)\n' "$db" "$(tail -n 1 "$tmp/restore.log")"; fail=1; continue
+        printf 'FAIL  %s: restore failed (%s)\n' "$db" "$(tail -n 1 "$tmp/restore.log")"
+        fail=1
+        continue
       fi
       secs=$((SECONDS - start))
       if [ ! -s "$out" ]; then printf 'FAIL  %s: restored file is empty\n' "$db"; fail=1; continue; fi
       check="$(sqlite3 "$out" 'PRAGMA integrity_check' 2>&1 | head -n 5 | tr '\n' ' ')"
       if [ "${check% }" != ok ]; then printf 'FAIL  %s: integrity_check: %s\n' "$db" "$check"; fail=1; continue; fi
       printf 'ok    %s: restored and checked in %ss\n' "$db" "$secs"
-      # Row counts against the live database; the live one may be a few writes ahead.
       while IFS= read -r t; do
         [ -n "$t" ] || continue
         r="$(sqlite3 "$out" "SELECT COUNT(*) FROM \"$t\"" 2>/dev/null || echo '?')"
@@ -235,17 +432,46 @@ case "${1:-}" in
     done < <(db_paths_in "$CONF")
     echo
     echo "total: $((SECONDS - total_start))s"
-    [ "$fail" = 0 ] && echo "drill passed" || { echo "drill FAILED" >&2; exit 1; }
+    if [ "$fail" = 0 ]; then echo "drill passed"; else echo "drill FAILED" >&2; exit 1; fi
     ;;
 
   reconcile)
     do_config
     if [ "$CONFIG_CHANGED" = 1 ]; then
-      if systemctl is-active --quiet "$UNIT.service"; then sc restart "$UNIT.service" && echo "restarted $UNIT"; else echo "$UNIT is not running (bin/fleet-backup install)"; fi
+      if service_running; then
+        sc restart "$UNIT.service" || die "could not restart the backup service"
+        echo "restarted $UNIT"
+      else
+        echo "$UNIT is not running (bin/fleet-backup install)"
+      fi
     fi
+    ;;
+
+  restore)
+    shift
+    ts=""
+    only=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --timestamp)
+          [ $# -ge 2 ] || die "--timestamp needs a UTC RFC3339 value" 2
+          ts="$2"
+          shift 2
+          ;;
+        --*) die "unknown option $1" 2 ;;
+        *)
+          [ -z "$only" ] || die "restore takes one database path" 2
+          only="$1"
+          shift
+          ;;
+      esac
+    done
+    mkdir -p "$LOG_DIR"
+    do_restore "$ts" "$only"
     ;;
 
   *)
     usage
+    [ -n "${1:-}" ] && exit 2
     ;;
 esac
