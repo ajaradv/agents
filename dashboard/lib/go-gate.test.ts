@@ -25,6 +25,9 @@ describe("tier 2 arguments", () => {
     expect(gate.tier2ArgError("crew_change", { ship: "kinwork", budget: "4" })).toContain("needs role");
     expect(gate.tier2ArgError("orchestrator_set", { ship: "kinwork", orchestrator: "alice" })).toContain("firstmate or lead");
     expect(gate.tier2ArgError("voyage_start", { ship: "kinwork", goal: "x" })).toContain("needs to");
+    // Every host the shipyard sails on passes the gate's check, exe.dev included.
+    for (const on of ["hub", "laptop", "exe"]) expect(gate.tier2ArgError("voyage_start", { ship: "kinwork", goal: "Mobile fixes", to: "kinwork-lead", on })).toBeNull();
+    expect(gate.tier2ArgError("voyage_start", { ship: "kinwork", goal: "Mobile fixes", to: "kinwork-lead", on: "moon" })).toContain("on is hub, laptop, exe");
     expect(gate.tier2ArgError("merge", {})).toContain("not a fleet action");
   });
   test("the captain reads one plain sentence", () => {

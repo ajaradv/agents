@@ -2,6 +2,7 @@ import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { listWorkflows, upsertWorkflow } from "./journal.ts";
 import { nodeStateDir } from "./paths.ts";
+import { SAIL_ON } from "./sail-on.ts";
 
 /**
  * The captain's Go for fleet actions (Alice omni plan, phase 3): an officer's
@@ -109,7 +110,7 @@ export function tier2ArgError(tool: string, a: Record<string, string>): string |
     if (ops !== 1) return "crew_change takes exactly one of add, remove, budget (with role), or model (with role).";
     if ((a.budget !== undefined || a.model !== undefined) && !a.role) return "crew_change with budget or model needs role.";
   }
-  if (tool === "voyage_start" && a.on !== undefined && !["hub", "laptop"].includes(a.on)) return "on is hub or laptop.";
+  if (tool === "voyage_start" && a.on !== undefined && !(SAIL_ON as readonly string[]).includes(a.on)) return `on is ${SAIL_ON.join(", ")}.`;
   if (tool === "orchestrator_set" && !["firstmate", "lead"].includes(a.orchestrator ?? "")) return "orchestrator is firstmate or lead.";
   return null;
 }

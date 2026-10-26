@@ -234,8 +234,7 @@ function yamlStr(s: string): string {
   return JSON.stringify(s);
 }
 
-/** Where a voyage can sail: "hub" (this machine), "laptop" (lib/laptop-host.ts), or "exe" (an exe.dev VM, lib/exe-voyages.ts), as the Set a course form and voyage_start name them. */
-export const SAIL_ON = ["hub", "laptop", "exe"] as const;
+export { SAIL_ON } from "./sail-on.ts";
 
 /** Where sailHost sends a voyage: a host now, or a fresh exe.dev VM that startVoyage provisions (with the hub to fall back on when the ship only preferred away from it). */
 export type SailPlace = { ok: true; host: ShipHost } | { ok: true; exe: true; fallback: ShipHost | null } | { ok: false; message: string };
