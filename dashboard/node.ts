@@ -18,6 +18,7 @@ import { cursorAtEnd, decodeCursor, encodeCursor, eventsAfter, sseFrame, streamS
 import { crewAddTask, crewCanvas, crewDockRequest, crewQueueRequest, crewHelper, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
 import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
+import { backupsJob } from "./lib/backups.ts";
 import { exeIdleJob, refreshGoldens } from "./lib/exe-pool.ts";
 import { startRoutines, type Routine } from "./lib/routines.ts";
 import { budgetRefusal, findShip } from "./lib/shipyard.ts";
@@ -234,7 +235,7 @@ function startRuntime(): void {
   const exeIdle = exeIdleJob();
   const goldenRefresh = () => refreshGoldens();
   startRoutines({
-    jobs: { "exe-idle": exeIdle, "golden-refresh": goldenRefresh, "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview, "codegraph-sync": codegraphSync, "session-archive": sessionArchive },
+    jobs: { backups: backupsJob(), "exe-idle": exeIdle, "golden-refresh": goldenRefresh, "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview, "codegraph-sync": codegraphSync, "session-archive": sessionArchive },
     runAgent: async (agentId, text) => void (await acceptCrewLine(agentId, "routine", text)),
     agentExists: (agentId) => allChatTargetIds().includes(agentId),
     budgetRefusal: (ship, agentId) => budgetRefusal(ship, agentId),
