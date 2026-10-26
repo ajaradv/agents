@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 const inbox = mkdtempSync(join(tmpdir(), "hosted-"));
 process.env.FLEET_HOSTED_INBOX = inbox;
-const { commandRefusal, getMemory, hostedExecEnv, hostedRigEnv, memoryPathOk, prepareHostedLaunch, putMemory, shipForFolder } = await import("./hosted.ts");
+const { commandRefusal, getMemory, hostedExecEnv, hostedRigEnv, memoryPathOk, prepareHostedLaunch, putMemory, shipForFolder, workerDockerEnv } = await import("./hosted.ts");
 const { parseRig, rigChecks } = await import("./rig.ts");
 afterAll(() => {
   delete process.env.FLEET_HOSTED_INBOX;
@@ -101,5 +101,19 @@ describe("the laptop as a ship host: what the hub may ask", () => {
     const rec = JSON.parse(readFileSync(join(process.env.FLEET_HOSTED_INBOX ?? "", "ships", "kin", "worktree.json"), "utf8"));
     expect(rec.guest).toBe("designer");
     rmSync(root, { recursive: true, force: true });
+  });
+  test("docker: the worker's own DOCKER_CONFIG drops the credential helper and links the rest (macOS only)", () => {
+    const home = mkdtempSync(join(tmpdir(), "dockerhome-"));
+    const dir = join(home, "out");
+    mkdirSync(join(home, ".docker", "cli-plugins"), { recursive: true });
+    writeFileSync(join(home, ".docker", "config.json"), JSON.stringify({ auths: {}, credsStore: "desktop", currentContext: "desktop-linux" }));
+    expect(workerDockerEnv(home, dir, "linux")).toEqual({});
+    expect(workerDockerEnv(home, dir, "darwin")).toEqual({ DOCKER_CONFIG: dir });
+    expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8"))).toEqual({ auths: {}, currentContext: "desktop-linux" });
+    expect(existsSync(join(dir, "cli-plugins"))).toBe(true);
+    expect(workerDockerEnv(home, dir, "darwin")).toEqual({ DOCKER_CONFIG: dir });
+    writeFileSync(join(home, ".docker", "config.json"), JSON.stringify({ auths: {} }));
+    expect(workerDockerEnv(home, dir, "darwin")).toEqual({});
+    rmSync(home, { recursive: true, force: true });
   });
 });
