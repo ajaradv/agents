@@ -19,5 +19,6 @@ describe("the check shell", () => {
     expect(checkShell(local, () => true)).toBe("/bin/zsh");
     expect(checkShell(local, () => false)).toBe("/bin/bash");
     expect(checkShell({ kind: "laptop" } as never, () => false)).toBe("/bin/zsh");
+    expect(checkShell({ kind: "vm" } as never, () => true)).toBe("/bin/bash");
   });
 });

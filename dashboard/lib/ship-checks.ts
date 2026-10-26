@@ -67,8 +67,9 @@ export async function triageFailure(name: string, cmd: string, output: string, a
   return `Triage (Jev, advisory): most likely ${a.choice.replace("_", " ")} (${pct}%); ${TRIAGE_HINT[a.choice]}.`;
 }
 
-/** zsh on macOS (the laptop and its login PATH); the hub is Linux without zsh, so bash there. */
+/** zsh on macOS (the laptop and its login PATH); the hub and exe.dev VMs are Linux without zsh, so bash there. */
 export function checkShell(host: ShipHost, has = existsSync): string {
+  if (host.kind === "vm") return "/bin/bash";
   if (host.kind !== "local") return "/bin/zsh";
   return has("/bin/zsh") ? "/bin/zsh" : "/bin/bash";
 }

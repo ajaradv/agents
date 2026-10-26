@@ -230,8 +230,10 @@ export default function (pi: ExtensionAPI) {
 
   // Tier 2: fleet actions that change state. Outside an order the server holds
   // each one for the captain's Go and answers "waiting"; end the turn then.
+  // Setting sail on an exe.dev VM copies and sets one up (about a minute); docking one pushes, opens the pull request, and removes the VM.
+  const SLOW_ACTIONS = new Set(["voyage_start", "voyage_dock"]);
   const action = (tool: string, args: Record<string, unknown>, p: { order?: string; step?: number }) =>
-    call("POST", "action", {}, { tool, args: Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined)), order: p.order, step: p.step });
+    call("POST", "action", {}, { tool, args: Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined)), order: p.order, step: p.step }, SLOW_ACTIONS.has(tool) ? 300_000 : 30_000);
   const GO = " Outside an order it waits for the captain's Go: end your turn; the result arrives as a message.";
 
   pi.registerTool({
