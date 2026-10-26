@@ -136,7 +136,8 @@ export function commandRefusal(cmd: string[], ship: HostedShip | null): string |
   }
   if (bin === "gh") return sub === "pr" && (rest[0] === "view" || rest[0] === "create") ? null : "only gh pr view and gh pr create";
   if (bin === "treehouse") return sub === "get" || sub === "return" ? null : "only treehouse get and return";
-  if (bin === "/bin/zsh" && sub === "-lc" && rest.length === 1) {
+  // A check in a login shell: zsh from the hub to the laptop, bash to a Linux VM (lib/ship-checks.ts checkShell).
+  if ((bin === "/bin/zsh" || bin === "/bin/bash") && sub === "-lc" && rest.length === 1) {
     return Object.values(ship.checks).includes(rest[0]!) ? null : "that command is not one of this ship's checks on the laptop";
   }
   return `${bin} is not allowed`;
