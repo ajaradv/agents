@@ -14,6 +14,7 @@ import { fleetInboxRoot } from "./paths.ts";
 const CHAT_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 import { escapeHtml } from "./quota.ts";
 import { recentShipEvents } from "./ship-log.ts";
+import { OFFICER_SHIP } from "./ship-events.ts";
 
 type SnapshotState = {
   state?: string;
@@ -300,7 +301,7 @@ function workList(title: string, rows: WorkRow[], empty: string, chat = false): 
 
 /** The event router's latest wakes (fleet ship log, kind "router"), as a fold on Health. */
 function routerFold(): string {
-  const wakes = recentShipEvents("fleet", 400).filter((e) => e.kind === "router").slice(0, 8);
+  const wakes = recentShipEvents(OFFICER_SHIP, 400).filter((e) => e.kind === "router").slice(0, 8);
   const rows = wakes
     .map((e) => `<li class="${e.payload?.ok === false ? "warn" : ""}"><span class="muted">${escapeHtml(new Date(e.ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</span> ${escapeHtml(e.summary)}</li>`)
     .join("");

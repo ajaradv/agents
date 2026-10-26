@@ -7,13 +7,18 @@ import { logShipEvent } from "./ship-log.ts";
 /**
  * Feed agent activity into a ship's log (lib/ship-log.ts): crewmates into
  * their ship's, officers (Alice, the Architect, the Designer, ...) into the
- * `fleet` ship's, so their turns and spend are on record too. Firstmate and
+ * Flagship's (OFFICER_SHIP), so their turns and spend are on record too. Firstmate and
  * its workers keep their own records. Called from the chat bridge, which
  * already sees every captain line, agent line, host event, and turn result.
  */
 
-/** Officers' activity is logged on this ship (fleet/ships/fleet.yaml, the agents repo). */
-export const OFFICER_SHIP = "fleet";
+/**
+ * Officers' activity is logged on the Flagship: the officers' own ship (Alice,
+ * the designer, the architect), hosted with the hub. Not a repo ship: it has no
+ * voyages or rig; its deck holds the officers, the decision queue, and orders.
+ * Before 2026-10-26 officers logged on the fleet ship (the agents repo).
+ */
+export const OFFICER_SHIP = "flagship";
 
 export function shipOf(agentId: string): string | null {
   const t = chatTarget(agentId);

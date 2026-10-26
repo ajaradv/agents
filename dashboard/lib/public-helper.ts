@@ -1,6 +1,7 @@
 import { freeComplete } from "./free-models.ts";
 import { recordTurn } from "./metrics.ts";
 import { logShipEvent } from "./ship-log.ts";
+import { OFFICER_SHIP } from "./ship-events.ts";
 
 /**
  * The public helper (vault research note free-model-lanes): an officer asks a
@@ -41,12 +42,12 @@ export async function askPublic(from: string, question: string, context = ""): P
   if (q.length < 3) return { ok: false, message: "Ask a question." };
   const why = sensitiveReason(`${q}\n${context}`);
   if (why) {
-    logShipEvent("fleet", from, "notice", `Public helper refused a request: ${why}`);
+    logShipEvent(OFFICER_SHIP, from, "notice", `Public helper refused a request: ${why}`);
     return { ok: false, message: `Not sent: ${why}. The public helper uses free models that may train on what they get; send only public or general text. Use delegate for anything that needs the vault or a repo.` };
   }
   const r = await freeComplete(publicPrompt(q, context), { purpose: `public:${from}`, system: SYSTEM, maxTokens: 1200, attempts: 3, attemptMs: 25_000 });
   recordTurn({ agent: `${from}-public`, model: r.model, ok: r.ok, ms: r.ms, cost: r.cost, ...(r.ok ? {} : { error: r.error ?? "" }) });
-  logShipEvent("fleet", from, "delegation", `Public helper ${r.ok ? "answered" : "failed"} (${r.model || "no model"}${r.free ? ", free" : `, paid $${r.cost.toFixed(4)}`}): ${q.slice(0, 140)}`, { model: r.model, free: r.free, tried: r.tried, cost: r.cost });
+  logShipEvent(OFFICER_SHIP, from, "delegation", `Public helper ${r.ok ? "answered" : "failed"} (${r.model || "no model"}${r.free ? ", free" : `, paid $${r.cost.toFixed(4)}`}): ${q.slice(0, 140)}`, { model: r.model, free: r.free, tried: r.tried, cost: r.cost });
   if (!r.ok) return { ok: false, message: `The public helper could not answer (${r.error ?? "unknown error"}; tried ${r.tried.join(", ") || "nothing"}).` };
   return { ok: true, message: `${r.text.trim()}\n\n(public helper: ${r.model}${r.free ? ", free" : `, paid fallback $${r.cost.toFixed(4)}`})`, model: r.model, free: r.free };
 }

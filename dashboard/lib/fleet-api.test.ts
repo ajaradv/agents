@@ -21,14 +21,14 @@ describe("fleet API caller", () => {
 });
 
 describe("officer daily budget", () => {
-  test("refuses once today's spend in the fleet log reaches the budget", () => {
+  test("refuses once today's spend in the Flagship's log reaches the budget", () => {
     const prev = process.env.FLEET_INBOX;
     process.env.FLEET_INBOX = mkdtempSync(join(tmpdir(), "fleet-budget-"));
     try {
       expect(officerBudgetRefusal("alice", undefined)).toBeNull();
-      logShipEvent("fleet", "alice", "turn-end", "Turn done in 4s", { ms: 4000, cost: 2.5, tokens: 100 });
+      logShipEvent("flagship", "alice", "turn-end", "Turn done in 4s", { ms: 4000, cost: 2.5, tokens: 100 });
       expect(officerBudgetRefusal("alice", 6)).toBeNull();
-      logShipEvent("fleet", "alice", "turn-end", "Turn done in 9s", { ms: 9000, cost: 3.6, tokens: 100 });
+      logShipEvent("flagship", "alice", "turn-end", "Turn done in 9s", { ms: 9000, cost: 3.6, tokens: 100 });
       expect(officerBudgetRefusal("alice", 6)).toContain("has spent $6.10 of its $6.00 daily budget");
     } finally {
       if (prev === undefined) delete process.env.FLEET_INBOX;

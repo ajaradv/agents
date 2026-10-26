@@ -12,6 +12,7 @@ import { getWorkflow, resetSteps, stepFinished, stepStarted, steps as journalSte
 import { onAgentTool } from "./ship-events.ts";
 import { logShipEvent, recentShipEvents } from "./ship-log.ts";
 import { officerBudgetRefusal } from "./shipyard.ts";
+import { OFFICER_SHIP } from "./ship-events.ts";
 
 /**
  * The order watcher (Alice omni plan, phase 2), in the fleet node.
@@ -68,7 +69,7 @@ export function runningOrder(): Running | null {
 }
 
 function log(order: Order, kind: string, summary: string, payload: Record<string, unknown>): number | null {
-  const id = logShipEvent("fleet", "orders", kind, summary, { order: order.meta.order, ...payload });
+  const id = logShipEvent(OFFICER_SHIP, "orders", kind, summary, { order: order.meta.order, ...payload });
   if (order.meta.ship !== "fleet") logShipEvent(order.meta.ship, "orders", kind, summary, { order: order.meta.order, ...payload });
   return id;
 }
@@ -108,7 +109,7 @@ function brief(order: Order, from: number): string {
  * attempt, so a retried order still shows the steps done before its pause).
  */
 function report(r: Running, outcome: string): string {
-  const mine = recentShipEvents("fleet", 2000)
+  const mine = recentShipEvents(OFFICER_SHIP, 2000)
     .filter((e) => e.payload?.order === r.slug)
     .reverse();
   const steps = mine.filter((e) => e.kind === "order-step" && e.payload?.reason !== "unplanned");
@@ -411,7 +412,7 @@ export async function orderFinish(order: string, status: "done" | "blocked", why
   }
   if (status === "blocked") {
     // No reason given: use what was logged for the blocked step.
-    const logged = recentShipEvents("fleet", 200).find((e) => e.kind === "order-step" && e.payload?.order === r.slug && e.payload?.ok === false && e.payload?.step === r.next);
+    const logged = recentShipEvents(OFFICER_SHIP, 200).find((e) => e.kind === "order-step" && e.payload?.order === r.slug && e.payload?.ok === false && e.payload?.step === r.next);
     await pause(why || (logged ? `step ${r.next}: ${String(logged.payload?.result ?? "")}`.slice(0, 300) : `blocked at step ${r.next}`), false);
     return { ok: true, message: "The order is paused for the captain with your reason. End your turn." };
   }

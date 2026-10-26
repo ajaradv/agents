@@ -33,7 +33,7 @@ export type ChatTarget = {
   liveVoice?: string;
   /** The role template (crewmates: their role; officers: their id). */
   agentRole?: string;
-  /** Officers: daily spend cap in USD (agent.yaml daily_budget_usd), checked against the fleet ship log. */
+  /** Officers: daily spend cap in USD (agent.yaml daily_budget_usd), checked against the Flagship's log (OFFICER_SHIP). */
   dailyBudgetUsd?: number;
   /** Set when the last launch used fallback_model instead of `model` (bin/launch model-running.json). */
   backupModel?: string;

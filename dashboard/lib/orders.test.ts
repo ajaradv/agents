@@ -97,7 +97,7 @@ describe("order watcher", () => {
     expect(done.text).toContain("refused fleet_chat as step 2");
     expect(done.text).toContain("**Pauses**");
     expect(done.text).toContain("reads outside the plan (allowed, they change nothing): fleet_status");
-    const kinds = recentShipEvents("fleet", 50).map((e) => e.kind);
+    const kinds = recentShipEvents("flagship", 50).map((e) => e.kind);
     expect(kinds).toContain("order-start");
     expect(kinds).toContain("order-finish");
     expect(recentShipEvents("kinwork", 50).some((e) => e.kind === "order-step")).toBe(true);
@@ -151,7 +151,7 @@ describe("independent expect check", () => {
     expect(asked[0]).toBe("the voyage, if any | error: No ship named kinwork.");
     const second = await orders.orderStep(r.slug, 1, true, "it is fine: no voyage is a valid answer", "checked by hand");
     expect(second.ok).toBe(true);
-    expect(recentShipEvents("fleet", 20).some((e) => e.kind === "order-step" && e.summary.includes("over the independent check"))).toBe(true);
+    expect(recentShipEvents("flagship", 20).some((e) => e.kind === "order-step" && e.summary.includes("over the independent check"))).toBe(true);
     orders._setExpectCheckForTest(async () => null);
   });
 });
@@ -180,7 +180,7 @@ describe("chat priority and Alice's own tools", () => {
     expect(orders.runningOrder()?.slug).toBe(slug);
     expect(orders.runningOrder()?.chatPaused).toBe(false);
     expect((await notes.readOrder(slug)).meta!.status).toBe("running");
-    const events = recentShipEvents("fleet", 200).filter((e) => e.payload?.order === slug);
+    const events = recentShipEvents("flagship", 200).filter((e) => e.payload?.order === slug);
     expect(events.filter((e) => e.kind === "order-tool").map((e) => e.summary)).toEqual(["Alice used bash: git log -3"]);
     expect(events.some((e) => e.kind === "order-chat")).toBe(true);
     // Finish it: the report lists Alice's own tools and the pause.

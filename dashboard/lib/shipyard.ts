@@ -25,6 +25,7 @@ import { briefHeading, extractBrief, SESSION_KINDS, sessionBranch, sessionBrief,
 import { checkSpec, parseSpec, setSpecStatus, type Spec } from "./specs.ts";
 import { addQueueItem, finishQueueItem, readQueue, updateQueueItem } from "./decision-queue.ts";
 import { busPost } from "./bus-api.ts";
+import { OFFICER_SHIP } from "./ship-events.ts";
 
 /**
  * The shipyard: build a ship (register it, check what it is missing), crew it
@@ -128,10 +129,10 @@ export function spentToday(shipId: string, crewmateId: string): number {
   return shipTurnTotals(shipId, midnight.toISOString())[crewmateId]?.cost ?? 0;
 }
 
-/** Refusal text when an officer has spent its daily_budget_usd today (spend from the fleet log), else null. */
+/** Refusal text when an officer has spent its daily_budget_usd today (spend from the Flagship's log), else null. */
 export function officerBudgetRefusal(agentId: string, budget: number | undefined): string | null {
   if (!budget) return null;
-  const spent = spentToday("fleet", agentId);
+  const spent = spentToday(OFFICER_SHIP, agentId);
   const usd = (n: number) => `$${n.toFixed(n < 1 ? 3 : 2)}`;
   return spent >= budget
     ? `${agentId} has spent ${usd(spent)} of its ${usd(budget)} daily budget. Raise daily_budget_usd in agents/${agentId}/agent.yaml to continue today.`

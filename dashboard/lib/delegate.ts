@@ -10,6 +10,7 @@ import { dashLog } from "./log.ts";
 import { aliceVault, fleetInboxRoot, ROOT } from "./paths.ts";
 import { pidAlive } from "./session.ts";
 import { logShipEvent } from "./ship-log.ts";
+import { OFFICER_SHIP } from "./ship-events.ts";
 
 /**
  * Delegation (resilient fleet runtime, R3): an officer hands a self-contained
@@ -141,7 +142,7 @@ export async function startDelegation(from: string, task: string, where = "vault
   }
   upsertWorkflow("delegation", id, { from, task: t.slice(0, 2000), where, cwd, model, dir, pid, started: new Date().toISOString() } satisfies Data, { trace: `delegation-${id}` });
   watch(id, pid);
-  logShipEvent("fleet", from, "delegation", `Helper ${id} started: ${t.slice(0, 160)}`, { id, where, model, why, trace: `delegation-${id}` });
+  logShipEvent(OFFICER_SHIP, from, "delegation", `Helper ${id} started: ${t.slice(0, 160)}`, { id, where, model, why, trace: `delegation-${id}` });
   await dashLog("delegate", `${from} → ${id} (${where})`);
   return { ok: true, message: `Helper ${id} is working on it (${model}, ${why}, read-only, in ${where}). You will be woken with its summary; the full result will be at ${join(dir, "result.md")}. Carry on with other work or end your turn.`, id };
 }
@@ -189,7 +190,7 @@ export async function finishDelegation(id: string): Promise<void> {
     const result = join(w.data.dir, "result.md");
     writeFileSync(result, `# Helper ${id}\n\nTask: ${w.data.task}\n\n${text || summary}\n`, "utf8");
     updateWorkflow(id, { status: ok ? "done" : "failed", data: { cost, summary } });
-    logShipEvent("fleet", w.data.from, "delegation", `Helper ${id} ${ok ? "finished" : "failed"}: ${summary.slice(0, 200)}`, { id, ok, cost, result, trace: w.trace });
+    logShipEvent(OFFICER_SHIP, w.data.from, "delegation", `Helper ${id} ${ok ? "finished" : "failed"}: ${summary.slice(0, 200)}`, { id, ok, cost, result, trace: w.trace });
     await postBus(w.data.from, { from: "helper", kind: ok ? "delegation-done" : "delegation-failed", summary: `Helper ${id}: ${summary}`, ref: result, cost: Math.round(cost * 10000) / 10000 });
     return { ok, cost };
   });
