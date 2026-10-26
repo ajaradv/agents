@@ -64,7 +64,12 @@ describe("plan questions", () => {
 const GATE = join(import.meta.dir, "..", "..", "bin", "plan-ship-gate.ts");
 
 describe("plan ship gate", () => {
-  test.skipIf(!existsSync(GATE))("refuses a draft with an open question and allows it after An", async () => {
+  const gateMissing = !existsSync(GATE);
+  test.skipIf(gateMissing)(
+    gateMissing
+      ? "refuses a draft with an open question and allows it after An — skipped: bin/plan-ship-gate.ts is absent from this checkout (local untracked script)"
+      : "refuses a draft with an open question and allows it after An",
+    async () => {
     const root = await mkdtemp(join(tmpdir(), "ship-gate-"));
     const vault = join(root, "vault");
     const home = join(root, "home");

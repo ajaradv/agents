@@ -1,0 +1,179 @@
+# Pull requests and pushes to main. No secrets, no pull_request_target.
+# Actions are pinned to full commit SHAs. permissions stay contents: read.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: typecheck and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: false
+
+      # Both submodules are public https remotes (.gitmodules). Checkout leaves
+      # the token out of git config, then this clone is anonymous. A private
+      # submodule fails here with no token and no secret to fall back on.
+      - name: Checkout public submodules
+        run: |
+          set -euo pipefail
+          git config --unset-all url.https://github.com/.insteadOf || true
+          git submodule sync --recursive
+          git submodule update --init --recursive
+          missing=0
+          for pair in \
+            "vendor/firstmate/README.md|https://github.com/ajaradv/firstmate.git" \
+            "vendor/obsidian-skills/README.md|https://github.com/kepano/obsidian-skills.git"
+          do
+            path="${pair%%|*}"
+            url="${pair#*|}"
+            if [ ! -s "$path" ]; then
+              echo "error: $path is missing."
+              echo "This submodule ($url) is expected to be a public clone with no token."
+              echo "CI will not use a token or a secret to fetch it. If GitHub refused the clone, the repository is not publicly readable."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Install Bun 1.4.0
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+
+      - name: Check Bun version
+        run: test "$(bun --version)" = "1.4.0"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: node_modules/.bin/tsc -p .
+
+      - name: Test
+        working-directory: dashboard
+        run: bun test
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: Install gitleaks 8.30.1
+        run: |
+          set -euo pipefail
+          v=8.30.1
+          f="gitleaks_${v}_linux_x64.tar.gz"
+          curl -fsSL -o "/tmp/$f" "https://github.com/gitleaks/gitleaks/releases/download/v${v}/$f"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/$f" | sha256sum -c -
+          tar -xzf "/tmp/$f" -C /tmp gitleaks
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 /tmp/gitleaks "$HOME/.local/bin/gitleaks"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Prints rule, file, commit, and line only. The JSON report (which holds
+      # match text) is deleted and is not uploaded.
+      - name: Scan full git history
+        run: |
+          set -euo pipefail
+          report="$(mktemp)"
+          set +e
+          gitleaks detect \
+            --source . \
+            --redact \
+            --no-banner \
+            --log-opts="--all" \
+            --report-format json \
+            --report-path "$report" \
+            --exit-code 1
+          status=$?
+          set -e
+          python3 - "$report" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1]))
+          print(f"findings: {len(data)}")
+          for finding in data:
+              rule = finding.get("RuleID") or ""
+              path = finding.get("File") or ""
+              commit = (finding.get("Commit") or "")[:12]
+              line = finding.get("StartLine")
+              print(f"{rule}\t{path}\t{commit}\tline {line}")
+          PY
+          rm -f "$report"
+          exit "$status"
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Advisory until the scripts are cleaned up. Notes do not fail the step.
+    # Warnings and errors fail the step and still do not fail the workflow.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq shellcheck
+          shellcheck --version
+
+      - name: Check bin/
+        run: |
+          set -euo pipefail
+          scripts=()
+          while IFS= read -r -d '' f; do
+            case "$(head -n 1 "$f")" in
+              '#!'*bash*|'#!/bin/sh'|'#!/usr/bin/env sh') scripts+=("$f") ;;
+            esac
+          done < <(find bin -type f -print0)
+          echo "shell scripts: ${#scripts[@]}"
+          printf '%s\n' "${scripts[@]}"
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "no shell scripts under bin/"
+            exit 1
+          fi
+          log="$(mktemp)"
+          set +e
+          shellcheck -f gcc "${scripts[@]}" | tee "$log"
+          sc=${PIPESTATUS[0]}
+          set -e
+          if [ "$sc" -ne 0 ] && [ "$sc" -ne 1 ]; then
+            echo "shellcheck failed to run (exit $sc)"
+            exit "$sc"
+          fi
+          if [ "$sc" -eq 0 ]; then
+            echo "shellcheck: clean"
+            exit 0
+          fi
+          if grep -E ': (warning|error):' "$log" >/dev/null; then
+            echo "shellcheck: warnings or errors (this job does not fail the workflow)"
+            exit 1
+          fi
+          echo "shellcheck: notes only (this job does not fail the workflow)"
+          exit 0
