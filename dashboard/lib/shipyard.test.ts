@@ -28,3 +28,30 @@ describe("where a voyage sails", () => {
     expect(await sailHost({ id: "kinwork", isolation: "host" }, "moon", "linux")).toMatchObject({ ok: false });
   });
 });
+
+describe("sailHost placement", () => {
+  const ok = async () => ({ ok: true, why: "" });
+  const no = (why: string) => async () => ({ ok: false, why });
+  const kin = { id: "kinwork", isolation: "host" as const };
+  test("prefer-laptop goes laptop, then exe.dev (hub to fall back on), then the hub", async () => {
+    const { sailHost } = await import("./shipyard.ts");
+    const { shipHost } = await import("./ship-host.ts");
+    const { localHost } = await import("./ship-host.ts");
+    expect(await sailHost(kin, "prefer-laptop", "linux", { laptop: ok, exe: ok })).toEqual({ ok: true, host: shipHost("laptop") });
+    expect(await sailHost(kin, "prefer-laptop", "linux", { laptop: no("asleep"), exe: ok })).toEqual({ ok: true, exe: true, fallback: localHost });
+    expect(await sailHost(kin, "prefer-laptop", "linux", { laptop: no("asleep"), exe: no("busy") })).toEqual({ ok: true, host: localHost });
+  });
+  test("an explicit exe fails with the why; an explicit laptop never goes to exe.dev", async () => {
+    const { sailHost } = await import("./shipyard.ts");
+    expect(await sailHost(kin, "exe", "linux", { exe: no("exe.dev's pool is busy: 1 voyage VM running") })).toMatchObject({ ok: false, message: expect.stringContaining("pool is busy") });
+    expect(await sailHost(kin, "exe", "linux", { exe: ok })).toEqual({ ok: true, exe: true, fallback: null });
+    expect(await sailHost(kin, "laptop", "linux", { laptop: no("asleep"), exe: ok })).toMatchObject({ ok: false });
+  });
+  test("a Gondolin ship never goes to exe.dev", async () => {
+    const { sailHost } = await import("./shipyard.ts");
+    const gon = { id: "pochteca", isolation: "vm" as const };
+    expect(await sailHost(gon, "exe", "linux", { exe: ok })).toMatchObject({ ok: false, message: expect.stringContaining("Gondolin") });
+    expect(await sailHost(gon, "prefer-laptop", "linux", { laptop: no("asleep"), exe: ok })).toMatchObject({ ok: false });
+    expect(await sailHost(gon, "prefer-laptop", "darwin", { laptop: no("asleep"), exe: ok })).toMatchObject({ ok: true, host: expect.anything() });
+  });
+});

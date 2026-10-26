@@ -61,6 +61,13 @@ export function exeClient(deps: { token?: () => Promise<string>; fetch?: Fetch; 
     async rm(name: string): Promise<void> {
       json(await exec(`rm ${named(name)} --json`));
     },
+    /**
+     * Run a command on a VM as its user. The command string goes through a shell on exe.dev's side,
+     * so callers pass only fixed strings built from validated ids (ship ids), never user text.
+     */
+    async ssh(vm: string, command: string, timeoutMs = 300_000): Promise<ExecResult> {
+      return exec(`ssh ${named(vm)} ${command}`, timeoutMs);
+    },
     /** A VM token for the worker behind exe.dev's proxy (X-Exedev-Authorization), expiring with the voyage. */
     async vmToken(name: string, exp = "14d"): Promise<string> {
       const r = json<{ token?: string; api_key?: string }>(await exec(`ssh-key generate-api-key --vm=${named(name)} --label=fleet-${named(name)} --exp=${/^\d+[dhy]$/.test(exp) ? exp : "14d"} --json`));

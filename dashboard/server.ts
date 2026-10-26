@@ -49,6 +49,7 @@ import { addQueueItem, moveQueueItem, readQueue, updateQueueItem } from "./lib/d
 import { reviewQueueItem } from "./lib/decisions.ts";
 import { rigVoyage } from "./lib/rigging.ts";
 import { readShips } from "./lib/fleet-layers.ts";
+import { setExeVoyages } from "./lib/exe-voyages.ts";
 import { setLaptopVoyages } from "./lib/laptop-host.ts";
 import { voyageWorktree } from "./lib/voyage-worktree.ts";
 import { applyProposal, dismissProposal, hasHelmsman, helmDigest } from "./lib/helm.ts";
@@ -884,6 +885,15 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       const there = (await readShips()).filter((s) => voyageWorktree(s.id)?.host === "laptop").map((s) => s.id);
       sseBroadcast("rail");
       return Response.json({ ok: true, message: on ? "Ships may sail on the laptop while it is awake." : `New voyages sail on the hub.${there.length ? ` Still on the laptop: ${there.join(", ")} (Move to hub, or they wait while it sleeps).` : ""}` });
+    }
+    // The Harbor's exe.dev switch (lib/exe-voyages.ts).
+    if (path === "/api/exe-voyages" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { on?: unknown };
+      const on = b.on === true || b.on === "1";
+      setExeVoyages(on);
+      const there = (await readShips()).filter((s) => voyageWorktree(s.id)?.host === "vm").map((s) => s.id);
+      sseBroadcast("rail");
+      return Response.json({ ok: true, message: on ? "Ships that prefer the laptop sail on an exe.dev VM while the laptop is away." : `Ships that prefer the laptop sail on the hub.${there.length ? ` Still on exe.dev: ${there.join(", ")} (Move to hub, or they carry on there).` : ""}` });
     }
     // The decision queue (lib/decision-queue.ts): add, order, drop, and start a session (lib/sessions.ts).
     if (path === "/api/queue" && req.method === "POST") {

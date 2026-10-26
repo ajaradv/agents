@@ -8,6 +8,11 @@
 #                                      install the tools (bin/hub-install --worker), point pi at
 #                                      exe.dev's model gateway, join the tailnet, run the worker as
 #                                      the systemd service fleet-worker (port 8790)
+#   bin/voyage-vm-setup tailnet        leave the tailnet and join it fresh (a copy of the golden VM
+#                                      inherits the golden's node key and IP)
+#   bin/voyage-vm-setup refresh <ship> bring the repos up to date: agents (git pull --ff-only, bun
+#                                      install if bun.lock changed, restart the worker if HEAD moved)
+#                                      and the ship's repo (git fetch); prints old -> new HEADs
 #   bin/voyage-vm-setup token          the worker token, read on stdin (never argv); restarts the worker
 #   bin/voyage-vm-setup env <ship>     a tar stream on stdin into the ship's rig env store
 #   bin/voyage-vm-setup status         the service, the tailnet, and a health check
@@ -84,8 +89,8 @@ pi_models() {
 
 tailnet_up() { [ "$(tailscale status --json 2>/dev/null | jq -r '.BackendState // empty')" = Running ]; }
 
-tailnet_join() {
-  if tailnet_up; then echo "already on the tailnet"; return 0; fi
+# join the tailnet with the exe.dev integration's identity (the caller decides whether to leave first)
+tailnet_register() {
   local meta client tags id_token
   meta="$(curl -fsS "$INTEGRATION/metadata")" || { echo "note: the tailscale integration is not attached to this VM; skipped"; return 0; }
   client="$(jq -er .client_id <<<"$meta")"
@@ -94,6 +99,11 @@ tailnet_join() {
   sudo systemctl enable --now tailscaled
   sudo tailscale up --client-id="${client}?ephemeral=true&preauthorized=true" --id-token="$id_token" --advertise-tags="$tags"
   unset id_token
+}
+
+tailnet_join() {
+  if tailnet_up; then echo "already on the tailnet"; return 0; fi
+  tailnet_register
 }
 
 install_unit() {
@@ -169,6 +179,39 @@ cmd_setup() {
   cmd_status
 }
 
+# A copy of the golden VM has the golden's tailnet identity: leave it, join as a new node.
+cmd_tailnet() {
+  sudo tailscale logout >/dev/null 2>&1 || true
+  tailnet_register
+  echo "tailnet: $(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // "not joined" | rtrimstr(".")')"
+}
+
+cmd_refresh() {
+  local ship="${1:-}" repo url dir old new lock_old lock_new
+  [ -n "$ship" ] || die "usage: bin/voyage-vm-setup refresh <ship>"
+  repo="$(ship_repo "$ship")"
+  export PATH="$HOME/.local/bin:$HOME/.local/node/bin:$HOME/.bun/bin:$PATH"
+  old="$(git -C "$AGENTS" rev-parse HEAD)"
+  lock_old="$(git -C "$AGENTS" rev-parse "HEAD:bun.lock" 2>/dev/null || true)"
+  git -C "$AGENTS" fetch --quiet origin
+  git -C "$AGENTS" pull --quiet --ff-only
+  new="$(git -C "$AGENTS" rev-parse HEAD)"
+  lock_new="$(git -C "$AGENTS" rev-parse "HEAD:bun.lock" 2>/dev/null || true)"
+  echo "agents: ${old:0:7} -> ${new:0:7}"
+  if [ "$lock_old" != "$lock_new" ]; then
+    (cd "$AGENTS" && bun install --frozen-lockfile)
+  fi
+  if [ -n "$repo" ]; then
+    read -r url dir <<<"$repo"
+    [ -d "$WS/$dir/.git" ] || die "no clone of $dir on this VM (run setup $ship)"
+    git -C "$WS/$dir" fetch --quiet origin
+    echo "$dir: fetched, origin at $(git -C "$WS/$dir" rev-parse --short HEAD)"
+  fi
+  if [ "$old" != "$new" ] && sc is-active --quiet "$UNIT.service" 2>/dev/null; then
+    sc restart "$UNIT.service" && echo "restarted $UNIT"
+  fi
+}
+
 cmd_token() {
   local t
   t="$(cat | tr -d '\r\n')"
@@ -200,6 +243,8 @@ cmd_env() {
 
 case "${1:-}" in
   setup) shift; cmd_setup "$@" ;;
+  tailnet) cmd_tailnet ;;
+  refresh) shift; cmd_refresh "$@" ;;
   token) cmd_token ;;
   env) shift; cmd_env "$@" ;;
   status) cmd_status ;;

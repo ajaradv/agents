@@ -38,6 +38,8 @@ export interface ShipHost {
   kind: HostKind;
   /** For messages and the voyage record: "this machine", "the laptop", a VM name. */
   label: string;
+  /** The exe.dev VM name, for kind "vm". */
+  vm?: string;
   /** Run a command to completion with a hard time limit. */
   exec(cmd: string[], opts: ExecOpts): Promise<SpawnResult>;
   /** Whether a folder on this host is a git checkout (a .git folder or a linked worktree's .git file). */

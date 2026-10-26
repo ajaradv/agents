@@ -16,6 +16,7 @@ import { logShipEvent, shipTurnTotals } from "./ship-log.ts";
 import { describeGates, gateStatus } from "./gates.ts";
 import { archiveCanvas } from "./canvas-archive.ts";
 import { endVoyageMemory, freshSession as freshCrewSession, memoryFiles, startVoyageMemory, voyageMemoryCleared, writeMemoryFiles } from "./crew-memory.ts";
+import { exeSailable, provisionVoyageVm, releaseVoyageVm } from "./exe-voyages.ts";
 import { laptopSailable } from "./laptop-host.ts";
 import { ledgerLine, ledgerMarkdown, recordVoyageDock, recordVoyageStart, voyageId, voyageLedger } from "./metrics.ts";
 import { hostRunner, localHost, shipHost, type ShipHost } from "./ship-host.ts";
@@ -233,24 +234,44 @@ function yamlStr(s: string): string {
   return JSON.stringify(s);
 }
 
-/** Where a voyage can sail: "hub" (this machine) or "laptop" (lib/laptop-host.ts), as the Set a course form and voyage_start name them. */
-export const SAIL_ON = ["hub", "laptop"] as const;
+/** Where a voyage can sail: "hub" (this machine), "laptop" (lib/laptop-host.ts), or "exe" (an exe.dev VM, lib/exe-voyages.ts), as the Set a course form and voyage_start name them. */
+export const SAIL_ON = ["hub", "laptop", "exe"] as const;
+
+/** Where sailHost sends a voyage: a host now, or a fresh exe.dev VM that startVoyage provisions (with the hub to fall back on when the ship only preferred away from it). */
+export type SailPlace = { ok: true; host: ShipHost } | { ok: true; exe: true; fallback: ShipHost | null } | { ok: false; message: string };
 
 /**
  * The ship host for a new voyage. Asked for the laptop: only while the captain
- * allows laptop voyages and the laptop is up. Not asked: the ship's `sail_on:
- * laptop` preference when the laptop can take it, else the hub.
+ * allows laptop voyages and the laptop is up. Asked for exe.dev: only when it
+ * can take the voyage (lib/exe-voyages.ts). Not asked: the ship's `sail_on:
+ * laptop` preference, which goes laptop, then exe.dev, then the hub. Gondolin
+ * ships (`isolation: vm`) need macOS, so only the laptop or a macOS hub. Does
+ * not provision: a VM is made by startVoyage after its cheap checks.
  */
-export async function sailHost(ship: Pick<ShipRow, "id" | "isolation">, requested?: string, platform: string = process.platform): Promise<{ ok: true; host: ShipHost } | { ok: false; message: string }> {
+export async function sailHost(
+  ship: Pick<ShipRow, "id" | "isolation">,
+  requested?: string,
+  platform: string = process.platform,
+  can: { laptop?: () => Promise<{ ok: boolean; why: string }>; exe?: (shipId: string) => Promise<{ ok: boolean; why: string }> } = {},
+): Promise<SailPlace> {
   const want = requested || (readShipConfig(ship.id)?.sail_on === "laptop" ? "prefer-laptop" : "hub");
-  if (want !== "hub" && want !== "local" && want !== "laptop" && want !== "prefer-laptop") return { ok: false, message: `Sail on the hub or the laptop, not ${want}.` };
+  if (want !== "hub" && want !== "local" && want !== "laptop" && want !== "exe" && want !== "prefer-laptop") return { ok: false, message: `Sail on the hub, the laptop, or exe.dev, not ${want}.` };
   // A crew in Gondolin VMs needs macOS: on a Linux hub, only the laptop can take the voyage.
   const hubCan = ship.isolation !== "vm" || platform === "darwin";
   if (want === "hub" || want === "local") return hubCan ? { ok: true, host: localHost } : { ok: false, message: `${ship.id}'s crew works in Gondolin VMs, which this hub cannot run: sail it on the laptop.` };
-  const can = await laptopSailable();
-  if (can.ok) return { ok: true, host: shipHost("laptop") };
-  if (want === "laptop") return { ok: false, message: `${ship.id} cannot sail on the laptop: ${can.why}.` };
-  return hubCan ? { ok: true, host: localHost } : { ok: false, message: `${ship.id} sails only on the laptop (its crew works in Gondolin VMs), and ${can.why}.` };
+  if (want === "exe") {
+    if (ship.isolation === "vm") return { ok: false, message: `${ship.id}'s crew works in Gondolin VMs, which exe.dev's Linux VMs cannot run: sail it on the laptop.` };
+    const e = await (can.exe ?? exeSailable)(ship.id);
+    return e.ok ? { ok: true, exe: true, fallback: null } : { ok: false, message: `${ship.id} cannot sail on exe.dev: ${e.why}.` };
+  }
+  const l = await (can.laptop ?? laptopSailable)();
+  if (l.ok) return { ok: true, host: shipHost("laptop") };
+  if (want === "laptop") return { ok: false, message: `${ship.id} cannot sail on the laptop: ${l.why}.` };
+  if (ship.isolation !== "vm") {
+    const e = await (can.exe ?? exeSailable)(ship.id);
+    if (e.ok) return { ok: true, exe: true, fallback: hubCan ? localHost : null };
+  }
+  return hubCan ? { ok: true, host: localHost } : { ok: false, message: `${ship.id} sails only on the laptop (its crew works in Gondolin VMs), and ${l.why}.` };
 }
 
 /**
@@ -283,7 +304,8 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
   const where = await sailHost(ship, session ? "laptop" : on);
   if (session && !where.ok) return { ok: false, message: `${where.message} Design and spec sessions run on the laptop; this one waits in the queue until it is awake.` };
   if (!where.ok) return { ok: false, message: where.message };
-  const host = where.host;
+  let chosen: ShipHost | null = "host" in where ? where.host : null;
+  let fb = "";
   const g = goal.trim().replace(/\s+/g, " ");
   if (g.length < 4) return { ok: false, message: "Give the voyage a goal." };
   if (await openVoyage(shipId)) return { ok: false, message: `${shipId} is already under sail. Dock it before setting a new course.` };
@@ -293,11 +315,30 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
   const file = join(voyageDir(shipId), `${now.toISOString().slice(0, 10)}-${slug}.md`);
   if (existsSync(file)) return { ok: false, message: "A voyage with that goal already started today." };
   await mkdir(voyageDir(shipId), { recursive: true });
+  // An exe.dev VM is made now that the cheap checks passed: a worktree-less ship has nothing to put there.
+  if (!chosen) {
+    const fallback = "exe" in where ? where.fallback : null;
+    let why = ship.orchestrator === "lead" ? "" : `${shipId} is run by Firstmate, whose voyages need no VM.`;
+    if (!why) {
+      const made = await provisionVoyageVm(shipId, slug);
+      if (made.ok) chosen = made.host;
+      else why = made.message;
+    }
+    if (!chosen) {
+      if (!fallback) return { ok: false, message: why };
+      chosen = fallback;
+      fb = ` ${why} Sailed on the hub instead.`;
+    }
+  }
+  const host: ShipHost = chosen;
   // Fleet-crewed ships work in a leased worktree on a crew/ branch, never in the captain's checkout.
   let worktree: VoyageWorktree | undefined;
   if (usesVoyageWorktrees(ship, host)) {
     const lease = session ? await leaseVoyageWorktree(ship, sessionBranch(session, slug.slice(0, 40).replace(/-+$/, "")), "", host) : await leaseVoyageWorktree(ship, slug, g, host, undefined, spec?.prototype || undefined);
-    if ("message" in lease) return { ok: false, message: lease.message };
+    if ("message" in lease) {
+      if (host.vm) await releaseVoyageVm(host.vm);
+      return { ok: false, message: lease.message };
+    }
     worktree = lease.worktree;
   }
   const crew = session ? [to] : ship.crew.map((r) => `${shipId}-${r}`);
@@ -353,14 +394,14 @@ export async function startVoyage(shipId: string, goal: string, to: string, on?:
     updateVoyageRig(shipId, { brief: { to, text: session && worktree ? sessionBrief({ ship: shipId, kind: session, topic: g, record: file, branch: worktree.branch }) : voyageBrief(ship, voyage) } });
     if (opts.stop) for (const id of crew) await opts.stop(id).catch(() => {});
     void rigVoyage(ship, opts.deliver ?? null).catch((e) => console.error("[rig]", e));
-    return { ok: true, message: `${shipId} ${session ? `${session} session opened` : "set sail"}${host.kind === "local" ? "" : ` on ${host.label}`}; rigging its stack first (port ${plan?.port}). The brief goes to ${to} when the app is ready.`, voyage, rigging: true };
+    return { ok: true, message: `${shipId} ${session ? `${session} session opened` : "set sail"}${host.kind === "local" ? "" : ` on ${host.label}`}; rigging its stack first (port ${plan?.port}). The brief goes to ${to} when the app is ready.${fb}`, voyage, rigging: true };
   }
   if (session && worktree) {
     if (opts.stop) await opts.stop(to).catch(() => {});
     await opts.deliver?.(to, sessionBrief({ ship: shipId, kind: session, topic: g, record: file, branch: worktree.branch }));
-    return { ok: true, message: `${shipId} ${session} session opened on ${host.label}.`, voyage, rigging: true };
+    return { ok: true, message: `${shipId} ${session} session opened on ${host.label}.${fb}`, voyage, rigging: true };
   }
-  return { ok: true, message: `${shipId} set sail${host.kind === "local" ? "" : ` on ${host.label}`}.`, voyage };
+  return { ok: true, message: `${shipId} set sail${host.kind === "local" ? "" : ` on ${host.label}`}.${fb}`, voyage };
 }
 
 export async function dockVoyage(shipId: string, summary: string): Promise<{ ok: boolean; message: string }> {
@@ -376,6 +417,7 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
   const host = voyageHost(shipId);
   const repo = voyageWorktree(shipId)?.repo ?? ship?.path ?? "";
   const guest = voyageWorktree(shipId)?.guest;
+  const vm = voyageWorktree(shipId)?.vm;
   // The voyage's stack goes first (lib/rigging.ts), then the worktree: uncommitted work keeps the voyage open.
   if (ship) await unrigVoyage(ship);
   const released = ship ? await releaseVoyageWorktree(ship) : { ok: true, message: "" };
@@ -414,6 +456,11 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
     await host.getMemory(shipId, crewIds).then(writeMemoryFiles).catch((e) => logShipEvent(shipId, "helm", "notice", `Crew memory on ${host.label} was not brought back: ${e instanceof Error ? e.message : String(e)}`));
     await host.putMemory?.(voyageMemoryCleared(shipId, crewIds)).catch(() => {});
   }
+  // The voyage's exe.dev VM goes once its memory is back (the branch and any pull request are already on the remote).
+  if (vm) {
+    const gone = await releaseVoyageVm(vm);
+    logShipEvent(shipId, "helm", "notice", gone.message);
+  }
   const scratch = ship && ship.orchestrator === "lead" ? await endVoyageMemory(shipId, crewIds) : "";
   // The crew's canvas items end with the voyage (lib/canvas-archive.ts); the note says where they went.
   const canvas = await archiveCanvas(crewIds, v.file.split("/").pop()!.replace(/\.md$/, "")).catch(() => ({ items: 0, dir: null }));
@@ -440,7 +487,7 @@ export async function dockVoyage(shipId: string, summary: string): Promise<{ ok:
 }
 
 /**
- * Move an open laptop voyage to the hub (the captain is closing the laptop for
+ * Move an open laptop (or exe.dev VM) voyage to the hub (the captain is closing the laptop for
  * the day): the crew stops, the voyage branch is pushed from the laptop, the
  * crew's memory comes back, the laptop's worktree is returned, and a hub
  * worktree carries on from the pushed branch. Crew sessions start fresh on the
@@ -464,12 +511,18 @@ export async function moveVoyageToHub(shipId: string, stop: (agentId: string) =>
   const push = await from.exec(["git", "push", "-u", "origin", branch], { timeoutMs: 120_000, cwd: w.path });
   if (push.exitCode !== 0) return { ok: false, message: `Could not push ${branch} from ${from.label}: ${(push.stderr || push.stdout).split("\n").pop()?.slice(0, 160)}` };
   if (from.getMemory) await writeMemoryFiles(await from.getMemory(shipId, crewIds)).catch(() => {});
+  const fromVm = w.vm;
   await unrigVoyage(ship);
   const released = await releaseVoyageWorktree(ship);
   if (!released.ok) return { ok: false, message: `The branch is pushed, but ${from.label}'s worktree was not returned: ${released.message}` };
   const slug = v.file.split("/").pop()!.replace(/^\d{4}-\d{2}-\d{2}-/, "").replace(/\.md$/, "");
   const lease = await leaseVoyageWorktree(ship, slug, v.goal, localHost, { branch, base: w.base });
-  if (!lease.ok) return { ok: false, message: `${branch} is pushed and the laptop's worktree returned, but the hub could not take the voyage: ${lease.message} Start it again on the laptop, or lease a worktree by hand.` };
+  if (!lease.ok) return { ok: false, message: `${branch} is pushed and ${from.label}'s worktree returned, but the hub could not take the voyage: ${lease.message} Start it again, or lease a worktree by hand.` };
+  // The hub has the voyage: the VM it came from is no longer needed.
+  if (fromVm) {
+    const gone = await releaseVoyageVm(fromVm);
+    logShipEvent(shipId, "helm", "notice", gone.message);
+  }
   for (const id of crewIds) await freshCrewSession(id);
   // The stack comes up again on the hub; the crew already has its brief.
   const replan = planRig(ship, slug, "local");
