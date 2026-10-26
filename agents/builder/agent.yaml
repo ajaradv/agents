@@ -3,10 +3,11 @@ type: assistant
 role: builder
 harness: pi
 # Writes the code aboard a ship: logic, server, data, tests (the designer owns
-# look and feel). DeepSeek V4 Pro, like the lead: long sessions need real prompt
-# caching. Backup: the same model through OpenRouter when DeepSeek fails that day.
-model: deepseek/deepseek-v4-pro
-fallback_model: openrouter/deepseek/deepseek-v4-pro
+# look and feel). DeepSeek V4 Pro through OpenRouter (it holds the DeepSeek key),
+# like the lead: long sessions need real prompt caching. Backup: Composer on the
+# Cursor key when OpenRouter fails that day (uncached, so only for a bad day).
+model: openrouter/deepseek/deepseek-v4-pro
+fallback_model: cursor/composer-2.5
 # crew: only — exists only aboard ships, as <ship>-builder.
 crew: only
 # Branch names and commit messages in the conventional form python-semantic-release reads.

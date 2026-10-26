@@ -4,7 +4,7 @@ description: Runs one of the ship's checks where the voyage's repo is, and when 
 helper: true
 input: check
 hosts: laptop, local
-model: deepseek/deepseek-flash
+model: openrouter/deepseek/deepseek-v4-flash
 tools: read, grep, find, ls
 budget_usd: 0.10
 timeout_secs: 300

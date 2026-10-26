@@ -3,10 +3,11 @@ type: assistant
 role: lead
 harness: pi
 # DeepSeek V4 Pro: the lead takes the most turns and keeps the longest
-# session, so it needs real prompt caching (not Cursor). Backup: the same
-# model through OpenRouter when DeepSeek's key or balance fails that day.
-model: deepseek/deepseek-v4-pro
-fallback_model: openrouter/deepseek/deepseek-v4-pro
+# session, so it needs real prompt caching (not Cursor). Through OpenRouter,
+# which holds the DeepSeek key. Backup: Composer on the Cursor key when
+# OpenRouter fails that day (uncached, so only for a bad day).
+model: openrouter/deepseek/deepseek-v4-pro
+fallback_model: cursor/composer-2.5
 # crew: only — exists only aboard ships, as <ship>-lead.
 crew: only
 # Branch names and commit messages in the conventional form python-semantic-release reads.

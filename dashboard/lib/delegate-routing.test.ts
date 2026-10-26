@@ -5,9 +5,9 @@ const pick = (choice: string, p: number) => (async () => ({ ok: true, answers: {
 
 describe("helper model routing", () => {
   test("only a confident hard task gets the strong model; unsure or failed stays cheap", async () => {
-    expect((await helperModel("Trace why the export crashes across these five modules and propose a fix plan", pick("hard", 0.85))).model).toBe("deepseek/deepseek-v4-pro");
-    expect((await helperModel("Trace why the export crashes", pick("hard", 0.6))).model).toBe("deepseek/deepseek-flash");
-    expect((await helperModel("Find the note about the Kinwork stack", pick("easy", 0.9))).model).toBe("deepseek/deepseek-flash");
-    expect((await helperModel("anything", (async () => ({ ok: false, error: "down" })) as never)).model).toBe("deepseek/deepseek-flash");
+    expect((await helperModel("Trace why the export crashes across these five modules and propose a fix plan", pick("hard", 0.85))).model).toBe("openrouter/deepseek/deepseek-v4-pro");
+    expect((await helperModel("Trace why the export crashes", pick("hard", 0.6))).model).toBe("openrouter/deepseek/deepseek-v4-flash");
+    expect((await helperModel("Find the note about the Kinwork stack", pick("easy", 0.9))).model).toBe("openrouter/deepseek/deepseek-v4-flash");
+    expect((await helperModel("anything", (async () => ({ ok: false, error: "down" })) as never)).model).toBe("openrouter/deepseek/deepseek-v4-flash");
   });
 });

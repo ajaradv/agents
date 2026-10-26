@@ -4,7 +4,7 @@ description: Looks at one or two pages (desktop and phone screenshots the fleet 
 helper: true
 input: shots
 hosts: laptop, local
-model: deepseek/deepseek-flash
+model: openrouter/deepseek/deepseek-v4-flash
 budget_usd: 0.15
 timeout_secs: 240
 ---

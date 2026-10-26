@@ -8,7 +8,7 @@ harness: pi
 # visual judgment and screenshots. Backup: DeepSeek Flash, which reads images,
 # when OpenRouter credits or the key fail that day.
 model: openrouter/anthropic/claude-sonnet-5.5
-fallback_model: deepseek/deepseek-flash
+fallback_model: openrouter/deepseek/deepseek-v4-flash
 workspace: ships
 # Aboard a ship with `isolation: vm`: the browser image (R4e: Chromium, fonts,
 # and the `shot` command for desktop and mobile screenshots inside the VM).
