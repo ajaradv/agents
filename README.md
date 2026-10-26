@@ -21,6 +21,7 @@ vendor/motion-design-skill/ LottieFiles motion-design craft skill (Designer)
 vendor/three-agent-skills/ Three.js + R3F best-practice skills (Designer)
 bin/launch                 start an agent from agent.yaml
 bin/setup                  submodules + bun + alice vault
+.github/workflows/ci.yml   pull requests and main: typecheck, tests, secret scan
 bin/setup-alice-vault      brain inbox + obsidian skill symlinks
 bin/voice-setup            local text-to-speech model (Kokoro) for dashboard voice replies
 bin/seed-fleet-home        copy vendor/firstmate → fleet/home
@@ -66,6 +67,31 @@ bin/setup-alice-vault      # brain vault inbox + obsidian skill symlinks
 ```
 
 Firstmate submodule: `vendor/firstmate` (upstream `kunchenguid/firstmate` added by `bin/setup`).
+
+## CI
+
+Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on Ubuntu 24.04: Bun 1.4.0 (the version `bin/hub-install` pins), `bun install --frozen-lockfile`, `tsc -p .`, and `bun test` in `dashboard/`. A second job scans the full git history with gitleaks. Shellcheck over the shell scripts in `bin/` is reported and does not fail the workflow. The gate is that Linux job, the same family as `bin/hub-install`. Login Keychain and launchd stay on the laptop; this suite covers them with the file secret store and in-process fakes.
+
+Reproduce the required jobs locally:
+
+```bash
+git submodule update --init --recursive   # public remotes; no token
+bun install --frozen-lockfile             # Bun 1.4.0
+just typecheck                            # node_modules/.bin/tsc -p .
+just test                                 # cd dashboard && bun test
+```
+
+Secret scan (gitleaks 8.30.1, full history; the committed `.gitleaks.toml` is picked up automatically):
+
+```bash
+gitleaks detect --log-opts="--all" --redact --no-banner
+```
+
+Shellcheck (advisory; Ubuntu's shellcheck 0.9.0 in CI):
+
+```bash
+find bin -type f -exec grep -lE '^#!.*(bash|/sh)$' {} + | xargs shellcheck
+```
 
 ## Launch agents
 
