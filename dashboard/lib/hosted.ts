@@ -1,4 +1,5 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { readShips, type ShipRow } from "./fleet-layers.ts";
@@ -50,7 +51,40 @@ export async function hostedShips(): Promise<HostedShip[]> {
 
 /** Environment for a command the hub runs here: this machine's paths and, for a voyage, its rig (checked; vars from this machine's config). */
 export function hostedExecEnv(ship: HostedShip, rig: unknown): Record<string, string> {
-  return { FLEET_SHIP_REPO: ship.path, FLEET_AGENTS: ROOT, ...rigEnv(ship.rig ?? null, validRig(rig), ship.id) };
+  return { FLEET_SHIP_REPO: ship.path, FLEET_AGENTS: ROOT, ...rigEnv(ship.rig ?? null, validRig(rig), ship.id), ...workerDockerEnv() };
+}
+
+/**
+ * Docker for what the worker runs (rigs, checks, crew shells). Docker
+ * Desktop's credential helper (credsStore "desktop") hangs when the worker, a
+ * background bun under launchd, is the process responsible for it (macOS waits
+ * on an invisible privacy prompt), so every image pull and build metadata
+ * lookup timed out ("DeadlineExceeded"). The worker gets its own DOCKER_CONFIG:
+ * the captain's config without the credential helper (public images pull
+ * anonymously), with links to their CLI plugins, contexts, and builders.
+ */
+export function workerDockerEnv(home = homedir(), dir = join(ROOT, "fleet", "home", "docker"), platform: string = process.platform): Record<string, string> {
+  if (platform !== "darwin") return {};
+  const src = join(home, ".docker");
+  let cfg: Record<string, unknown>;
+  try {
+    cfg = JSON.parse(readFileSync(join(src, "config.json"), "utf8")) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+  if (!cfg.credsStore && !cfg.credHelpers) return {};
+  try {
+    mkdirSync(dir, { recursive: true });
+    const { credsStore: _s, credHelpers: _h, ...rest } = cfg;
+    writeFileSync(join(dir, "config.json"), JSON.stringify(rest, null, 2) + "\n");
+    for (const name of readdirSync(src)) {
+      if (name === "config.json" || existsSync(join(dir, name))) continue;
+      symlinkSync(join(src, name), join(dir, name));
+    }
+    return { DOCKER_CONFIG: dir };
+  } catch {
+    return {};
+  }
 }
 
 /** Copy a ship's rig env files from this machine's store into one of its worktrees here. */
@@ -151,7 +185,7 @@ export async function prepareHostedLaunch(ctx: LaunchContext, ships?: HostedShip
   // A rigged voyage: the crew's shells reach the voyage's own stack (lib/rig.ts).
   const rec = validRig(ctx.worktree?.rig);
   const rig = rec ? rigEnv(ship.rig ?? null, rec) : {};
-  return { ok: true, env: { FLEET_INBOX: inbox, FLEET_HOSTED: "1", ...rig, ...(guest ? { FLEET_GUEST_SHIP: ship.id } : {}) }, ship };
+  return { ok: true, env: { FLEET_INBOX: inbox, FLEET_HOSTED: "1", ...rig, ...workerDockerEnv(), ...(guest ? { FLEET_GUEST_SHIP: ship.id } : {}) }, ship };
 }
 
 /**
