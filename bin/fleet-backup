@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# fleet-backup - continuous backup of the hub's SQLite databases to a Cloudflare R2
+# bucket with Litestream (sync every 10 s, a snapshot a day, 30 days kept).
+# Linux hub only. Safe to run again: each step changes only what differs.
+#
+# Usage:
+#   bin/fleet-backup config      write ~/.config/fleet/litestream.yml (every database on disk)
+#   bin/fleet-backup install     config, then the fleet-litestream systemd service (enabled, started)
+#   bin/fleet-backup status      the service, and each database's latest snapshot and position
+#   bin/fleet-backup drill       timed restore drill: restore every database to a temp dir,
+#                                integrity-check it, compare row counts with the live one
+#   bin/fleet-backup reconcile   a new ship database? rewrite the config and restart the service
+#                                (the node's `backups` job runs this every 6 hours)
+#
+# Replicated: fleet/inbox/.node/metrics.db, .node/journal.db, and ships/<ship>/ship.db
+# for every ship (test ships `zz-*` are skipped). Setup, restore: docs/backups.md.
+#
+# The R2 settings are KEY=VALUE lines in ~/.config/fleet/secrets/litestream.env (0600):
+# LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY, R2_ACCOUNT_ID, R2_BUCKET.
+# The keys never go in the config file or on a command line; the service reads the
+# file as its environment, and this script only checks they are present.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INBOX="${FLEET_INBOX:-$ROOT/fleet/inbox}"
+CONF_DIR="${FLEET_CONFIG_DIR:-$HOME/.config/fleet}"
+CONF="$CONF_DIR/litestream.yml"
+ENV_FILE="${FLEET_SECRETS_DIR:-$CONF_DIR/secrets}/litestream.env"
+UNIT=fleet-litestream
+UNIT_FILE="/etc/systemd/system/$UNIT.service"
+export PATH="$HOME/.local/bin:$PATH"
+
+die() { printf 'error: %s\n' "$1" >&2; exit "${2:-1}"; }
+usage() { sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; }
+sc() { sudo -n systemctl "$@"; }
+
+[ "$(uname)" = Linux ] || die "fleet-backup is for the Linux hub" 2
+
+# KEY from the env file (never sourced: it is data, not a script).
+envval() { sed -n "s/^$1=//p" "$ENV_FILE" 2>/dev/null | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"; }
+
+need_env() {
+  local missing=() k
+  [ -f "$ENV_FILE" ] || missing=(all)
+  if [ -f "$ENV_FILE" ]; then
+    for k in LITESTREAM_ACCESS_KEY_ID LITESTREAM_SECRET_ACCESS_KEY R2_ACCOUNT_ID R2_BUCKET; do
+      [ -n "$(envval "$k")" ] || missing+=("$k")
+    done
+  fi
+  [ ${#missing[@]} = 0 ] && return 0
+  cat >&2 <<MSG
+Backups are not set up: $ENV_FILE is missing or incomplete${missing[0]:+ (${missing[*]})}.
+
+The captain needs to:
+  1. Create a Cloudflare R2 bucket (any name; no public access).
+  2. Create an R2 API token with "Object Read & Write" on that bucket only.
+  3. On the hub, create $ENV_FILE (mode 0600) with four lines:
+       LITESTREAM_ACCESS_KEY_ID=<the token's Access Key ID>
+       LITESTREAM_SECRET_ACCESS_KEY=<the token's Secret Access Key>
+       R2_ACCOUNT_ID=<the Cloudflare account id>
+       R2_BUCKET=<the bucket name>
+  4. Run bin/fleet-backup install.
+MSG
+  exit 3
+}
+
+# The credentials Litestream reads from its environment (for status and drill).
+load_env() {
+  need_env
+  LITESTREAM_ACCESS_KEY_ID="$(envval LITESTREAM_ACCESS_KEY_ID)"
+  LITESTREAM_SECRET_ACCESS_KEY="$(envval LITESTREAM_SECRET_ACCESS_KEY)"
+  export LITESTREAM_ACCESS_KEY_ID LITESTREAM_SECRET_ACCESS_KEY
+}
+
+LITESTREAM="$(command -v litestream || true)"
+need_litestream() { [ -n "$LITESTREAM" ] || die "litestream is not installed (run bin/hub-install)"; }
+
+# Every database on disk, one absolute path per line, sorted.
+databases() {
+  local f
+  for f in "$INBOX/.node/metrics.db" "$INBOX/.node/journal.db" "$INBOX"/ships/*/ship.db; do
+    [ -f "$f" ] || continue
+    case "$f" in */ships/zz-*/ship.db) continue ;; esac
+    printf '%s\n' "$f"
+  done | sort
+}
+
+render_config() {
+  local account bucket db rel
+  account="$(envval R2_ACCOUNT_ID)"
+  bucket="$(envval R2_BUCKET)"
+  [[ "$account" =~ ^[A-Za-z0-9]+$ ]] || die "R2_ACCOUNT_ID in $ENV_FILE is not an account id"
+  [[ "$bucket" =~ ^[A-Za-z0-9._-]+$ ]] || die "R2_BUCKET in $ENV_FILE is not a bucket name"
+  echo "# Written by bin/fleet-backup config; edits are overwritten. Keys come from the environment."
+  echo "dbs:"
+  while IFS= read -r db; do
+    rel="${db#"$INBOX"/}"
+    rel="${rel%.db}"
+    cat <<YML
+  - path: $db
+    replicas:
+      - type: s3
+        endpoint: https://$account.r2.cloudflarestorage.com
+        region: auto
+        bucket: $bucket
+        path: fleet-hub/$rel
+        force-path-style: true
+        sync-interval: 10s
+        snapshot-interval: 24h
+        retention: 720h
+YML
+  done < <(databases)
+}
+
+# Replace $1 with stdin when it differs (0600, atomic). Prints "changed" or "unchanged".
+write_if_changed() {
+  local dest="$1" tmp
+  tmp="$(mktemp "$dest.XXXXXX")"
+  cat > "$tmp"
+  chmod 0600 "$tmp"
+  if [ -f "$dest" ] && cmp -s "$tmp" "$dest"; then rm -f "$tmp"; echo unchanged; else mv "$tmp" "$dest"; echo changed; fi
+}
+
+db_paths_in() { { sed -n 's/^  - path: //p' "$1" 2>/dev/null || true; } | sort; }
+
+# Writes the config; sets CONFIG_CHANGED (1/0) and prints what changed in databases.
+do_config() {
+  load_env
+  mkdir -p "$CONF_DIR"
+  local before after old new
+  before="$(mktemp)"; after="$(mktemp)"
+  db_paths_in "$CONF" > "$before"
+  CONFIG_CHANGED=0
+  [ "$(render_config | write_if_changed "$CONF")" = changed ] && CONFIG_CHANGED=1
+  db_paths_in "$CONF" > "$after"
+  if [ "$CONFIG_CHANGED" = 1 ]; then
+    new="$(comm -13 "$before" "$after" | sed 's/^/  added   /')"
+    old="$(comm -23 "$before" "$after" | sed 's/^/  removed /')"
+    echo "wrote $CONF ($(wc -l < "$after" | tr -d ' ') databases)"
+    [ -z "$new" ] || echo "$new"
+    [ -z "$old" ] || echo "$old"
+  else
+    echo "$CONF is current ($(wc -l < "$after" | tr -d ' ') databases)"
+  fi
+  rm -f "$before" "$after"
+}
+
+render_unit() {
+  cat <<UNIT
+[Unit]
+Description=Fleet backups (Litestream to Cloudflare R2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=$(id -un)
+EnvironmentFile=$ENV_FILE
+ExecStart=$LITESTREAM replicate -config $CONF
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+case "${1:-}" in
+  config)
+    do_config
+    ;;
+
+  install)
+    need_litestream
+    do_config
+    unit_changed=0
+    if ! render_unit | cmp -s - "$UNIT_FILE" 2>/dev/null; then
+      render_unit | sudo tee "$UNIT_FILE" >/dev/null
+      sc daemon-reload
+      unit_changed=1
+      echo "wrote $UNIT_FILE"
+    fi
+    was_active=0
+    systemctl is-active --quiet "$UNIT.service" && was_active=1
+    sc enable --now "$UNIT.service" >/dev/null 2>&1 || die "could not start $UNIT (journalctl -u $UNIT)"
+    if [ "$was_active" = 1 ] && { [ "$CONFIG_CHANGED" = 1 ] || [ "$unit_changed" = 1 ]; }; then
+      sc restart "$UNIT.service"
+      echo "restarted $UNIT"
+    fi
+    echo "$UNIT: $(systemctl is-active "$UNIT.service" || true)"
+    ;;
+
+  status)
+    need_litestream
+    load_env
+    echo "$UNIT: $(systemctl is-active "$UNIT.service" 2>/dev/null || true) ($(systemctl is-enabled "$UNIT.service" 2>/dev/null || echo not installed))"
+    [ -f "$CONF" ] || die "no $CONF yet (run bin/fleet-backup install)"
+    while IFS= read -r db; do
+      echo
+      echo "$db"
+      "$LITESTREAM" snapshots -config "$CONF" "$db" 2>&1 | tail -n 3 || true
+      "$LITESTREAM" generations -config "$CONF" "$db" 2>&1 | tail -n 3 || true
+    done < <(db_paths_in "$CONF")
+    ;;
+
+  drill)
+    need_litestream
+    load_env
+    [ -f "$CONF" ] || die "no $CONF yet (run bin/fleet-backup install)"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    fail=0
+    total_start=$SECONDS
+    while IFS= read -r db; do
+      name="$(echo "${db#"$INBOX"/}" | tr '/' '_')"
+      out="$tmp/$name"
+      start=$SECONDS
+      if ! "$LITESTREAM" restore -config "$CONF" -o "$out" "$db" >"$tmp/restore.log" 2>&1; then
+        printf 'FAIL  %s: restore failed (%s)\n' "$db" "$(tail -n 1 "$tmp/restore.log")"; fail=1; continue
+      fi
+      secs=$((SECONDS - start))
+      if [ ! -s "$out" ]; then printf 'FAIL  %s: restored file is empty\n' "$db"; fail=1; continue; fi
+      check="$(sqlite3 "$out" 'PRAGMA integrity_check' 2>&1 | head -n 5 | tr '\n' ' ')"
+      if [ "${check% }" != ok ]; then printf 'FAIL  %s: integrity_check: %s\n' "$db" "$check"; fail=1; continue; fi
+      printf 'ok    %s: restored and checked in %ss\n' "$db" "$secs"
+      # Row counts against the live database; the live one may be a few writes ahead.
+      while IFS= read -r t; do
+        [ -n "$t" ] || continue
+        r="$(sqlite3 "$out" "SELECT COUNT(*) FROM \"$t\"" 2>/dev/null || echo '?')"
+        l="$(sqlite3 "$db" "SELECT COUNT(*) FROM \"$t\"" 2>/dev/null || echo '?')"
+        if [ "$r" = "$l" ]; then printf '        %-28s %s rows\n' "$t" "$r"
+        elif [[ "$r" =~ ^[0-9]+$ && "$l" =~ ^[0-9]+$ ]]; then printf '        %-28s restored %s, live %s (live ahead by %s)\n' "$t" "$r" "$l" "$((l - r))"
+        else printf '        %-28s restored %s, live %s (not comparable)\n' "$t" "$r" "$l"; fi
+      done < <(sqlite3 "$out" "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+      rm -f "$out" "$out-wal" "$out-shm"
+    done < <(db_paths_in "$CONF")
+    echo
+    echo "total: $((SECONDS - total_start))s"
+    [ "$fail" = 0 ] && echo "drill passed" || { echo "drill FAILED" >&2; exit 1; }
+    ;;
+
+  reconcile)
+    do_config
+    if [ "$CONFIG_CHANGED" = 1 ]; then
+      if systemctl is-active --quiet "$UNIT.service"; then sc restart "$UNIT.service" && echo "restarted $UNIT"; else echo "$UNIT is not running (bin/fleet-backup install)"; fi
+    fi
+    ;;
+
+  *)
+    usage
+    ;;
+esac
