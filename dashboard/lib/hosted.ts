@@ -3,10 +3,14 @@ import { homedir } from "node:os";
 import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { readShips, type ShipRow } from "./fleet-layers.ts";
-import { ROOT } from "./paths.ts";
-import { spawnTimed } from "./proc.ts";
+import { enqueue, flush, pendingCount, type OutboxEvent } from "./outbox.ts";
+import { nodeStateDir, ROOT } from "./paths.ts";
+import { checkVerdict, spawnTimed, type SpawnResult } from "./proc.ts";
+import { readSecret, writeSecret } from "./secret-store.ts";
 import { readShipConfig } from "./ship-config.ts";
 import { copyRigEnv, rigEnv, rigStore, validRig } from "./rig.ts";
+import { validEventKey } from "./ulid.ts";
+import { INGEST_SOURCE } from "./worker-host.ts";
 
 /**
  * This machine as a ship host for the hub (the laptop side of
@@ -276,4 +280,102 @@ export async function getMemory(ship: string, agents: string[]): Promise<Record<
     }
   }
   return out;
+}
+
+/**
+ * The outbox (lib/outbox.ts): this machine's records for the hub. The hub says
+ * where to send them and with which token (POST /host/ingest-config; the token
+ * is the secret ingest-token here, the rest a small state file), and the
+ * worker sends on a timer and soon after something is queued.
+ */
+export type IngestConfig = { url: string; token: string; source: string };
+const ingestFile = () => join(nodeStateDir(), "ingest.json");
+
+/** Keep the hub's ingest settings. The token is stored first: without it the file would point nowhere. */
+export async function setIngestConfig(b: unknown, write: (name: string, value: string) => Promise<boolean> = writeSecret): Promise<{ ok: boolean; message: string }> {
+  const { url, token, source } = (b && typeof b === "object" ? b : {}) as Record<string, unknown>;
+  if (typeof url !== "string" || !/^https?:\/\/[^\s/]+(\/[^\s]*)?\/v1\/ingest$/.test(url)) return { ok: false, message: "url must be the node's /v1/ingest address" };
+  if (typeof token !== "string" || !/^[A-Za-z0-9_-]{32,256}$/.test(token)) return { ok: false, message: "a token of 32 to 256 letters, digits, - or _" };
+  if (typeof source !== "string" || !INGEST_SOURCE.test(source)) return { ok: false, message: "source must be laptop or a VM name" };
+  if (!(await write("ingest-token", token))) return { ok: false, message: "could not store the token" };
+  mkdirSync(dirname(ingestFile()), { recursive: true });
+  writeFileSync(ingestFile(), JSON.stringify({ url, source }) + "\n");
+  return { ok: true, message: "ingest settings stored" };
+}
+
+export async function readIngestConfig(read: (name: string) => Promise<string> = readSecret): Promise<IngestConfig | null> {
+  try {
+    const f = JSON.parse(readFileSync(ingestFile(), "utf8")) as { url?: string; source?: string };
+    const token = await read("ingest-token");
+    return f.url && f.source && token ? { url: f.url, source: f.source, token } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The record of a check the hub asked for, to queue before answering: the
+ * hub's `run` descriptor says which key and whose check; the result is what
+ * ran here. Null when there is nothing to record (no descriptor, a bad one,
+ * or one for another ship than the folder's).
+ */
+export function runEvent(run: unknown, ship: Pick<HostedShip, "id">, res: Pick<SpawnResult, "exitCode" | "timedOut" | "ms">, now = new Date()): OutboxEvent | null {
+  const r = (run && typeof run === "object" ? run : {}) as Record<string, unknown>;
+  if (!validEventKey(r.event_key) || r.kind !== "check" || r.ship !== ship.id) return null;
+  if (typeof r.agent !== "string" || !r.agent || typeof r.name !== "string" || !r.name) return null;
+  return {
+    table: "runs",
+    event_key: r.event_key,
+    data: { ship: ship.id, agent: r.agent, kind: "check", name: r.name, ok: !res.timedOut && res.exitCode === 0, ms: res.ms, detail: checkVerdict(res, Math.round(res.ms / 1000)), commit_sha: typeof r.commit === "string" ? r.commit : "", dirty: r.dirty === true, ts: now.toISOString() },
+  };
+}
+
+/** Queue a check's record; the answer to the hub never waits on or fails for it. */
+export function queueRun(run: unknown, ship: Pick<HostedShip, "id">, res: Pick<SpawnResult, "exitCode" | "timedOut" | "ms">): boolean {
+  try {
+    const e = runEvent(run, ship, res);
+    return e ? enqueue(e) : false;
+  } catch (e) {
+    console.error("[outbox]", e instanceof Error ? e.message : e);
+    return false;
+  }
+}
+
+/** Sends the outbox every `everyMs` while something is pending, and `debounceMs` after a kick. */
+export function ingestLoop(deps: { config?: () => Promise<IngestConfig | null>; send?: typeof flush; pending?: () => number; everyMs?: number; debounceMs?: number } = {}): { start(): void; kick(): void; stop(): void; once(): Promise<void> } {
+  const config = deps.config ?? readIngestConfig;
+  const send = deps.send ?? flush;
+  const pending = deps.pending ?? pendingCount;
+  let busy = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let soon: ReturnType<typeof setTimeout> | null = null;
+  const once = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const c = await config();
+      if (c && pending() > 0) await send(c);
+    } catch (e) {
+      console.error("[outbox]", e instanceof Error ? e.message : e);
+    } finally {
+      busy = false;
+    }
+  };
+  return {
+    once,
+    start() {
+      timer ??= setInterval(() => void once(), deps.everyMs ?? 30_000);
+    },
+    kick() {
+      soon ??= setTimeout(() => {
+        soon = null;
+        void once();
+      }, deps.debounceMs ?? 2000);
+    },
+    stop() {
+      if (timer) clearInterval(timer);
+      if (soon) clearTimeout(soon);
+      timer = soon = null;
+    },
+  };
 }

@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { laptopCan, laptopFetch, laptopToken } from "./laptop.ts";
 import { nodeStateDir } from "./paths.ts";
 import type { ShipHost } from "./ship-host.ts";
-import { nodePublicUrl, workerHost } from "./worker-host.ts";
+import { ensureIngest, nodePublicUrl, workerHost } from "./worker-host.ts";
 
 /**
  * The captain's laptop as a ship host (vault plan
@@ -49,6 +49,18 @@ export async function laptopSailable(): Promise<{ ok: boolean; why: string }> {
 
 export { LINK_LOST } from "./worker-host.ts";
 
+/** When the laptop's ingest settings were last sent (0: never in this process); a failure is retried after RETRY_MS. */
+let ingestAt = 0;
+const INGEST_RETRY_MS = 5 * 60_000;
+let ingestOk = false;
+
+/** First use per node process: give the laptop worker its outbox destination and token. Never fails a call. */
+async function laptopIngest(): Promise<void> {
+  if (ingestOk || (ingestAt && Date.now() - ingestAt < INGEST_RETRY_MS)) return;
+  ingestAt = Date.now(); // before the call: the call itself comes back through here
+  ingestOk = (await ensureIngest("laptop", (cfg) => laptopHost.ingestConfig!(cfg)).catch(() => ({ ok: false }))).ok;
+}
+
 /** The captain's laptop (dashboard/worker.ts there), through Tailscale Serve with the shared worker token. */
 export const laptopHost: ShipHost = workerHost({
   kind: "laptop",
@@ -60,4 +72,5 @@ export const laptopHost: ShipHost = workerHost({
   },
   fetch: (url, init) => laptopFetch(url.replace(/^https?:\/\/[^/]+/, ""), init),
   available: async () => (await laptopSailable()).ok,
+  before: laptopIngest,
 });

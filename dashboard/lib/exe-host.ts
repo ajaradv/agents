@@ -3,7 +3,7 @@ import { exeClient, type ExeClient } from "./exe-dev.ts";
 import { wakeVoyageVm } from "./exe-paused.ts";
 import { deleteSecret, readSecret, writeSecret } from "./secret-store.ts";
 import type { ShipHost } from "./ship-host.ts";
-import { workerHost, type WorkerConfig } from "./worker-host.ts";
+import { ensureIngest, nodePublicUrl, workerHost, type WorkerConfig } from "./worker-host.ts";
 
 /**
  * An exe.dev voyage VM as a ship host (R2 of vault plan fleet/plans/feature/ship-rigging):
@@ -84,15 +84,26 @@ export async function adoptVoyageVm(vm: string, golden: string, deps: AdoptDeps 
     const body = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
     if (!res.ok || body.ok !== true) return { ok: false, message: `${vm} refused the new worker token (HTTP ${res.status}${body.message ? `: ${body.message}` : ""})` };
     if (!(await write(`exe-worker-${vm}`, token))) return { ok: false, message: `${vm} has a new worker token the hub could not store` };
+    // The VM sends what it records to the node over the tailnet (lib/outbox.ts). Not needed to sail: a failure is retried by the first check.
+    if (nodePublicUrl()) {
+      const send = async (cfg: { url: string; token: string; source: string }) =>
+        (await doFetch(`https://${vm}.exe.xyz:${EXE_WORKER_PORT}/host/ingest-config`, {
+          method: "POST",
+          headers: { "X-Exedev-Authorization": `Bearer ${proxy}`, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(cfg),
+          signal: AbortSignal.timeout(10_000),
+        })).ok;
+      await ensureIngest(vm, send, { read, write });
+    }
     return { ok: true, message: `${vm} has its own worker token` };
   } catch (e) {
     return { ok: false, message: `could not reach ${vm}: ${e instanceof Error ? e.message : String(e)}` };
   }
 }
 
-/** Drop a removed VM's two tokens. */
+/** Drop a removed VM's tokens. */
 export async function forgetVoyageVm(vm: string, deps: { remove?: (name: string) => Promise<boolean> } = {}): Promise<boolean> {
   const remove = deps.remove ?? deleteSecret;
-  const results = await Promise.all([remove(`exe-vm-${vm}`), remove(`exe-worker-${vm}`)]);
+  const results = await Promise.all([remove(`exe-vm-${vm}`), remove(`exe-worker-${vm}`), remove(`ingest-${vm}`)]);
   return results.every(Boolean);
 }

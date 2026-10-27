@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import { readSecret, writeSecret } from "./secret-store.ts";
 import { readShipConfig } from "./ship-config.ts";
 import type { SpawnResult } from "./proc.ts";
 import type { HostKind, LaunchCtx, RpcProc, ShipHost } from "./ship-host.ts";
@@ -124,9 +126,9 @@ export function workerHost(cfg: WorkerConfig): ShipHost {
     try {
       // The voyage's rig names only (the laptop checks them and adds its own config's vars).
       const rig = opts.env?.COMPOSE_PROJECT_NAME ? { project: opts.env.COMPOSE_PROJECT_NAME, port: Number(opts.env.FLEET_RIG_PORT), slug: opts.env.FLEET_RIG_SLUG } : undefined;
-      return await post<SpawnResult>("/host/exec", { cmd, cwd: opts.cwd, timeoutMs: opts.timeoutMs, ...(rig ? { rig } : {}) }, opts.timeoutMs + 15_000);
+      return await post<SpawnResult>("/host/exec", { cmd, cwd: opts.cwd, timeoutMs: opts.timeoutMs, ...(rig ? { rig } : {}), ...(opts.run ? { run: opts.run } : {}) }, opts.timeoutMs + 15_000);
     } catch (e) {
-      return { stdout: "", stderr: `${cfg.label} is not reachable (${e instanceof Error ? e.message : String(e)})`, exitCode: 125, timedOut: false, ms: Date.now() - t0 };
+      return { stdout: "", stderr: `${cfg.label} is not reachable (${e instanceof Error ? e.message : String(e)})`, exitCode: 125, timedOut: false, ms: Date.now() - t0, unreachable: true };
     }
   },
   async hasRepo(path) {
@@ -139,6 +141,13 @@ export function workerHost(cfg: WorkerConfig): ShipHost {
       return j.ships?.find((s) => s.id === ship.id)?.path ?? "";
     } catch {
       return "";
+    }
+  },
+  async ingestConfig(cfg) {
+    try {
+      return (await post<{ ok?: boolean }>("/host/ingest-config", cfg, 10_000)).ok === true;
+    } catch {
+      return false;
     }
   },
   // Only the crew token goes to a worker: it uses its own model access, never the hub's keys.
@@ -155,4 +164,31 @@ export function workerHost(cfg: WorkerConfig): ShipHost {
   available: cfg.available,
   };
   return host;
+}
+
+/** A worker's name in ingest tokens and in `source`: "laptop" or a VM's name. */
+export const INGEST_SOURCE = /^(laptop|[a-z][a-z0-9-]{1,62})$/;
+
+/**
+ * Give a worker its outbox destination (the node's /v1/ingest) and its own
+ * ingest token, made here once (secret ingest-<source>) and sent again on
+ * every call, so a worker that lost its state gets it back. The token
+ * authorizes /v1/ingest only (lib/ingest.ts).
+ */
+export async function ensureIngest(
+  source: string,
+  send: (cfg: { url: string; token: string; source: string }) => Promise<boolean>,
+  deps: { read?: (name: string) => Promise<string>; write?: (name: string, value: string) => Promise<boolean>; random?: () => string; url?: string } = {},
+): Promise<{ ok: boolean; message: string }> {
+  const base = deps.url ?? nodePublicUrl();
+  if (!base) return { ok: false, message: "the hub's node has no tailnet address (FLEET_NODE_PUBLIC_URL)" };
+  if (!INGEST_SOURCE.test(source)) return { ok: false, message: `${source} cannot have an ingest token` };
+  const name = `ingest-${source}`;
+  let token = await (deps.read ?? readSecret)(name);
+  if (!token) {
+    token = (deps.random ?? (() => randomBytes(32).toString("hex")))();
+    if (!(await (deps.write ?? writeSecret)(name, token))) return { ok: false, message: `could not store the ingest token for ${source}` };
+  }
+  const ok = await send({ url: `${base}/v1/ingest`, token, source }).catch(() => false);
+  return { ok, message: ok ? `${source} sends its records to the hub` : `${source} did not take its ingest settings` };
 }

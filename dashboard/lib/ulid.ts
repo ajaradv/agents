@@ -9,3 +9,6 @@ export function ulid(ms = Date.now()): string {
   for (let i = 0; i < 16; i++) tail += ALPHABET[r[i]! & 31];
   return t + tail;
 }
+
+/** An event_key a sender may use: a ULID, or any short key of letters, digits, : _ - (the sender's own scheme). */
+export const validEventKey = (k: unknown): k is string => typeof k === "string" && k.length > 0 && k.length <= 80 && /^[A-Za-z0-9:_-]+$/.test(k);

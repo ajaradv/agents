@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { adoptVoyageVm, exeVoyageHost, forgetVoyageVm } from "./exe-host.ts";
+import { ensureIngest } from "./worker-host.ts";
 
 /** A secret store in memory. */
 function store(initial: Record<string, string> = {}) {
@@ -89,7 +90,72 @@ describe("adoptVoyageVm", () => {
   });
 });
 
+describe("adoptVoyageVm and the VM's outbox", () => {
+  const golden = "g".repeat(64);
+  test("after the new worker token, the VM gets the node's ingest address and its own ingest token", async () => {
+    process.env.FLEET_NODE_PUBLIC_URL = "https://hub.tail1234.ts.net:8786/";
+    try {
+      const s = store({ "exe-worker-gold": golden });
+      const calls: Call[] = [];
+      const deps = { vmToken: async () => "proxy-new", fetch: fakeFetch(() => Response.json({ ok: true, message: "ok" }), calls), read: s.read, write: s.write, random: () => "n".repeat(64) };
+      expect((await adoptVoyageVm("v1", "gold", deps)).ok).toBe(true);
+      expect(calls.map((c) => c.url)).toEqual(["https://v1.exe.xyz:8790/host/token", "https://v1.exe.xyz:8790/host/ingest-config"]);
+      const ingest = calls[1]!;
+      // Sent with the worker token it just got, through the VM's proxy token.
+      expect(ingest.headers.Authorization).toBe(`Bearer ${"n".repeat(64)}`);
+      expect(ingest.headers["X-Exedev-Authorization"]).toBe("Bearer proxy-new");
+      const sent = JSON.parse(ingest.body) as { url: string; token: string; source: string };
+      expect(sent).toMatchObject({ url: "https://hub.tail1234.ts.net:8786/v1/ingest", source: "v1" });
+      expect(sent.token).toMatch(/^[0-9a-f]{64}$/);
+      expect(s.m.get("ingest-v1")).toBe(sent.token);
+      expect(sent.token).not.toBe(s.m.get("exe-worker-v1"));
+    } finally {
+      delete process.env.FLEET_NODE_PUBLIC_URL;
+    }
+  });
+  test("a VM that does not take the ingest settings still sails", async () => {
+    process.env.FLEET_NODE_PUBLIC_URL = "https://hub.tail1234.ts.net:8786";
+    try {
+      const s = store({ "exe-worker-gold": golden });
+      let n = 0;
+      const deps = { vmToken: async () => "proxy-new", fetch: fakeFetch(() => (n++ ? new Response("no", { status: 500 }) : Response.json({ ok: true }))), read: s.read, write: s.write };
+      expect((await adoptVoyageVm("v1", "gold", deps)).ok).toBe(true);
+    } finally {
+      delete process.env.FLEET_NODE_PUBLIC_URL;
+    }
+  });
+});
+
+describe("ensureIngest", () => {
+  const send = (log: unknown[], ok = true) => async (cfg: unknown) => (log.push(cfg), ok);
+  test("makes the worker's token once, then sends the same one again", async () => {
+    const s = store();
+    const log: { url: string; token: string; source: string }[] = [];
+    const deps = { read: s.read, write: s.write, url: "https://hub.ts.net:8786" };
+    expect((await ensureIngest("laptop", send(log), deps)).ok).toBe(true);
+    expect((await ensureIngest("laptop", send(log), deps)).ok).toBe(true);
+    expect(log).toHaveLength(2);
+    expect(log[0]).toMatchObject({ url: "https://hub.ts.net:8786/v1/ingest", source: "laptop" });
+    expect(log[0]!.token).toHaveLength(64);
+    expect(log[1]!.token).toBe(log[0]!.token);
+    expect(s.m.get("ingest-laptop")).toBe(log[0]!.token);
+  });
+  test("no node address, a name that is not a host, a worker that refuses, or a failing send: not ok, nothing thrown", async () => {
+    const s = store();
+    expect((await ensureIngest("laptop", send([]), { read: s.read, write: s.write, url: "" })).ok).toBe(false);
+    expect((await ensureIngest("Bad Name", send([]), { read: s.read, write: s.write, url: "https://h" })).ok).toBe(false);
+    expect((await ensureIngest("laptop", send([], false), { read: s.read, write: s.write, url: "https://h" })).ok).toBe(false);
+    expect((await ensureIngest("laptop", async () => { throw new Error("down"); }, { read: s.read, write: s.write, url: "https://h" })).ok).toBe(false);
+    expect((await ensureIngest("laptop", send([]), { read: store().read, write: async () => false, url: "https://h" }))).toMatchObject({ ok: false });
+  });
+});
+
 describe("forgetVoyageVm", () => {
+  test("deletes the VM's tokens, ingest token included", async () => {
+    const s = store({ "exe-vm-v1": "a", "exe-worker-v1": "b", "ingest-v1": "i", "ingest-v2": "j", "exe-worker-v2": "c" });
+    expect(await forgetVoyageVm("v1", { remove: s.remove })).toBe(true);
+    expect([...s.m.keys()].sort()).toEqual(["exe-worker-v2", "ingest-v2"]);
+  });
   test("deletes both tokens", async () => {
     const s = store({ "exe-vm-v1": "a", "exe-worker-v1": "b", "exe-worker-v2": "c" });
     expect(await forgetVoyageVm("v1", { remove: s.remove })).toBe(true);

@@ -11,8 +11,9 @@
  * - /host/*           this laptop as a ship host for voyages sailed here (lib/hosted.ts decides
  *                     what the hub may run; lib/laptop-host.ts is the hub's side):
  *   GET  /host/ships   {ships: [{id, path}]}
- *   POST /host/exec    {cmd, cwd, timeoutMs} → {stdout, stderr, exitCode, timedOut, ms}
+ *   POST /host/exec    {cmd, cwd, timeoutMs, run?} → {stdout, stderr, exitCode, timedOut, ms}; with `run` (the hub's descriptor of a check) the result is also queued in the outbox
  *   POST /host/memory  {put: {relpath: text}} or {ship, agents} → {files}
+ *   POST /host/ingest-config {url, token, source} → {ok, message}: where this worker sends its outbox (the hub's /v1/ingest) and the token for it
  *   POST /host/token   {token} → {ok, message}: replace this worker's token (the hub rotates a VM's, copied from its golden VM)
  *   POST /host/env-store {ship, files: {relpath: text}} → {ok, message, written}: files into this machine's rig env store (a golden VM's, from the hub)
  *   POST /host/rig-env {cwd} → {ok, message}: a ship's rig env files from this machine's store into a worktree
@@ -40,7 +41,7 @@ import { runQuotaAxi } from "./lib/quota.ts";
 import { firstmateTuiReachable, sendToFirstmateTui } from "./lib/firstmate-chat.ts";
 import { agentKeyEnv } from "./lib/fleet-env.ts";
 import { freeSlot, helperDefs, runHelperHere, shotUrls, takeShots, takeSlot, type HelperResult } from "./lib/helpers.ts";
-import { chownAfter, commandRefusal, getMemory, hostedExecEnv, hostedRigEnv, hostedShips, prepareHostedLaunch, putEnvStore, putMemory, shipForFolder, type LaunchContext } from "./lib/hosted.ts";
+import { chownAfter, commandRefusal, getMemory, hostedExecEnv, hostedRigEnv, hostedShips, ingestLoop, prepareHostedLaunch, putEnvStore, putMemory, queueRun, setIngestConfig, shipForFolder, type LaunchContext } from "./lib/hosted.ts";
 import { ROOT } from "./lib/paths.ts";
 import { spawnTimed } from "./lib/proc.ts";
 import { readSecret, writeSecret } from "./lib/secret-store.ts";
@@ -120,9 +121,12 @@ async function hostHelper(req: Request, shots: Gate): Promise<Response> {
   return Response.json({ ok: true, id });
 }
 
+/** Sends this machine's outbox to the hub (lib/outbox.ts); started with the server below. */
+const outbox = ingestLoop();
+
 /** POST /host/exec: a command the hub may run here (lib/hosted.ts), in a ship's repo or worktree. */
 async function hostExec(req: Request): Promise<Response> {
-  const b = (await req.json().catch(() => ({}))) as { cmd?: unknown; cwd?: unknown; timeoutMs?: unknown; rig?: unknown };
+  const b = (await req.json().catch(() => ({}))) as { cmd?: unknown; cwd?: unknown; timeoutMs?: unknown; rig?: unknown; run?: unknown };
   const cmd = Array.isArray(b.cmd) ? b.cmd.map(String) : [];
   const cwd = String(b.cwd ?? "");
   const ship = await shipForFolder(cwd, await hostedShips());
@@ -136,6 +140,8 @@ async function hostExec(req: Request): Promise<Response> {
   if (chownAfter(cmd, process.env.FLEET_WORKER_KIND) && process.getuid && process.getgid) {
     await spawnTimed(["sudo", "-n", "chown", "-R", `${process.getuid()}:${process.getgid()}`, cwd], { timeoutMs: 30_000 }).catch(() => {});
   }
+  // A check the hub also records itself: keep this copy too, so a lost answer (the hub restarted, the link dropped) loses nothing.
+  if (b.run !== undefined && queueRun(b.run, ship!, result)) outbox.kick();
   return Response.json(result);
 }
 
@@ -216,6 +222,7 @@ if (import.meta.main) {
   const beyondLoopback = Boolean(process.env.FLEET_WORKER_HOST);
   let token = await readSecret(secretName);
   const shots = new Gate(MAX_JOBS);
+  outbox.start();
   Bun.serve<RpcSocket>({
     hostname: process.env.FLEET_WORKER_HOST || "127.0.0.1",
     port: PORT,
@@ -259,6 +266,11 @@ if (import.meta.main) {
         if (!(await writeSecret(secretName, b.token))) return Response.json({ ok: false, message: "could not store the token" }, { status: 500 });
         token = b.token;
         return Response.json({ ok: true, message: "worker token replaced" });
+      }
+      if (path === "/host/ingest-config" && req.method === "POST") {
+        const r = await setIngestConfig(await req.json().catch(() => ({})));
+        if (r.ok) outbox.kick();
+        return Response.json(r, { status: r.ok ? 200 : 400 });
       }
       if (path === "/host/rig-env" && req.method === "POST") {
         const b = (await req.json().catch(() => ({}))) as { cwd?: unknown };

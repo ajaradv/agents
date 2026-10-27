@@ -181,21 +181,49 @@ export function roleOf(agent: string, ship?: string): string {
   return ship && agent.startsWith(`${ship}-`) ? agent.slice(ship.length + 1) : agent;
 }
 
-export function recordTurn(t: { eventKey?: string; agent: string; ship?: string; model?: string; ok: boolean; ms: number; cost?: number; tokens?: number; cacheRead?: number; prompt?: number; error?: string }): void {
-  safely(() => {
-    const ship = t.ship ?? "";
-    metricsDb()
-      .query("INSERT INTO turns (event_key, project_id, ts, agent, role, ship, voyage, model, mode, ok, ms, cost, tokens, cache_read, prompt, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING")
-      .run(t.eventKey ?? ulid(), ship || OFFICER_PROJECT, now(), t.agent, roleOf(t.agent, ship), ship, openVoyageId(ship), t.model ?? "", ship ? shipMode(ship) : "host", t.ok ? 1 : 0, Math.round(t.ms), t.cost ?? 0, t.tokens ?? 0, t.cacheRead ?? 0, t.prompt ?? 0, (t.error ?? "").slice(0, 300));
-  });
+type TurnIn = { eventKey?: string; agent: string; ship?: string; model?: string; ok: boolean; ms: number; cost?: number; tokens?: number; cacheRead?: number; prompt?: number; error?: string };
+type RunIn = { eventKey?: string; ship: string; agent: string; kind: "check" | "maneuver"; name: string; ok: boolean; ms: number; cost?: number; deterministic?: boolean; detail?: string; commit?: string; dirty?: boolean };
+type HandoffIn = { eventKey?: string; ship: string; from: string; to?: string; kind: string; size?: number };
+
+// The inserts are shared with the node's ingest (lib/ingest.ts): they return the rows added (0 for a replayed event_key).
+const insertTurn = (db: Database, t: TurnIn, ts: string): number => {
+  const ship = t.ship ?? "";
+  return db
+    .query("INSERT INTO turns (event_key, project_id, ts, agent, role, ship, voyage, model, mode, ok, ms, cost, tokens, cache_read, prompt, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING")
+    .run(t.eventKey ?? ulid(), ship || OFFICER_PROJECT, ts, t.agent, roleOf(t.agent, ship), ship, openVoyageId(ship), t.model ?? "", ship ? shipMode(ship) : "host", t.ok ? 1 : 0, Math.round(t.ms), t.cost ?? 0, t.tokens ?? 0, t.cacheRead ?? 0, t.prompt ?? 0, (t.error ?? "").slice(0, 300)).changes;
+};
+
+const insertRun = (db: Database, r: RunIn, ts: string): number =>
+  db
+    .query("INSERT INTO runs (event_key, project_id, ts, ship, voyage, agent, kind, name, deterministic, ok, ms, cost, detail, commit_sha, dirty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING")
+    .run(r.eventKey ?? ulid(), r.ship || OFFICER_PROJECT, ts, r.ship, openVoyageId(r.ship), r.agent, r.kind, r.name, r.deterministic === false ? 0 : 1, r.ok ? 1 : 0, Math.round(r.ms), r.cost ?? 0, (r.detail ?? "").slice(0, 300), r.commit ?? "", r.dirty ? 1 : 0).changes;
+
+const insertHandoff = (db: Database, h: HandoffIn, ts: string): number =>
+  db
+    .query("INSERT INTO handoffs (event_key, project_id, ts, ship, voyage, from_agent, to_agent, kind, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING")
+    .run(h.eventKey ?? ulid(), h.ship || OFFICER_PROJECT, ts, h.ship, openVoyageId(h.ship), h.from, h.to ?? "", h.kind, h.size ?? 0).changes;
+
+export function recordTurn(t: TurnIn): void {
+  safely(() => void insertTurn(metricsDb(), t, now()));
 }
 
-export function recordRun(r: { eventKey?: string; ship: string; agent: string; kind: "check" | "maneuver"; name: string; ok: boolean; ms: number; cost?: number; deterministic?: boolean; detail?: string; commit?: string; dirty?: boolean }): void {
-  safely(() =>
-    metricsDb()
-      .query("INSERT INTO runs (event_key, project_id, ts, ship, voyage, agent, kind, name, deterministic, ok, ms, cost, detail, commit_sha, dirty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING")
-      .run(r.eventKey ?? ulid(), r.ship || OFFICER_PROJECT, now(), r.ship, openVoyageId(r.ship), r.agent, r.kind, r.name, r.deterministic === false ? 0 : 1, r.ok ? 1 : 0, Math.round(r.ms), r.cost ?? 0, (r.detail ?? "").slice(0, 300), r.commit ?? "", r.dirty ? 1 : 0),
-  );
+export function recordRun(r: RunIn): void {
+  safely(() => void insertRun(metricsDb(), r, now()));
+}
+
+/**
+ * Rows a worker recorded (lib/ingest.ts), each with its own event_key and
+ * time, in one transaction. A key already present adds nothing: `duplicates`.
+ */
+export function ingestMetrics(table: "turns" | "runs" | "handoffs", rows: { ts: string; row: TurnIn | RunIn | HandoffIn }[]): { accepted: number; duplicates: number } {
+  const db = metricsDb();
+  let accepted = 0;
+  db.transaction(() => {
+    for (const { ts, row } of rows) {
+      accepted += table === "turns" ? insertTurn(db, row as TurnIn, ts) : table === "runs" ? insertRun(db, row as RunIn, ts) : insertHandoff(db, row as HandoffIn, ts);
+    }
+  }).immediate();
+  return { accepted, duplicates: rows.length - accepted };
 }
 
 /** The latest run of a check on a commit (clean tree only), or null. */
@@ -207,12 +235,8 @@ export function latestRunOn(ship: string, name: string, commit: string): { ok: b
   return r ? { ok: r.ok === 1, ts: r.ts, detail: r.detail } : null;
 }
 
-export function recordHandoff(h: { eventKey?: string; ship: string; from: string; to?: string; kind: string; size?: number }): void {
-  safely(() =>
-    metricsDb()
-      .query("INSERT INTO handoffs (event_key, project_id, ts, ship, voyage, from_agent, to_agent, kind, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING")
-      .run(h.eventKey ?? ulid(), h.ship || OFFICER_PROJECT, now(), h.ship, openVoyageId(h.ship), h.from, h.to ?? "", h.kind, h.size ?? 0),
-  );
+export function recordHandoff(h: HandoffIn): void {
+  safely(() => void insertHandoff(metricsDb(), h, now()));
 }
 
 export type VoyageLedger = {

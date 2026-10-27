@@ -48,6 +48,18 @@ describe("request guard", () => {
     expect(requestRefusal(req(h, "POST"), 8787)).toBe("unknown host");
     expect(requestRefusal(req(h), 8787)).toBe("unknown host");
   });
+  test("a tagged device with an ingest token passes on the node for /v1/ingest only; the dashboard still refuses it", () => {
+    const at = (path: string, headers: Record<string, string>, method = "POST") => new Request(`http://127.0.0.1:8786${path}`, { method, headers });
+    const h = { host: `${TS}:8786`, "x-fleet-ingest-token": "tok" };
+    const node = { tagged: true };
+    expect(requestRefusal(at("/v1/ingest", h), 8786, node)).toBeNull();
+    expect(requestRefusal(at("/v1/state", h, "GET"), 8786, node)).toBe("unknown host");
+    expect(requestRefusal(at("/api/crew/fleet/check", h), 8786, node)).toBe("unknown host");
+    expect(requestRefusal(at("/v1/ingest", { host: `${TS}:8786` }), 8786, node)).toBe("unknown host");
+    expect(requestRefusal(at("/v1/ingest", { ...h, "x-fleet-ingest-token": " " }), 8786, node)).toBe("unknown host");
+    expect(requestRefusal(at("/v1/ingest", { host: TS, "x-fleet-ingest-token": "tok" }), 8787)).toBe("unknown host");
+    expect(requestRefusal(at("/v1/ingest", { ...h, origin: "https://evil.example" }), 8786, node)).toBe("cross-origin request");
+  });
   test("a user request with a login still passes, token or not", () => {
     const h = { host: TS, "tailscale-user-login": "captain@example.com" };
     expect(requestRefusal(req(h, "POST"), 8787)).toBeNull();
