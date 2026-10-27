@@ -4,7 +4,14 @@ export type SpawnResult = {
   exitCode: number;
   timedOut: boolean;
   ms: number;
+  /** A worker host never answered (the link dropped): the command may still have run there. */
+  unreachable?: boolean;
 };
+
+/** How a finished check reads in the ship log and the runs table (the hub's and a worker's copy must agree). */
+export function checkVerdict(res: Pick<SpawnResult, "timedOut" | "exitCode">, secs: number): string {
+  return res.timedOut ? `timed out after ${secs}s` : res.exitCode === 0 ? `passed in ${secs}s` : `failed (exit ${res.exitCode}) in ${secs}s`;
+}
 
 function killTree(pid: number): void {
   try {

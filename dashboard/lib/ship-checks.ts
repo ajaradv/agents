@@ -2,11 +2,13 @@ import { existsSync } from "node:fs";
 import { jevAsk } from "./jev.ts";
 import { redact } from "./redact.ts";
 import { readShips } from "./fleet-layers.ts";
+import { checkVerdict } from "./proc.ts";
 import { localHost, type ShipHost } from "./ship-host.ts";
 import { recordRun } from "./metrics.ts";
 import { ROOT } from "./paths.ts";
 import { rigEnv } from "./rig.ts";
 import { logShipEvent } from "./ship-log.ts";
+import { ulid } from "./ulid.ts";
 import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 
 /**
@@ -74,7 +76,7 @@ export function checkShell(host: ShipHost, has = existsSync): string {
   return has("/bin/zsh") ? "/bin/zsh" : "/bin/bash";
 }
 
-export async function runCheck(shipId: string, from: string, name: string): Promise<{ ok: boolean; message: string }> {
+export async function runCheck(shipId: string, from: string, name: string, deps: { host?: ShipHost } = {}): Promise<{ ok: boolean; message: string }> {
   const ship = (await readShips()).find((s) => s.id === shipId);
   if (!ship) return { ok: false, message: `No ship ${shipId}.` };
   const names = Object.keys(ship.checks);
@@ -90,21 +92,26 @@ export async function runCheck(shipId: string, from: string, name: string): Prom
     // A login shell, so the captain's PATH (just, docker, uv) resolves as in a terminal.
     // On the voyage's ship host (lib/ship-host.ts), where the worktree is.
     const cwd = voyageWorktree(shipId)?.path ?? ship.path;
-    const host = voyageHost(shipId);
+    const host = deps.host ?? voyageHost(shipId);
     // What code this run checks: gates count only runs on the current commit with a clean tree.
     const { commit, dirty } = await treeState(cwd, host);
     // FLEET_SHIP_REPO: the captain's checkout on that host, for gitignored setup a fresh worktree lacks (.envs).
     const repo = await host.repoPath(ship).catch(() => ship.path);
     // The voyage's rig (lib/rig.ts): its Compose project and port, so checks hit the voyage's own stack.
     const rig = rigEnv(ship.rig, voyageWorktree(shipId)?.rig, shipId);
-    const res = await host.exec([checkShell(host), "-lc", cmd], { timeoutMs: name === "rig" ? RIG_TIMEOUT_MS : TIMEOUT_MS, cwd, env: { ...process.env, CI: "1", FLEET_SHIP_REPO: repo, FLEET_AGENTS: ROOT, ...rig } });
+    // On a worker the run has a key the worker queues its own record under (lib/outbox.ts): if the answer is lost, its copy
+    // reaches the hub's ingest later; whichever record lands second is a duplicate.
+    const eventKey = host.kind === "local" ? undefined : ulid();
+    const run = eventKey ? { event_key: eventKey, ship: shipId, agent: from, name, kind: "check" as const, commit, dirty } : undefined;
+    const res = await host.exec([checkShell(host), "-lc", cmd], { timeoutMs: name === "rig" ? RIG_TIMEOUT_MS : TIMEOUT_MS, cwd, env: { ...process.env, CI: "1", FLEET_SHIP_REPO: repo, FLEET_AGENTS: ROOT, ...rig }, ...(run ? { run } : {}) });
     const secs = Math.round((Date.now() - started) / 1000);
     const passed = !res.timedOut && res.exitCode === 0;
-    const verdict = res.timedOut ? `timed out after ${secs}s` : passed ? `passed in ${secs}s` : `failed (exit ${res.exitCode}) in ${secs}s`;
+    const verdict = checkVerdict(res, secs);
     logShipEvent(shipId, from, "check", `Check ${name} ${verdict}`, { name, exitCode: res.exitCode, timedOut: res.timedOut, secs });
-    recordRun({ ship: shipId, agent: from, kind: "check", name, ok: passed, ms: Date.now() - started, detail: verdict, commit, dirty });
+    // No answer from a worker says nothing about the check (it may be running or done there): its own record is the truth, so none from here.
+    if (!res.unreachable) recordRun({ eventKey, ship: shipId, agent: from, kind: "check", name, ok: passed, ms: Date.now() - started, detail: verdict, commit, dirty });
     const out = tail(`${res.stdout}${res.stderr ? `\n${res.stderr}` : ""}`.trim());
-    const triage = !passed && !res.timedOut && out ? await triageFailure(name, cmd, out).catch(() => null) : null;
+    const triage = !passed && !res.timedOut && !res.unreachable && out ? await triageFailure(name, cmd, out).catch(() => null) : null;
     if (triage) logShipEvent(shipId, "helm", "check", `Check ${name}: ${triage}`, { name });
     return { ok: passed, message: `Check ${name} (${cmd}) ${verdict}.${triage ? `\n${triage}` : ""}\n\n${out || "(no output)"}` };
   } finally {

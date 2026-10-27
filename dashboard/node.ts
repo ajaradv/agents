@@ -18,6 +18,7 @@ import { cursorAtEnd, decodeCursor, encodeCursor, eventsAfter, sseFrame, streamS
 import { crewAddTask, crewCanvas, crewDockRequest, crewQueueRequest, crewHelper, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
 import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
+import { handleIngest } from "./lib/ingest.ts";
 import { backupsJob } from "./lib/backups.ts";
 import { exeIdleJob, refreshGoldens } from "./lib/exe-pool.ts";
 import { startRoutines, type Routine } from "./lib/routines.ts";
@@ -73,6 +74,7 @@ import { OFFICER_SHIP } from "./lib/ship-events.ts";
  *   POST /v1/answer          { agentId, dialogId, value?, confirmed?, cancelled? }
  *   POST /v1/abort|stop|new-session  { agentId }
  *   POST /v1/refresh-targets after crew changes
+ *   POST /v1/ingest          { source, events }  what a worker recorded offline; node token or a worker's ingest token (docs/metrics.md)
  * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers|check|vm|helm|look|helper|canvas|...>
  * Bus API (extensions/bus.ts, any agent's token): POST /api/bus/post, GET /api/bus/read
  * Fleet API (extensions/fleet.ts, officers' crew token): GET /api/fleet/<status|log|tasks|maneuvers|chat>, POST /api/fleet/chat
@@ -565,6 +567,8 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   if (crew) return crewApi(req, crew[1]!, crew[2]!, crew[3]);
 
   if (!path.startsWith("/v1/")) return new Response("not found", { status: 404 });
+  // Workers' outboxes (lib/ingest.ts): the node token or the worker's own ingest token, so it checks before the token gate.
+  if (path === "/v1/ingest") return handleIngest(req, { nodeToken: token });
   const auth = req.headers.get("authorization") ?? "";
   if (!tokenMatches(auth.replace(/^Bearer\s+/i, ""), token)) return new Response("unauthorized", { status: 401 });
 

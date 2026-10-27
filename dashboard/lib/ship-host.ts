@@ -19,7 +19,10 @@ import { spawnTimed, type SpawnResult } from "./proc.ts";
 
 export type HostKind = "local" | "laptop" | "vm";
 
-export type ExecOpts = { timeoutMs: number; cwd?: string; env?: Record<string, string | undefined>; stdin?: string };
+/** A check run the hub will record itself: a worker queues its own copy under the same event_key (lib/outbox.ts), so a lost answer loses nothing. */
+export type RunDescriptor = { event_key: string; ship: string; agent: string; name: string; kind: "check"; commit?: string; dirty?: boolean };
+
+export type ExecOpts = { timeoutMs: number; cwd?: string; env?: Record<string, string | undefined>; stdin?: string; run?: RunDescriptor };
 
 /** A crewmate's pi in RPC mode: JSON lines in on stdin, events out on stdout. */
 export type RpcProc = {
@@ -48,6 +51,8 @@ export interface ShipHost {
   repoPath(ship: { id: string; path: string }): Promise<string>;
   /** Start `bin/launch rpc <agent>` on this host with the given environment added. */
   launchRpc(agentId: string, env: Record<string, string>, ctx: LaunchCtx): RpcProc;
+  /** Tell a worker where to send its outbox (lib/outbox.ts) and the token that authorizes it; false when it did not accept. */
+  ingestConfig?(cfg: { url: string; token: string; source: string }): Promise<boolean>;
   /** A remote host keeps crew memory itself: the hub sends it at voyage start (relative paths under the inbox)... */
   putMemory?(files: Record<string, string>): Promise<void>;
   /** ...and reads it back at dock or when the voyage moves. */

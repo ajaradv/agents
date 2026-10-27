@@ -18,7 +18,8 @@
  * A rebinding page cannot fake it: it cannot make a ts.net name point here.
  * Tagged devices (the exe.dev voyage VMs) get no login header from Serve. Only
  * the node admits them (`tagged: true`), and only with an X-Fleet-Crew-Token
- * header: every node route checks its token itself (crew routes the crew token,
+ * header (or, for POST /v1/ingest only, X-Fleet-Ingest-Token, the worker's own
+ * token for its outbox): every node route checks its token itself (crew routes the crew token,
  * /v1 the node token), and a web page cannot add a custom header cross-site
  * without a CORS preflight, which the node never grants. The dashboard never
  * admits them: its routes trust this guard alone.
@@ -34,7 +35,9 @@ export function requestRefusal(req: Request, port: number, opts: { tagged?: bool
     // Serve on another port than 443 (the node's :8786, for crew on the laptop) keeps it in Host.
     const tailnet = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.ts\.net(:\d{1,5})?$/.test(host);
     const login = (req.headers.get("tailscale-user-login") ?? "").toLowerCase();
-    const crewToken = opts.tagged ? (req.headers.get("x-fleet-crew-token") ?? "").trim() : "";
+    // An ingest token opens only the ingest route; the others need a crew token as before.
+    const ingest = new URL(req.url).pathname === "/v1/ingest" ? (req.headers.get("x-fleet-ingest-token") ?? "").trim() : "";
+    const crewToken = opts.tagged ? (req.headers.get("x-fleet-crew-token") ?? "").trim() || ingest : "";
     if (!tailnet || (!login && !crewToken)) return "unknown host";
     if (login) {
       const allowed = (process.env.FLEET_TAILNET_USERS ?? "").toLowerCase().split(",").map((x) => x.trim()).filter(Boolean);

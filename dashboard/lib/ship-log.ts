@@ -131,6 +131,22 @@ export function logShipEvent(
   }
 }
 
+/**
+ * Events a worker recorded (lib/ingest.ts) for one ship, in one transaction;
+ * a key already present adds nothing. Returns how many were new.
+ */
+export function insertShipEvents(ship: string, events: { eventKey: string; ts: string; actor: string; kind: string; summary: string; payload: Record<string, unknown> | null }[]): number {
+  const db = open(ship);
+  if (!db) throw new Error(`bad ship id ${ship}`);
+  const q = db.query("INSERT INTO events (event_key, ts, actor, kind, summary, payload_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING");
+  let added = 0;
+  db.transaction(() => {
+    for (const e of events) added += q.run(e.eventKey, e.ts, e.actor, e.kind, e.summary.slice(0, 2000), e.payload ? JSON.stringify(e.payload) : null).changes;
+  }).immediate();
+  if (added) onWrite(ship);
+  return added;
+}
+
 /** Newest first. */
 export function recentShipEvents(ship: string, limit = 80, opts: { root?: string; actor?: string } = {}): ShipEvent[] {
   try {
