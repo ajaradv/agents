@@ -25,6 +25,12 @@ if (cmd === "ls") {
   });
   for (const v of vms) console.log(`${v.vm_name}\t${v.status}\t${v.allocated_cpus ?? "?"} vCPU`);
 } else if (cmd === "golden") {
+  // The golden's tokens are written to this machine's secret store, and voyages are provisioned by the
+  // hub: built anywhere else, the hub cannot adopt its copies (kinwork-golden, 2026-10-27: HTTP 401).
+  if (process.platform !== "linux") {
+    console.error("error: build goldens on the hub, where voyages are provisioned:\n  ssh fleet-hub-k1s7.exe.xyz 'cd ~/Workspace/agents && bin/fleet-exe golden <ship> --rebuild'");
+    process.exit(2);
+  }
   const ship = args.find((a) => !a.startsWith("--"));
   if (!ship || args.some((a) => a.startsWith("--") && a !== "--rebuild")) await usage();
   const r = await buildGolden(ship!, { rebuild: args.includes("--rebuild"), onLog: (l) => console.log(l) });
