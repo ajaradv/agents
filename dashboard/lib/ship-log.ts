@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { addColumn, migrate, type Migration } from "./db-migrate.ts";
-import { fleetInboxRoot } from "./paths.ts";
+import { fleetInboxRoot, realFleet, ROOT } from "./paths.ts";
 import { ulid } from "./ulid.ts";
 
 /**
@@ -81,6 +81,40 @@ const MIGRATIONS: Migration[] = [
 const SHIP_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 const dbs = new Map<string, Database>();
 let onWrite: (ship: string) => void = () => {};
+let reconcileTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * A ship.db the fleet just created should join Litestream within seconds, not
+ * on the next backups routine. Debounced: a burst of new ships is one reconcile.
+ * Tests stay quiet (NODE_ENV=test). Set FLEET_BACKUP_RECONCILE=1 plus
+ * FLEET_BACKUP_RECONCILE_CMD (tab-separated argv) to observe the call, or =0 to
+ * force it off. An explicit root (a fixture, a rig, a test inbox passed in) is
+ * never the hub.
+ */
+function wantReconcile(root: string | undefined): boolean {
+  if (root !== undefined) return false;
+  if (process.env.FLEET_BACKUP_RECONCILE === "0") return false;
+  if (process.env.FLEET_BACKUP_RECONCILE === "1") return true;
+  if (process.env.NODE_ENV === "test") return false;
+  return realFleet();
+}
+
+function scheduleBackupReconcile(): void {
+  if (reconcileTimer) return;
+  const extra = process.env.FLEET_BACKUP_RECONCILE_CMD;
+  const argv = extra ? extra.split("\t") : [join(ROOT, "bin", "fleet-backup"), "reconcile"];
+  const delay = process.env.FLEET_BACKUP_RECONCILE === "1" ? 30 : 2_000;
+  reconcileTimer = setTimeout(() => {
+    reconcileTimer = undefined;
+    try {
+      const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+      void proc.exited.catch(() => {});
+    } catch {
+      /* the backups routine is the backstop when this spawn cannot run */
+    }
+  }, delay);
+  if (process.env.FLEET_BACKUP_RECONCILE !== "1") reconcileTimer.unref?.();
+}
 
 /** Told after every write (the server turns it into an SSE "ship" event). */
 export function onShipLogWrite(fn: (ship: string) => void): void {
@@ -102,11 +136,15 @@ function open(ship: string, root?: string): Database | null {
   let db = dbs.get(key);
   if (!db) {
     const path = shipLogPath(ship, root);
+    const created = !existsSync(path);
     mkdirSync(join(path, ".."), { recursive: true });
     db = new Database(path, { create: true });
-    db.exec("PRAGMA journal_mode = WAL;");
+    // Litestream checkpoints this file. Without a busy timeout those checkpoints
+    // surface as SQLITE_BUSY on the next write.
+    db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     migrate(db, MIGRATIONS, `ship.db (${ship})`);
     dbs.set(key, db);
+    if (created && wantReconcile(root)) scheduleBackupReconcile();
   }
   return db;
 }

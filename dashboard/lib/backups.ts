@@ -6,10 +6,12 @@ import { spawnTimed } from "./proc.ts";
 import { secretsDir } from "./secret-store.ts";
 
 /**
- * The node job `backups` (routines.yaml, every 6h): keeps the hub's Litestream
- * replication honest. On the hub only; there it re-reads the databases on disk
- * (`bin/fleet-backup reconcile`: a new ship's ship.db joins the config and the
- * service restarts) and checks the fleet-litestream service is running.
+ * The node job `backups` (routines.yaml, every 15m): keeps the hub's Litestream
+ * replication honest. On the Linux hub only; there it re-reads the databases on
+ * disk (`bin/fleet-backup reconcile`: a new ship's ship.db joins the config and
+ * the service restarts) and checks the fleet-litestream service is running.
+ * A ship.db the fleet itself creates is reconciled within a few seconds
+ * (lib/ship-log.ts); this job is the backstop.
  *
  * Before the captain has supplied the R2 keys (docs/backups.md) the job says so
  * and reminds at most once a week. A service that is down is reported at most
