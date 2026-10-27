@@ -123,6 +123,10 @@ fi
 if [ "$(readlink "$BIN/pi" 2>/dev/null)" != "$LOCAL/node/bin/pi" ]; then
   ln -sfn "$LOCAL/node/bin/pi" "$BIN/pi"
 fi
+# The standalone install (exe.dev's image ships one) is no longer used; it embeds the old store, so it goes.
+if [ -f "$LOCAL/pi/pi" ] && file -b "$LOCAL/pi/pi" | grep -q ELF; then
+  rm -rf "$LOCAL/pi"
+fi
 mkdir -p "$HOME/.pi/agent/npm"
 if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-cursor-sdk" ]; then
   (cd "$HOME/.pi/agent/npm" && [ -f package.json ] || echo '{"name":"pi-extensions","private":true}' > package.json; npm install --silent "${PI_EXTENSIONS[@]}" >/dev/null)
