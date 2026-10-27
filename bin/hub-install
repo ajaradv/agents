@@ -17,9 +17,12 @@
 #   for backups (bin/fleet-backup).
 set -euo pipefail
 
-BUN_VERSION=1.4.0
-NODE_VERSION=25.1.0
-PI_VERSION=1.3.0
+# Trust stores (2026-10-26, eMudhra intermediate CA compromise): Bun 1.4.4 and Node 24.22.1 ship
+# root stores without emSign ECC Root CA - G3 (Bun <= 1.4.3, pi's standalone binary, and Node 25
+# still trust it). bin/trust-audit checks every store on a machine.
+BUN_VERSION=1.4.4
+NODE_VERSION=24.22.1
+PI_VERSION=1.4.0
 TREEHOUSE_VERSION=2.3.0
 HERDR_VERSION=0.9.5
 LITESTREAM_VERSION=0.3.13
@@ -107,9 +110,14 @@ if [ "$(ver node --version)" != "v$NODE_VERSION" ]; then
   rm -rf "$LOCAL/node" && mkdir -p "$LOCAL/node" && tar -xJf /tmp/node.tar.xz -C "$LOCAL/node" --strip-components=1 && rm -f /tmp/node.tar.xz /tmp/node.sums
 fi
 
-step "pi $PI_VERSION and its extensions"
-if [ "$(ver pi --version)" != "$PI_VERSION" ]; then
+step "pi $PI_VERSION (npm, on Node) and its extensions"
+# pi from npm runs on the Node above and uses its patched root store. pi's standalone binary
+# (pi.dev/install.sh, ~/.local/pi) embeds an older Bun's store, so ~/.local/bin/pi points at npm's.
+if [ "$(ver "$LOCAL/node/bin/pi" --version)" != "$PI_VERSION" ]; then
   npm install -g --silent "@earendil-works/pi-coding-agent@$PI_VERSION" >/dev/null
+fi
+if [ "$(readlink "$BIN/pi" 2>/dev/null)" != "$LOCAL/node/bin/pi" ]; then
+  ln -sfn "$LOCAL/node/bin/pi" "$BIN/pi"
 fi
 mkdir -p "$HOME/.pi/agent/npm"
 if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-cursor-sdk" ]; then

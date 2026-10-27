@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# trust-audit - which trust stores on this machine still hold the roots behind the eMudhra
+# intermediate CA compromise (2026-10-17): the system bundle, Node's and Bun's built-in stores,
+# pi's binary, and every certifi bundle. Read-only; prints one line per store.
+#
+# Usage:
+#   bin/trust-audit           audit this machine (Linux or macOS)
+#
+# A store is "clean" when none of the four roots is in it. Fixes: newer Bun/Node (bin/hub-install
+# pins), ca-certificates from the OS, certifi >= 2026.10.19. Background: vault research note
+# fleet/plans/research/emudhra-ca-compromise.md.
+set -uo pipefail
+[ "${1:-}" = "" ] || { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 2; }
+export PATH="$HOME/.local/bin:$HOME/.local/node/bin:$HOME/.bun/bin:$PATH"
+BAD="86A1ECBA089C4A8D3BBE2734C612BA341D813E043CF9E8A862CD5C57A36BBE6B emSign-ECC-Root-CA-G3
+7DD78D5F4F13459A83DFF9ABBBA62EDBAF6F2D102BF257FD712F4D9F2746ED8D emSign-Root-TLS-CA-G3
+F2EDAAFF3D9B701FB4D14C9F285F8C0BAD90FC3BCC1FA07D47F4718EDABA34A5 emSign-Root-CS-CA-G3
+D7A7A0FB5D7E2731D771E9484EBCDEF71D5F0C3E0A2948782BC83EE0EA699EF4 AAA-Certificate-Services"
+JS='const c=require("crypto"),t=require("tls");let l;try{l=t.getCACertificates("default")}catch{l=t.rootCertificates}process.stdout.write(l.map(p=>new c.X509Certificate(p).fingerprint256.replace(/:/g,"")).join("\n")+"\n")'
+pem_fps() { # PEM bundle file -> SHA-256 fingerprints
+  awk '/BEGIN CERT/{c=""} {c=c $0 "\n"} /END CERT/{printf "%s", c | "openssl x509 -noout -fingerprint -sha256"; close("openssl x509 -noout -fingerprint -sha256")}' "$1" 2>/dev/null | sed 's/.*=//; s/://g'
+}
+report() { # label, fingerprints on stdin
+  local f hits="" n
+  f="$(cat)"; n=$(printf '%s\n' "$f" | grep -c .)
+  while read -r fp name; do printf '%s\n' "$f" | grep -qi "^$fp$" && hits="$hits $name"; done <<<"$BAD"
+  printf '%-64s %4s certs  %s\n' "$1" "$n" "${hits:-clean}"
+  [ -z "$hits" ]
+}
+status=0
+for b in /etc/ssl/certs/ca-certificates.crt /etc/ssl/cert.pem; do [ -f "$b" ] && { pem_fps "$b" | report "system bundle $b" || status=1; }; done
+for n in $(type -ap node | sort -u); do $n -e "$JS" | report "node $($n --version) ($n)" || status=1; done
+for b in $(type -ap bun | sort -u); do $b -e "$JS" | report "bun $($b --version) ($b)" || status=1; done
+for p in "$HOME/.local/pi/pi" $(type -ap pi | sort -u); do
+  [ -f "$p" ] && file -b "$(readlink -f "$p")" | grep -q ELF && { BUN_BE_BUN=1 "$p" -e "$JS" 2>/dev/null | report "pi binary $(readlink -f "$p")" || status=1; }
+done
+while IFS= read -r p; do pem_fps "$p" | report "certifi ${p/#$HOME/~}" || status=1; done < <(find "$HOME" /usr/lib/python3* /usr/local/lib /opt/homebrew/lib -name cacert.pem -path "*certifi*" -not -path "*/.cache/*" 2>/dev/null | sort -u)
+command -v python3 >/dev/null && echo "python3 certifi.where(): $(python3 -c 'import certifi; print(certifi.where())' 2>/dev/null || echo 'no certifi')"
+exit $status
