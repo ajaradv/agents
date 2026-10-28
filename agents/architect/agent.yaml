@@ -38,3 +38,6 @@ authority:
     - spawn
 # Conversation mode voice (Gemini Live prebuilt voice; clear; matches bm_george).
 live_voice: Iapetus
+# No globally installed skills (AWS, archify, ...): they cost about 7k tokens a turn
+# and no part of this role uses them. Repo skills come from skill_paths.
+discover_skills: false
