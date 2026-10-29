@@ -8,6 +8,7 @@
 //   bin/fleet-axi status [--detail]    the fleet: ships, voyages, crews, spend today
 //   bin/fleet-axi ship <id> [--log N]  a ship's voyage tasks and its latest log lines
 //   bin/fleet-axi vault [filter] [--id <task>]   vault tasks (ready, open, in-progress, blocked, done, all)
+//   bin/fleet-axi next [--id <task>]   what is left on the active vault tasks (their Done-when checklists)
 //   bin/fleet-axi jev [--days N]       Jev calls and spend per use, and the compaction advisor
 //   bin/fleet-axi gate [--days N]      tool gate decisions
 //   bin/fleet-axi setup hooks          opt in: show the summary at the start of Claude Code sessions in this repo
@@ -20,19 +21,20 @@ import { jevSpend } from "../dashboard/lib/jev.ts";
 import { metricsDb } from "../dashboard/lib/metrics.ts";
 import { ROOT } from "../dashboard/lib/paths.ts";
 import { toolText, VIEWS } from "../dashboard/lib/tool-out.ts";
-import { VAULT_FILTERS, vaultTasksReport, type VaultFilter } from "../dashboard/lib/vault-tasks.ts";
+import { linkName, VAULT_FILTERS, vaultNextSteps, vaultTasksReport, type VaultFilter } from "../dashboard/lib/vault-tasks.ts";
 
-const COMMANDS = ["status", "ship", "vault", "jev", "gate", "setup"] as const;
-const FLAGS: Record<string, string[]> = { status: ["--detail"], ship: ["--log"], vault: ["--id"], jev: ["--days"], gate: ["--days"], setup: [], "": ["--brief"] };
+const COMMANDS = ["status", "ship", "vault", "next", "jev", "gate", "setup"] as const;
+const FLAGS: Record<string, string[]> = { status: ["--detail"], ship: ["--log"], vault: ["--id"], next: ["--id"], jev: ["--days"], gate: ["--days"], setup: [], "": ["--brief"] };
 
 const HELP: Record<string, string> = {
   "": `command: fleet-axi
 summary: The fleet from any shell (read-only): ships, voyages, logs, vault tasks, Jev spend, tool gate
-usage: bin/fleet-axi [status|ship|vault|jev|gate|setup] ...
-commands[6]{command,what}:
+usage: bin/fleet-axi [status|ship|vault|next|jev|gate|setup] ...
+commands[7]{command,what}:
   status,"ships, voyages, crews, spend today (--detail for crewmates and officers)"
   ship,"a ship's voyage tasks and log (bin/fleet-axi ship <id> [--log N])"
   vault,"vault tasks by filter: ready (default), open, in-progress, blocked, done, all; --id for one"
+  next,"what is left on the active vault tasks: open Done-when steps, progress, closeable ones (--id for one)"
   jev,"Jev calls and spend per use, and the compaction advisor (--days N)"
   gate,tool gate decisions (--days N)
   setup,"setup hooks: opt in to the summary at the start of Claude Code sessions in this repo"
@@ -45,6 +47,7 @@ examples[3]:
   status: "command: fleet-axi status\nusage: bin/fleet-axi status [--detail]\nflags[2]{flag,description}:\n  --detail,add crewmates' activity and officers\n  --help,show this help\nexamples[2]:\n  bin/fleet-axi status\n  bin/fleet-axi status --detail",
   ship: "command: fleet-axi ship\nusage: bin/fleet-axi ship <id> [--log N]\nflags[2]{flag,default,description}:\n  --log,15,how many log lines\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi ship pochteca\n  bin/fleet-axi ship kinwork --log 40",
   vault: `command: fleet-axi vault\nusage: bin/fleet-axi vault [${VAULT_FILTERS.join("|")}] [--id <task>]\nflags[2]{flag,description}:\n  --id,one task's detail (what it waits on and blocks)\n  --help,show this help\nexamples[3]:\n  bin/fleet-axi vault\n  bin/fleet-axi vault in-progress\n  bin/fleet-axi vault --id fleet-observe-reviews`,
+  next: "command: fleet-axi next\nusage: bin/fleet-axi next [--id <task>]\nsummary: Open Done-when steps of each open or in-progress vault task, so a task note need not be read whole\nflags[2]{flag,description}:\n  --id,only that task\n  --help,show this help\nexamples[2]:\n  bin/fleet-axi next\n  bin/fleet-axi next --id fleet-observe-reviews",
   jev: "command: fleet-axi jev\nusage: bin/fleet-axi jev [--days N]\nflags[2]{flag,default,description}:\n  --days,7,how far back\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi jev\n  bin/fleet-axi jev --days 30",
   gate: "command: fleet-axi gate\nusage: bin/fleet-axi gate [--days N]\nflags[2]{flag,default,description}:\n  --days,1,how far back\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi gate\n  bin/fleet-axi gate --days 7",
   setup: "command: fleet-axi setup\nusage: bin/fleet-axi setup hooks\nsummary: Add a SessionStart hook to .claude/settings.local.json (gitignored) that prints bin/fleet-axi --brief; running it again changes nothing\nflags[1]{flag,description}:\n  --help,show this help\nexamples[1]:\n  bin/fleet-axi setup hooks",
@@ -71,7 +74,7 @@ async function home(brief: boolean): Promise<void> {
     waiting_on_captain: s.needsCaptain?.length ? s.needsCaptain.slice(0, 8) : "0 items",
     vault: ready.message,
     ready: ready.tasks?.length ? ready.tasks.slice(0, brief ? 5 : 8).map((t) => ({ id: t.id, priority: t.priority, title: t.title })) : "0 ready tasks",
-    help: brief ? ["bin/fleet-axi --help"] : ["bin/fleet-axi status --detail", "bin/fleet-axi ship <id>", "bin/fleet-axi vault in-progress", "bin/fleet-axi jev"],
+    help: brief ? ["bin/fleet-axi --help"] : ["bin/fleet-axi status --detail", "bin/fleet-axi ship <id>", "bin/fleet-axi vault in-progress", "bin/fleet-axi next", "bin/fleet-axi jev"],
   };
   console.log(encode(out));
 }
@@ -108,6 +111,14 @@ async function main(): Promise<void> {
     const filter = rest.find((a) => !a.startsWith("--") && a !== id) ?? "ready";
     if (!(VAULT_FILTERS as string[]).includes(filter)) fail(`unknown filter ${filter}`, `filters: ${VAULT_FILTERS.join(", ")}`);
     return void console.log(toolText(vaultTasksReport(filter as VaultFilter, id), VIEWS.vault_tasks));
+  }
+  if (key === "next") {
+    const id = linkName(flag("--id") ?? "");
+    const r = vaultNextSteps();
+    if (!id) return void console.log(encode({ result: r.message, tasks: r.tasks, ...(r.unreadable ? { unreadable: r.unreadable } : {}) }));
+    const t = r.tasks.find((x) => x.id === id);
+    if (!t) fail(`no active vault task ${id}`, `active: ${r.tasks.map((x) => x.id).join(", ") || "none"} (bin/fleet-axi vault all lists every task)`);
+    return void console.log(encode(t));
   }
   if (key === "jev") {
     const days = Math.max(1, Number(flag("--days") ?? 7) || 7);
