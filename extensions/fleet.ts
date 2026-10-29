@@ -145,14 +145,16 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fleet_query",
     label: "Fleet query",
-    description: "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool, with the latest errors. jev: Jev calls and cost per use, and the compaction advisor. gate: tool gate decisions and the notable ones. voyages: open and recent voyages with ship and cost.",
+    description: "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool, with the latest errors. jev: Jev calls and cost per use, and the compaction advisor. gate: tool gate decisions and the notable ones. voyages: open and recent voyages with ship and cost. The window is days back from now, or since/until as YYYY-MM-DD (UTC, both days inclusive) for a fixed range.",
     parameters: Type.Object({
       query: StringEnum(["spend", "tool_failures", "jev", "gate", "voyages"] as const),
-      days: Type.Optional(Type.Number({ description: "How far back, default 7, max 365" })),
+      days: Type.Optional(Type.Number({ description: "How far back, default 7, max 365; ignored when since is given" })),
+      since: Type.Optional(Type.String({ description: "First day, YYYY-MM-DD (UTC, inclusive) or an ISO timestamp" })),
+      until: Type.Optional(Type.String({ description: "Last day, YYYY-MM-DD (UTC, inclusive) or an ISO timestamp; with no since, days back from it" })),
       by: Type.Optional(StringEnum(["agent", "model", "day"] as const, { description: "spend only: how to group it, default agent" })),
     }),
     async execute(_id, p) {
-      return text(await call("GET", "fleet-query", { query: p.query, days: p.days, by: p.by }));
+      return text(await call("GET", "fleet-query", { query: p.query, days: p.days, since: p.since, until: p.until, by: p.by }));
     },
   });
 

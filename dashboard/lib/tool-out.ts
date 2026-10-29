@@ -180,7 +180,7 @@ export const VIEWS: Record<string, View> = {
     },
     cut: { error: 200, call: 100, goal: 60 },
     empty: { by_agent: "0 turns in this window", by_model: "0 turns in this window", by_day: "0 turns in this window", failures_by_tool: "0", latest: "0", uses: "0 calls", compaction_advisor: "0 checks", notable: "0", voyages: "0 voyages" },
-    help: (r) => (Object.keys(r).some((k) => k.startsWith("by_")) ? ["fleet_query query=spend by=agent|model|day; days=N widens the window"] : []),
+    help: (r) => (Object.keys(r).some((k) => k.startsWith("by_")) ? ["fleet_query query=spend by=agent|model|day; days=N widens the window, since/until=YYYY-MM-DD sets a range"] : []),
   },
   vault_note: {
     rows: { headings: ["heading", "bytes"] },

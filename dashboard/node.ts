@@ -413,7 +413,7 @@ function fleetCall(what: string, method: string, q: URLSearchParams, b: Record<s
   if (method === "GET" && what === "chat") return { tool: "agent_chat_read", read: true, args: fromQ(["agent", "n"]) };
   if (method === "GET" && what === "recall") return { tool: "recall", read: true, args: fromQ(["query", "limit"]) };
   if (method === "GET" && what === "vault-tasks") return { tool: "vault_tasks", read: true, args: fromQ(["filter", "id"]) };
-  if (method === "GET" && what === "fleet-query") return { tool: "fleet_query", read: true, args: fromQ(["query", "days", "by"]) };
+  if (method === "GET" && what === "fleet-query") return { tool: "fleet_query", read: true, args: fromQ(["query", "days", "by", "since", "until"]) };
   if (method === "GET" && what === "vault-note") return { tool: "vault_note", read: true, args: fromQ(["path", "section", "full"]) };
   if (method === "GET" && what === "vault-search") return { tool: "vault_search", read: true, args: fromQ(["query", "type", "status", "ship", "path", "limit"]) };
   if (method === "GET" && what === "vault-doctor") return { tool: "vault_doctor", read: true, args: {} };
@@ -488,7 +488,7 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
   else if (call.tool === "ship_tasks") res = await shipTasks(a.ship ?? "");
   else if (call.tool === "ship_maneuvers") res = await shipManeuvers(a.ship ?? "");
   else if (call.tool === "agent_chat_read") res = await agentChatRead(a.agent ?? "", Number(a.n) || 12);
-  else if (call.tool === "fleet_query") res = fleetQuery(a.query ?? "", { days: Number(a.days) || undefined, by: a.by });
+  else if (call.tool === "fleet_query") res = fleetQuery(a.query ?? "", { days: Number(a.days) || undefined, by: a.by, since: a.since, until: a.until });
   else if (call.tool === "vault_note") res = vaultNote(a.path ?? "", { section: a.section, full: a.full === "true" });
   else if (call.tool === "vault_search") res = searchVault({ query: a.query, type: a.type, status: a.status, ship: a.ship, path: a.path, limit: Number(a.limit) || undefined });
   else if (call.tool === "vault_doctor") res = doctorReport(a.fix === "true");

@@ -94,4 +94,38 @@ describe("fleet_query", () => {
     expect(q.fleetQuery("gate", { by: "agent" }).ok).toBe(false);
     expect((q.fleetQuery("spend", { days: -3 }) as unknown as { message: string }).message).toContain("in 1 day(s)"); // clamped
   });
+
+  test("since/until pick a window of whole UTC days, inclusive at both ends", () => {
+    const at = (iso: string, agent: string, cost: number) => m.metricsDb().query("INSERT INTO turns (event_key, project_id, ts, agent, role, ship, model, ok, ms, cost, tokens) VALUES (?, 'flagship', ?, ?, 'r', '', 'm', 1, 10, ?, 100)").run(`w${n++}`, iso, agent, cost);
+    at("2020-10-17T23:59:59.000Z", "before", 1000);
+    at("2020-10-18T00:00:00.000Z", "first", 1);
+    at("2020-10-25T23:59:59.000Z", "last", 2);
+    at("2020-10-26T00:00:00.000Z", "after", 1000);
+    const r = q.fleetQuery("spend", { since: "2020-10-18", until: "2020-10-25", by: "agent", days: 1 }) as unknown as { message: string; by_agent: { agent: string }[] };
+    expect(r.message).toBe("$3.00 over 2 turns, 2020-10-18 to 2020-10-25, by agent");
+    expect(r.by_agent.map((x) => x.agent)).toEqual(["last", "first"]);
+    // until alone looks `days` back from the end of that day; an ISO time is taken as is
+    expect((q.fleetQuery("spend", { until: "2020-10-18", days: 2 }) as unknown as { message: string }).message).toContain("$1001.00 over 2 turns");
+    expect((q.fleetQuery("spend", { since: "2020-10-25T12:00:00Z", until: "2020-10-26T00:00:00Z" }) as unknown as { message: string }).message).toContain("$2.00 over 1 turns");
+  });
+
+  test("the window bounds the other queries too", () => {
+    const d = m.metricsDb();
+    d.query("INSERT INTO jev_calls (ts, use, route, ok, input_tokens, cost, ms, error) VALUES ('2019-03-02T10:00:00Z', 'old-use', 'r', 1, 1, 0.5, 1, ''), ('2019-03-09T10:00:00Z', 'late-use', 'r', 1, 1, 0.5, 1, '')").run();
+    const jev = q.fleetQuery("jev", { since: "2019-03-01", until: "2019-03-05" }) as unknown as { message: string; uses: { use: string }[] };
+    expect(jev.uses.map((u) => u.use)).toEqual(["old-use"]);
+    expect(jev.message).toBe("1 Jev calls, $0.5000, 2019-03-01 to 2019-03-05");
+    d.query("INSERT INTO voyages (id, ship, goal, started, docked) VALUES ('v-w', 's', 'g', '2019-03-02T00:00:00Z', '2019-03-03T00:00:00Z'), ('v-late', 's', 'g', '2019-04-02T00:00:00Z', NULL)").run();
+    const v = q.fleetQuery("voyages", { since: "2019-03-01", until: "2019-03-05" }) as unknown as { voyages: { id: string }[] };
+    expect(v.voyages.map((x) => x.id)).toEqual(["v-w"]);
+    expect((q.fleetQuery("gate", { since: "2019-03-01", until: "2019-03-05" }) as unknown as { message: string }).message).toBe("0 gate decisions, 2019-03-01 to 2019-03-05");
+    expect((q.fleetQuery("tool_failures", { since: "2019-03-01", until: "2019-03-05" }) as unknown as { message: string }).message).toBe("0 tool failure(s), 2019-03-01 to 2019-03-05");
+  });
+
+  test("bad windows are errors that say what is valid", () => {
+    expect(q.fleetQuery("spend", { since: "10-18" })).toMatchObject({ ok: false, message: expect.stringContaining("YYYY-MM-DD") });
+    expect(q.fleetQuery("spend", { until: "2026-02-31" })).toMatchObject({ ok: false, message: expect.stringContaining('until "2026-02-31"') });
+    expect(q.fleetQuery("spend", { since: "2026-10-25", until: "2026-10-18" })).toMatchObject({ ok: false, message: expect.stringContaining("after until") });
+    expect(q.fleetQuery("spend", { since: "2024-01-01", until: "2026-01-01" })).toMatchObject({ ok: false, message: expect.stringContaining("over 365 days") });
+  });
 });

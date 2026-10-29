@@ -33,6 +33,8 @@ export type ChatLine = {
   requestId?: string;
   /** An agent's narration between tool calls (its message ended in a tool call): thinking, hidden unless the captain shows it. */
   step?: boolean;
+  /** Tools the agent used in the turn that ended with this answer (codemode's inner tools by name); omitted when none. */
+  tools?: string[];
 };
 
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,80}$/;
@@ -97,7 +99,7 @@ export async function appendAgentChat(
   agentId: string,
   from: string,
   text: string,
-  opts: { step?: boolean } = {},
+  opts: { step?: boolean; tools?: string[] } = {},
 ): Promise<ChatLine> {
   if (!chatAllowed(agentId)) throw new Error("chat not enabled for agent");
   const line: ChatLine = {
@@ -106,6 +108,7 @@ export async function appendAgentChat(
     kind: "chat",
     text: text.trim(),
     ...(opts.step ? { step: true } : {}),
+    ...(opts.tools?.length ? { tools: opts.tools } : {}),
   };
   if (!line.text) throw new Error("empty message");
   const dir = join(fleetInboxRoot(), agentId);
