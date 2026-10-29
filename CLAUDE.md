@@ -6,3 +6,6 @@
   then `bin/order new --by claude-code`. Details in `docs/orders.md`.
 - **The fleet from a shell**: `bin/fleet-axi` (ships, voyages, vault tasks, Jev, gate); `next` for the remaining steps of the active vault tasks, `query spend|tool_failures|jev|gate|voyages` for fleet numbers, `note` and `search` for the vault.
 - **Tests**: `just test` (the dashboard suite plus the strict typecheck).
+- **Deploying to the hub**: after a merge to main, `bin/hub-deploy` (from the laptop) pulls on the
+  hub, waits for idle agents, restarts fleet-node and fleet-dashboard, and checks both answer;
+  `--check` for a dry run, `--new-session alice` when a role, tools, or the session brief changed.
