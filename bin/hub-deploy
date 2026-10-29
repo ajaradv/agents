@@ -80,6 +80,8 @@ deploy() {
     deps="$(git diff --name-only HEAD origin/main -- package.json bun.lock dashboard/package.json)"
     git pull -q --ff-only origin main
     echo "== pulled to $(git rev-parse --short HEAD)"
+    # Alice's vault skills link into vendor/obsidian-skills (bin/setup-alice-vault).
+    git submodule update -q --init
     if [ -n "$deps" ]; then
       echo "== dependencies changed: bun install"
       bun install --frozen-lockfile
@@ -120,6 +122,14 @@ deploy() {
   done
   [ "$code" = 200 ] || { echo "error: the dashboard answers $code; tail fleet/inbox/.node/dashboard.log" >&2; exit 1; }
   echo "dashboard: up"
+
+  # Agents start from the node with the unit's PATH, not this shell's: check pi runs there.
+  unit_path="$(systemctl show -p Environment --value fleet-node.service | tr ' ' '\n' | sed -n 's/^PATH=//p')"
+  if ! v="$(env -i HOME="$HOME" PATH="$unit_path" pi --version 2>&1)"; then
+    echo "error: pi does not start with fleet-node's PATH ($v); agents will exit 127. bin/hub-install fixes the links" >&2
+    exit 1
+  fi
+  echo "pi: $v on the node's PATH"
 }
 if [ -n "$incoming" ] || [ "$RESTART" = 1 ]; then deploy; fi
 

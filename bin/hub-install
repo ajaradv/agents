@@ -123,6 +123,11 @@ fi
 if [ "$(readlink "$BIN/pi" 2>/dev/null)" != "$LOCAL/node/bin/pi" ]; then
   ln -sfn "$LOCAL/node/bin/pi" "$BIN/pi"
 fi
+# npm's pi starts with "#!/usr/bin/env node", and the fleet's systemd units only have ~/.local/bin on
+# PATH, so node goes there too (2026-10-29: every agent start exited 127 without it).
+for b in node npm npx; do
+  [ "$(readlink "$BIN/$b" 2>/dev/null)" = "$LOCAL/node/bin/$b" ] || ln -sfn "$LOCAL/node/bin/$b" "$BIN/$b"
+done
 # The standalone install (exe.dev's image ships one) is no longer used; it embeds the old store, so it goes.
 if [ -f "$LOCAL/pi/pi" ] && file -b "$LOCAL/pi/pi" | grep -q ELF; then
   rm -rf "$LOCAL/pi"
