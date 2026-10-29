@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# hub-deploy - bring the hub up to date with origin/main and restart the fleet
+# node and dashboard on the new code. Run it from the laptop (it goes over ssh)
+# or on the hub itself.
+#
+# Usage:
+#   bin/hub-deploy            pull main on the hub, wait for idle agents, restart, check health
+#   bin/hub-deploy --check    only show what would change and who is busy
+#   bin/hub-deploy --restart  restart even when there is nothing new to pull
+#   bin/hub-deploy --force    do not wait for busy agents (their turn is cut off)
+#   bin/hub-deploy --new-session alice[,fleet-lead]
+#                             after the restart, start fresh sessions for these agents, so a
+#                             changed role, tools, or session brief loads (memory files carry over)
+#
+# Steps on the hub: refuse tracked local changes or a branch other than main;
+# git pull --ff-only; bun install when package.json or bun.lock changed; wait
+# (up to FLEET_DEPLOY_WAIT seconds, default 300) until no agent is thinking or
+# waiting on a gate; restart fleet-node and fleet-dashboard; wait for both to
+# answer. Agents stop with the node; sessions resume on the next message unless
+# --new-session names them.
+#
+# FLEET_HUB names the ssh host (default fleet-hub-k1s7.exe.xyz).
+set -euo pipefail
+
+HUB="${FLEET_HUB:-fleet-hub-k1s7.exe.xyz}"
+if [ "$(uname)" != Linux ]; then
+  # From the laptop: run this same script on the hub, with the same arguments.
+  exec ssh "$HUB" "bash -s -- $*" <"$0"
+fi
+
+CHECK=0 RESTART=0 FORCE=0 FRESH=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check) CHECK=1 ;;
+    --restart) RESTART=1 ;;
+    --force) FORCE=1 ;;
+    --new-session) FRESH="${2:?--new-session takes agent ids, comma separated}"; shift ;;
+    *) echo "usage: bin/hub-deploy [--check] [--restart] [--force] [--new-session a,b]" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+ROOT="$HOME/Workspace/agents"
+cd "$ROOT"
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
+WAIT="${FLEET_DEPLOY_WAIT:-300}"
+NODE_URL="http://127.0.0.1:${FLEET_NODE_PORT:-8786}"
+DASH_URL="http://127.0.0.1:${DASHBOARD_PORT:-8787}"
+TOKEN_FILE="$ROOT/fleet/inbox/.node/token"
+
+node_get() { curl -fsS --max-time 5 -H "Authorization: Bearer $(cat "$TOKEN_FILE")" "$NODE_URL$1"; }
+# Agents that are mid-turn or held at a gate, one per line ("alice thinking").
+busy() { node_get /v1/state 2>/dev/null | jq -r '.agents | to_entries[] | select(.value.thinking or .value.waiting) | "\(.key) \(if .value.thinking then "thinking" else "waiting on a gate" end)"' || true; }
+
+branch="$(git branch --show-current)"
+[ "$branch" = main ] || { echo "error: the hub is on $branch, not main; switch it by hand" >&2; exit 1; }
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "error: the hub has local changes to tracked files:" >&2
+  git status -s --untracked-files=no >&2
+  exit 1
+fi
+
+git fetch -q origin main
+before="$(git rev-parse --short HEAD)"
+incoming="$(git log --oneline HEAD..origin/main)"
+if [ -n "$incoming" ]; then
+  echo "== new on main ($before -> $(git rev-parse --short origin/main))"
+  echo "$incoming"
+else
+  echo "== the hub is at origin/main ($before)"
+fi
+now_busy="$(busy)"
+[ -n "$now_busy" ] && { echo "== busy now"; echo "$now_busy"; }
+
+if [ "$CHECK" = 1 ]; then exit 0; fi
+if [ -z "$incoming" ] && [ "$RESTART" = 0 ] && [ -z "$FRESH" ]; then echo "nothing to deploy (--restart to restart anyway)"; exit 0; fi
+
+deploy() {
+  if [ -n "$incoming" ]; then
+    deps="$(git diff --name-only HEAD origin/main -- package.json bun.lock dashboard/package.json)"
+    git pull -q --ff-only origin main
+    echo "== pulled to $(git rev-parse --short HEAD)"
+    if [ -n "$deps" ]; then
+      echo "== dependencies changed: bun install"
+      bun install --frozen-lockfile
+    fi
+  fi
+
+  if [ "$FORCE" = 0 ]; then
+    waited=0
+    while b="$(busy)"; [ -n "$b" ]; do
+      if [ "$waited" -ge "$WAIT" ]; then
+        echo "error: still busy after ${WAIT}s; the code is pulled but not running. Re-run, or --force:" >&2
+        echo "$b" >&2
+        exit 1
+      fi
+      [ "$waited" = 0 ] && { echo "== waiting for idle agents (up to ${WAIT}s)"; echo "$b"; }
+      sleep 5
+      waited=$((waited + 5))
+    done
+  fi
+
+  old_pid="$(node_get /v1/health 2>/dev/null | jq -r .pid || true)"
+  echo "== restarting fleet-node and fleet-dashboard"
+  sudo systemctl restart fleet-node.service fleet-dashboard.service
+
+  for _ in $(seq 1 30); do
+    h="$(node_get /v1/health 2>/dev/null || true)"
+    pid="$(jq -r '.pid // empty' <<<"$h" 2>/dev/null || true)"
+    if [ -n "$pid" ] && [ "$pid" != "$old_pid" ]; then break; fi
+    sleep 2
+  done
+  [ -n "${pid:-}" ] && [ "$pid" != "$old_pid" ] || { echo "error: the node did not come back; tail fleet/inbox/.node/node.log" >&2; exit 1; }
+  echo "node: pid $pid, code $(jq -r .version <<<"$h")"
+
+  for _ in $(seq 1 30); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$DASH_URL/" || true)"
+    [ "$code" = 200 ] && break
+    sleep 2
+  done
+  [ "$code" = 200 ] || { echo "error: the dashboard answers $code; tail fleet/inbox/.node/dashboard.log" >&2; exit 1; }
+  echo "dashboard: up"
+}
+if [ -n "$incoming" ] || [ "$RESTART" = 1 ]; then deploy; fi
+
+if [ -n "$FRESH" ]; then
+  IFS=, read -ra ids <<<"$FRESH"
+  for id in "${ids[@]}"; do
+    r="$(curl -sS --max-time 20 -H "Authorization: Bearer $(cat "$TOKEN_FILE")" -H 'Content-Type: application/json' \
+      -d "$(jq -nc --arg a "$id" '{agentId: $a}')" "$NODE_URL/v1/new-session" || echo '{"ok":false,"message":"no answer"}')"
+    echo "new session $id: $(jq -r 'if .ok then (.sessionId // "ok") else "failed: \(.message)" end' <<<"$r")"
+  done
+fi
+echo "done. Other agents resume their sessions on the next message."
