@@ -36,10 +36,15 @@ extra_prompts:
   - prompts/system/sr_opus_5_system_prompt.md
 # Codemode and tool_search: rarely used fleet actions load on demand (lazy
 # tools, FLEET_LAZY_TOOLS), and scripts can batch calls and filter big results
-# so only the answer enters her context.
+# so only the answer enters her context. pi's read-only grep, find and ls are
+# off by default; they are her fallback beside the vault tools (plan
+# alice-memory-and-tools, M1), until bash can go.
 tools:
   - +codemode
   - +tool_search
+  - +grep
+  - +find
+  - +ls
 env:
   FLEET_LAZY_TOOLS: 1
 authority:

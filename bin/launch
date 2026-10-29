@@ -620,10 +620,17 @@ def restrict_keys(agent: dict) -> list[str]:
     return dropped
 
 
+# Session brief cap, a little over dashboard/lib/session-brief.ts BRIEF_CAP (1500 bytes).
+BRIEF_CAP = 1600
+
+
 def memory_block(agent_id: str, inbox: Path) -> str:
     """File-based memory for every assistant: static paths (cache-safe), read on demand."""
     mem = inbox / agent_id / "memory"
     vault = Path(os.environ.get("ALICE_VAULT", "~/Workspace/brain")).expanduser()
+    # The node writes a short brief for agents that have one (dashboard/lib/session-brief.ts); it is already capped there.
+    brief = _read_capped(inbox / agent_id / "brief.md", BRIEF_CAP)
+    brief_block = f"\n### Session brief (the node's last pass; vault_tasks filter=next is live)\n\n{brief}\n" if brief else ""
     return (
         "\n## Memory (files, read on demand)\n\n"
         f"- **Your memory folder:** `{mem}`\n"
@@ -634,6 +641,7 @@ def memory_block(agent_id: str, inbox: Path) -> str:
         f"- **The captain's profile (shared, in the vault):** `{vault / 'fleet' / 'captain.md'}`: preferences and standing instructions. "
         "Read it when a preference matters; Alice keeps it current.\n"
         "Do not paste these files into replies; read them when needed, write them with your file tools.\n"
+        + brief_block
     )
 
 

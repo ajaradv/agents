@@ -109,6 +109,11 @@ export function toolFailureCounts(hours = 24): { agent: string; tool: string; n:
     .all(since) as { agent: string; tool: string; n: number; last: string }[];
 }
 
+/** The newest counted failures since an ISO time, with their errors (fleet_query tool_failures). */
+export function toolFailuresSince(since: string, limit = 8): ToolFailure[] {
+  return db().query("SELECT * FROM tool_failures WHERE ts >= ? AND noise = 0 ORDER BY id DESC LIMIT ?").all(since, limit) as ToolFailure[];
+}
+
 const time = (ts: string) => new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 /** Health: the last day's failures, folded when there are none. */

@@ -36,7 +36,8 @@ async function call(method: "GET" | "POST", what: string, params: Record<string,
     });
     const j = (await res.json()) as Record<string, unknown>;
     // Read tools come back already shaped for an agent (dashboard/lib/tool-out.ts).
-    if (method === "GET") return typeof j.text === "string" ? j.text : JSON.stringify(j, null, 1);
+    if (typeof j.text === "string") return j.text;
+    if (method === "GET") return JSON.stringify(j, null, 1);
     return String(j.message ?? (res.ok ? "done" : "failed"));
   } catch (e) {
     return `The fleet node did not answer (${e instanceof Error ? e.message : String(e)}). Tell the captain.`;
@@ -51,6 +52,9 @@ async function call(method: "GET" | "POST", what: string, params: Record<string,
  */
 const LAZY = process.env.FLEET_LAZY_TOOLS === "1";
 const RARE = LAZY ? ({ exposure: "codemode", namespace: { name: "fleet_actions", description: "Fleet actions that change state (each waits for the captain's Go outside an order)" } } as const) : {};
+
+/** Vault edits: lazy like the fleet actions, but they are Alice's own filing, not the captain's Go. */
+const RARE_VAULT = LAZY ? ({ exposure: "codemode", namespace: { name: "vault_actions", description: "Vault edits: frontmatter fields and checklist items (never career/ or profile/)" } } as const) : {};
 
 /** Every fleet tool can be a step of a running order. */
 const OrderArgs = {
@@ -127,9 +131,9 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "vault_tasks",
     label: "Vault tasks",
-    description: "The captain's vault tasks (tasks/ notes): what is ready to work on (open, waiting on nothing), what waits on what (blocked_by in a note's frontmatter), what is in progress, sorted by priority then age. Notes it cannot read are listed. id=<note name> gives one task's detail.",
+    description: "The captain's vault tasks (tasks/ notes): what is ready to work on (open, waiting on nothing), what waits on what (blocked_by in a note's frontmatter), what is in progress, sorted by priority then age. Notes it cannot read are listed. id=<note name> gives one task's detail; filter=next lists what is left on the active ones.",
     parameters: Type.Object({
-      filter: Type.Optional(StringEnum(["ready", "open", "in-progress", "blocked", "done", "all"] as const)),
+      filter: Type.Optional(StringEnum(["ready", "open", "in-progress", "blocked", "done", "all", "next"] as const, { description: "next: the open Done-when steps of each active task, and which look closeable" })),
       id: Type.Optional(Type.String({ description: "A task's note name, e.g. fleet-tool-standards" })),
       ...OrderArgs,
     }),
@@ -139,9 +143,80 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "fleet_query",
+    label: "Fleet query",
+    description: "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool, with the latest errors. jev: Jev calls and cost per use, and the compaction advisor. gate: tool gate decisions and the notable ones. voyages: open and recent voyages with ship and cost.",
+    parameters: Type.Object({
+      query: StringEnum(["spend", "tool_failures", "jev", "gate", "voyages"] as const),
+      days: Type.Optional(Type.Number({ description: "How far back, default 7, max 365" })),
+      by: Type.Optional(StringEnum(["agent", "model", "day"] as const, { description: "spend only: how to group it, default agent" })),
+    }),
+    async execute(_id, p) {
+      return text(await call("GET", "fleet-query", { query: p.query, days: p.days, by: p.by }));
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_search",
+    label: "Search the vault",
+    description: "Find vault notes by words and/or frontmatter. query matches note sections (with a snippet and the section's heading); type, status, ship, path (a prefix like tasks/, or a glob like fleet/plans/**) filter on frontmatter. Each hit has path, title, summary and the best section. Newest first without a query. Read one with vault_note.",
+    parameters: Type.Object({
+      query: Type.Optional(Type.String({ description: "Words to find; \"quoted phrase\" for exact" })),
+      type: Type.Optional(Type.String({ description: "Frontmatter type, e.g. Task, Plan, Research" })),
+      status: Type.Optional(Type.String({ description: "Frontmatter status, e.g. open, done, accepted" })),
+      ship: Type.Optional(Type.String({ description: "Frontmatter ship, e.g. fleet, kinwork" })),
+      path: Type.Optional(Type.String({ description: "Path prefix (tasks/) or glob (fleet/plans/**)" })),
+      limit: Type.Optional(Type.Number({ description: "Notes, default 8, max 25" })),
+    }),
+    async execute(_id, p) {
+      return text(await call("GET", "vault-search", { query: p.query, type: p.type, status: p.status, ship: p.ship, path: p.path, limit: p.limit }));
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_note",
+    label: "Read a vault note",
+    description: "One vault note without reading the file: compact frontmatter, its summary, and the headings with their sizes. section=<heading> (any case) returns just that section; full=true the whole body, cut at 12 KB. Use it before opening a long note.",
+    parameters: Type.Object({
+      path: Type.String({ description: "Vault-relative path, e.g. fleet/plans/research/alice-memory-and-tools.md" }),
+      section: Type.Optional(Type.String({ description: "A heading to read, e.g. Phases" })),
+      full: Type.Optional(Type.Boolean({ description: "The whole body (cut at 12 KB)" })),
+    }),
+    async execute(_id, p) {
+      return text(await call("GET", "vault-note", { path: p.path, section: p.section, full: p.full ? "true" : undefined }));
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_doctor",
+    label: "Check the vault",
+    description: "Check the vault's notes: frontmatter that does not parse, Task fields, broken links and blocked_by, the task index. Read-only unless fix=true, which only quotes values that break frontmatter (what bin/vault-doctor --fix does). The rest needs judgement: propose it to the captain.",
+    parameters: Type.Object({ fix: Type.Optional(Type.Boolean({ description: "Repair the problems marked fixable" })) }),
+    async execute(_id, p) {
+      return p.fix ? text(await call("POST", "vault-doctor", {}, { fix: true })) : text(await call("GET", "vault-doctor"));
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_patch",
+    ...RARE_VAULT,
+    label: "Patch a vault note",
+    description: "Edit one vault note safely. set: frontmatter fields to replace or add (values may be text, numbers, true/false, lists); YAML stays valid and the rest of the file is untouched. check / uncheck: tick or untick the one checklist item whose text contains the given words (an error lists the candidates when none or several match). Refuses career/ and profile/ (the captain's) and paths outside the vault.",
+    parameters: Type.Object({
+      path: Type.String({ description: "Vault-relative note path" }),
+      set: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Frontmatter fields to set, e.g. {\"status\": \"done\"}" })),
+      check: Type.Optional(Type.String({ description: "Text of the checklist item to tick" })),
+      uncheck: Type.Optional(Type.String({ description: "Text of the checklist item to untick" })),
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "vault-patch", {}, { path: p.path, set: p.set, check: p.check, uncheck: p.uncheck }));
+    },
+  });
+
+  pi.registerTool({
     name: "recall",
     label: "Recall",
-    description: "Full-text search of past fleet talk: every agent's captain thread, helper results, digests, and notices. Use it before asking the captain something they may already have said. Returns snippets with source and time. Not the vault (delegate where=vault for that).",
+    description: "Full-text search of past fleet talk: every agent's captain thread, helper results, digests, and notices. Use it before asking the captain something they may already have said. Returns snippets with source and time. Not the vault (vault_search).",
     parameters: Type.Object({
       query: Type.String({ description: "Words to find; \"quoted phrase\" for exact" }),
       limit: Type.Optional(Type.Number({ description: "Hits, default 8, max 20" })),

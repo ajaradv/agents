@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dueTasks, linkName, readVaultTasks, vaultTasksReport } from "./vault-tasks.ts";
+import { doneWhen, dueTasks, linkName, readVaultTasks, vaultNextReport, vaultNextSteps, vaultTasksReport } from "./vault-tasks.ts";
 
 function vault(notes: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "vault-"));
@@ -56,5 +56,79 @@ describe("vault tasks", () => {
     });
     expect(dueTasks("2026-10-24", v).map((t) => t.id)).toEqual(["late"]);
     expect(dueTasks("2026-10-25", v).map((t) => t.id).sort()).toEqual(["late", "soon"]);
+  });
+});
+
+describe("next steps", () => {
+  const body = [
+    "# Why",
+    "- [ ] stale idea",
+    "## Done when",
+    "- [x] first",
+    "- [ ] **bold** see [[some-note|the note]] and [[plain-link]]",
+    "- [ ] " + "x".repeat(200),
+    "### Detail",
+    "- [ ] nested still counts",
+    "## Later",
+    "- [ ] other",
+  ].join("\n");
+
+  test("doneWhen: section bounds, counts, cleanup, truncation", () => {
+    const d = doneWhen(body);
+    expect(d.done).toBe(1);
+    expect(d.otherOpen).toBe(2);
+    expect(d.open.length).toBe(3);
+    expect(d.open[0]).toBe("bold see the note and plain-link");
+    expect(d.open[1]!.length).toBe(160);
+    expect(d.open[1]!.endsWith("…")).toBe(true);
+    expect(d.open[2]).toBe("nested still counts");
+    expect(doneWhen("# done WHEN\n- [ ] a\n# Next\n- [ ] b")).toEqual({ open: ["a"], done: 0, otherOpen: 1 });
+    expect(doneWhen("no checklist")).toEqual({ open: [], done: 0, otherOpen: 0 });
+  });
+
+  function withBodies(notes: Record<string, [string, string]>): string {
+    const root = mkdtempSync(join(tmpdir(), "vault-"));
+    mkdirSync(join(root, "tasks"));
+    for (const [name, [fm, text]] of Object.entries(notes)) writeFileSync(join(root, "tasks", `${name}.md`), `---\n${fm}\n---\n\n${text}\n`);
+    return root;
+  }
+  const root = withBodies({
+    low: ["type: Task\ntitle: Low\nstatus: open\npriority: low", "# Done when\n- [ ] l1"],
+    hi: ['type: Task\ntitle: Hi\nstatus: open\npriority: high\ndue: 2026-11-01\nblocked_by: ["[[low]]", "[[ghost]]"]', "# Done when\n- [x] a\n- [ ] b\n\n# Old\n- [ ] stale"],
+    sealed: ["type: Task\ntitle: Sealed\nstatus: in-progress\npriority: medium", "# Done when\n- [x] a\n- [x] b"],
+    bare: ["type: Task\ntitle: Bare\nstatus: in-progress\npriority: medium", "no checklist"],
+    finished: ["type: Task\ntitle: Finished\nstatus: done", "# Done when\n- [ ] ignored"],
+  });
+
+  test("vaultNextSteps: active tasks in priority order with steps, waits, and closeable", () => {
+    const r = vaultNextSteps(root);
+    const tasks = r.tasks as { id: string; [k: string]: unknown }[];
+    expect(tasks.map((t) => t.id)).toEqual(["hi", "bare", "sealed", "low"]);
+    expect(tasks[0]).toEqual({ id: "hi", status: "open", priority: "high", due: "2026-11-01", waitingOn: ["low", "ghost (no such note)"], progress: "1/2", next: ["b"], otherOpen: 1 });
+    expect(tasks.find((t) => t.id === "sealed")).toMatchObject({ closeable: true, progress: "2/2", next: [] });
+    expect(tasks.find((t) => t.id === "bare")!.closeable).toBeUndefined();
+    expect(r.message).toBe("4 active tasks, 2 open steps; 1 looks closeable (all Done-when items checked): sealed");
+    expect(r.unreadable).toBeUndefined();
+  });
+});
+
+describe("vault_tasks next (the tool's view)", () => {
+  const root = mkdtempSync(join(tmpdir(), "vault-next-"));
+  mkdirSync(join(root, "tasks"));
+  const task = (id: string, status: string, body: string) => writeFileSync(join(root, "tasks", `${id}.md`), `---\ntype: Task\ntitle: ${id}\nstatus: ${status}\n---\n\n## Done when\n\n${body}\n`);
+  task("busy", "in-progress", "- [x] a\n- [ ] one\n- [ ] two\n- [ ] three\n- [ ] four");
+  task("sealed", "in-progress", "- [x] a");
+  task("finished", "done", "- [ ] ignored");
+
+  test("one row per active task, its first three steps on one line, closeable ones marked", () => {
+    const r = vaultNextReport("", root) as { ok: boolean; message: string; tasks: { id: string; next: string; closeable?: boolean }[] };
+    expect(r.message).toContain("2 active tasks, 4 open steps");
+    expect(r.tasks.find((t) => t.id === "busy")!.next).toBe("1. one | 2. two | 3. three | (+1 more)");
+    expect(r.tasks.find((t) => t.id === "sealed")).toMatchObject({ closeable: true, next: "" });
+  });
+
+  test("id gives that task with every step; an unknown id says which are active", () => {
+    expect((vaultNextReport("busy", root).tasks as { next: string }[])[0]!.next).toBe("1. one | 2. two | 3. three | 4. four");
+    expect(vaultNextReport("finished", root)).toMatchObject({ ok: false, message: expect.stringContaining("active: busy, sealed") });
   });
 });

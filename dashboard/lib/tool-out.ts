@@ -63,7 +63,7 @@ function cutter(view: View, full: boolean): Cutter {
 function cell(field: string, v: unknown, c: Cutter): string | number | boolean | null {
   if (v === undefined || v === null || v === "") return null;
   if (typeof v === "number" || typeof v === "boolean") return v;
-  if (typeof v === "string") return c.cut(field, field === "ts" || field === "started" || field === "updated" ? shortTs(v) : v.replace(/\s+/g, " "), true);
+  if (typeof v === "string") return c.cut(field, field === "ts" || field === "started" || field === "updated" || field === "last" ? shortTs(v) : v.replace(/\s+/g, " "), true);
   if (Array.isArray(v)) return v.length ? c.cut(field, v.map((x) => (typeof x === "number" ? `#${x}` : isObj(x) ? JSON.stringify(x) : String(x))).join(" "), true) : null;
   return c.cut(field, JSON.stringify(v), true);
 }
@@ -159,6 +159,46 @@ export const VIEWS: Record<string, View> = {
             "vault_tasks id=<task> for one task's detail (what it waits on and blocks)",
             ...(Array.isArray(r.unreadable) && r.unreadable.length ? ["Unreadable notes have invalid frontmatter (often an unquoted colon); fix them so they count"] : []),
           ],
+  },
+  vault_next: {
+    rows: { tasks: ["id", "status", "priority", "due", "progress", "next", "waitingOn", "closeable"] },
+    cut: { next: 500 },
+    empty: { tasks: "0 active tasks" },
+    help: () => ["vault_tasks id=<task> for one task's detail; vault_note path=tasks/<task>.md for its note"],
+  },
+  fleet_query: {
+    rows: {
+      by_agent: ["agent", "turns", "cost", "failed", "tokens"],
+      by_model: ["model", "turns", "cost", "failed", "tokens"],
+      by_day: ["day", "turns", "cost", "failed", "tokens"],
+      failures_by_tool: ["agent", "tool", "n", "last"],
+      latest: ["ts", "agent", "tool", "error"],
+      uses: ["use", "calls", "failed", "cost", "avg_ms"],
+      compaction_advisor: ["agent", "checks", "movedOn", "avgTokensWhenMovedOn"],
+      notable: ["ts", "agent", "decision", "call"],
+      voyages: ["id", "ship", "goal", "state", "started", "commits", "turns", "cost"],
+    },
+    cut: { error: 200, call: 100, goal: 60 },
+    empty: { by_agent: "0 turns in this window", by_model: "0 turns in this window", by_day: "0 turns in this window", failures_by_tool: "0", latest: "0", uses: "0 calls", compaction_advisor: "0 checks", notable: "0", voyages: "0 voyages" },
+    help: (r) => (Object.keys(r).some((k) => k.startsWith("by_")) ? ["fleet_query query=spend by=agent|model|day; days=N widens the window"] : []),
+  },
+  vault_note: {
+    rows: { headings: ["heading", "bytes"] },
+    cut: { summary: 400, content: 12_500, body: 12_500 },
+    empty: { headings: "0 headings" },
+    help: (r) => (r.content || r.body ? [] : ["vault_note path=<note> section=<heading> for one section; full=true for the whole note (cut at 12 KB)"]),
+  },
+  vault_search: {
+    rows: { hits: ["path", "title", "type", "status", "summary", "section", "snippet"] },
+    cut: { title: 70, summary: 120, snippet: 200 },
+    empty: { hits: "0 notes match" },
+    help: (r) => (Array.isArray(r.hits) && r.hits.length ? ["vault_note path=<path> section=<heading> reads one section"] : ["Try other words, or drop a filter (type, status, ship, path)"]),
+  },
+  vault_doctor: {
+    rows: { problems: ["check", "note", "detail", "fixable"] },
+    cut: { detail: 200 },
+    empty: { problems: "0 problems" },
+    help: (r) => (Array.isArray(r.problems) && r.problems.some((p) => (p as { fixable?: boolean }).fixable) ? ["vault_doctor fix=true repairs the ones marked fixable"] : []),
   },
   voyage_status: {
     rows: {

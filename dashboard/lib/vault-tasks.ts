@@ -164,3 +164,104 @@ export function vaultTasksReport(filter: VaultFilter = "ready", id = "", vault =
 export function dueTasks(today: string, vault = aliceVault()): VaultTask[] {
   return readVaultTasks(vault).tasks.filter((t) => t.due && t.due <= today && t.status !== "done");
 }
+
+const STEP_MAX = 160;
+
+/** One checklist item as a short line: bold markers and wikilinks flattened, cut at STEP_MAX. */
+function stepText(s: string): string {
+  const t = s
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\[\[([^\]|]*)\|([^\]]*)\]\]/g, "$2")
+    .replace(/\[\[([^\]]*)\]\]/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  return t.length > STEP_MAX ? `${t.slice(0, STEP_MAX - 1).trimEnd()}…` : t;
+}
+
+/**
+ * The `Done when` checklist of a note body (a heading of level 1 to 3, any case),
+ * up to the next heading of the same or higher level: the unchecked items, the
+ * count of checked ones, and how many unchecked items sit under other headings
+ * (counted, not listed: they are often stale).
+ */
+export function doneWhen(body: string): { open: string[]; done: number; otherOpen: number } {
+  const open: string[] = [];
+  let done = 0;
+  let otherOpen = 0;
+  let level = 0; // heading level of the Done-when section we are in, 0 when outside
+  for (const line of body.split("\n")) {
+    const h = /^(#{1,6})\s+(.*?)\s*$/.exec(line);
+    if (h) {
+      const n = h[1]!.length;
+      if (n <= 3 && /^done when\b/i.test(h[2]!)) level = n;
+      else if (level && n <= level) level = 0;
+      continue;
+    }
+    const item = /^\s*[-*]\s+\[([ xX])\]\s+(.*)$/.exec(line);
+    if (!item) continue;
+    if (!level) {
+      if (item[1] === " ") otherOpen++;
+    } else if (item[1] === " ") open.push(stepText(item[2]!));
+    else done++;
+  }
+  return { open, done, otherOpen };
+}
+
+/** What is left on the active (open or in-progress) tasks, from each note's Done-when checklist. */
+export function vaultNextSteps(vault = aliceVault()): { ok: boolean; message: string; tasks: Record<string, unknown>[]; unreadable?: string[] } {
+  const { tasks, unreadable } = readVaultTasks(vault);
+  const active = tasks.filter((t) => t.status === "open" || t.status === "in-progress").sort(byPriorityThenAge);
+  const closeable: string[] = [];
+  let steps = 0;
+  const rows = active.map((t) => {
+    let body = "";
+    try {
+      body = readFileSync(join(vault, "tasks", `${t.id}.md`), "utf8").replace(/^---\n[\s\S]*?\n---/, "");
+    } catch {
+      /* note vanished since the read: no steps */
+    }
+    const d = doneWhen(body);
+    const w = vaultWaits(t, tasks);
+    const waitingOn = [...w.waiting, ...w.missing.map((m) => `${m} (no such note)`)];
+    const sealed = t.status === "in-progress" && d.open.length === 0 && d.done > 0;
+    if (sealed) closeable.push(t.id);
+    steps += d.open.length;
+    return {
+      id: t.id,
+      status: t.status,
+      priority: t.priority,
+      ...(t.due ? { due: t.due } : {}),
+      ...(waitingOn.length ? { waitingOn } : {}),
+      progress: `${d.done}/${d.done + d.open.length}`,
+      ...(sealed ? { closeable: true } : {}),
+      next: d.open,
+      ...(d.otherOpen ? { otherOpen: d.otherOpen } : {}),
+    };
+  });
+  const tail = closeable.length ? `; ${closeable.length} looks closeable (all Done-when items checked): ${closeable.join(", ")}` : "";
+  return {
+    ok: true,
+    message: `${active.length} active tasks, ${steps} open steps${tail}`,
+    tasks: rows,
+    ...(unreadable.length ? { unreadable } : {}),
+  };
+}
+
+/** The `vault_tasks` tool's filters: the task lists above, plus `next` (what is left on the active ones). */
+export const VAULT_TOOL_FILTERS = [...VAULT_FILTERS, "next"] as const;
+
+const TOOL_STEPS = 3;
+
+/** `next` as the tool shows it: one row per active task, its first open steps on one line, one task with `id`. */
+export function vaultNextReport(id = "", vault = aliceVault()): { ok: boolean; message: string; [k: string]: unknown } {
+  const r = vaultNextSteps(vault);
+  const want = linkName(id);
+  const tasks = (want ? r.tasks.filter((t) => t.id === want) : r.tasks) as (Record<string, unknown> & { next: string[] })[];
+  if (want && !tasks.length) return { ok: false, message: `No active vault task ${want} (active: ${r.tasks.map((t) => t.id).join(", ") || "none"}).` };
+  return {
+    ok: true,
+    message: want ? `${want}: ${tasks[0]!.progress} done` : r.message,
+    tasks: tasks.map((t) => ({ ...t, next: t.next.slice(0, want ? undefined : TOOL_STEPS).map((s, i) => `${i + 1}. ${s}`).join(" | ") + (!want && t.next.length > TOOL_STEPS ? ` | (+${t.next.length - TOOL_STEPS} more)` : "") })),
+    ...(r.unreadable ? { unreadable: r.unreadable } : {}),
+  };
+}
