@@ -10,7 +10,8 @@ import { aliceVault, fleetInboxRoot } from "./paths.ts";
  *
  * Indexed (incrementally, by the node): every agent's captain chat thread,
  * helper results (delegations), digests, and captain notices. The vault is not
- * indexed here: deep vault questions go to a librarian helper.
+ * searched here: lib/vault-index.ts adds the vault's sections to the same FTS
+ * table as source `vault` for vault_search, and `recall` leaves them out.
  *
  * SQLite FTS5 in the journal's database; queries need no model and return
  * short snippets with where they came from.
@@ -26,6 +27,9 @@ function db() {
   d.exec(SCHEMA);
   return d;
 }
+
+/** The journal handle with the recall tables in place (the vault index writes its sections here). */
+export const recallDb = db;
 
 const seen = (key: string): string | null => (db().query("SELECT mark FROM recall_seen WHERE key = ?").get(key) as { mark: string } | null)?.mark ?? null;
 const mark = (key: string, value: string) => db().query("INSERT INTO recall_seen (key, mark) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET mark = excluded.mark").run(key, value);
@@ -133,15 +137,21 @@ export function indexRecall(): number {
 
 export type RecallHit = { source: string; ref: string; ts: string; snippet: string };
 
-/** Search; words are matched as prefixes, quoted phrases kept. */
-export function recall(query: string, limit = 8): RecallHit[] {
+/** Words as an FTS5 query: prefixes, quoted phrases kept, any of them; null when there are none. */
+export function ftsQuery(query: string): string | null {
   const terms = (query.match(/"[^"]+"|[\p{L}\p{N}_-]+/gu) ?? []).map((t) => (t.startsWith('"') ? t : `"${t.replace(/"/g, "")}"*`));
-  if (!terms.length) return [];
+  return terms.length ? terms.join(" OR ") : null;
+}
+
+/** Search fleet talk (not the vault: vault_search); words are matched as prefixes, quoted phrases kept. */
+export function recall(query: string, limit = 8): RecallHit[] {
+  const fts = ftsQuery(query);
+  if (!fts) return [];
   try {
     indexRecall();
     return db()
-      .query("SELECT source, ref, ts, snippet(recall_fts, 3, '«', '»', ' … ', 24) AS snippet FROM recall_fts WHERE recall_fts MATCH ? ORDER BY bm25(recall_fts) LIMIT ?")
-      .all(terms.join(" OR "), Math.max(1, Math.min(20, limit))) as RecallHit[];
+      .query("SELECT source, ref, ts, snippet(recall_fts, 3, '«', '»', ' … ', 24) AS snippet FROM recall_fts WHERE recall_fts MATCH ? AND source != 'vault' ORDER BY bm25(recall_fts) LIMIT ?")
+      .all(fts, Math.max(1, Math.min(20, limit))) as RecallHit[];
   } catch {
     return [];
   }

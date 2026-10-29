@@ -69,7 +69,7 @@ evidence (failures, oversized outputs) against it and propose fixes.
 | chrome-devtools-axi | 0.1.29 | designers in a VM (`cdt`) | 8 pass | drives the VM's Chromium; its MCP server pinned to chrome-devtools-mcp 1.7.0 (1.10+ needs a pageId 0.1.29 does not send) |
 | cargo-axi | — | — | — | not on npm; skipped |
 
-`bin/fleet-axi` is the fleet's own: the fleet from any shell (ships, what waits on the captain, voyages, logs, vault tasks, Jev spend, gate decisions), read-only, with `bin/fleet-axi next` listing the open Done-when steps of the active vault tasks, and an opt-in Claude Code SessionStart hook (`bin/fleet-axi setup hooks`).
+`bin/fleet-axi` is the fleet's own: the fleet from any shell (ships, what waits on the captain, voyages, logs, vault tasks, Jev spend, gate decisions), read-only, with `bin/fleet-axi next` listing the open Done-when steps of the active vault tasks, `query` (spend, tool_failures, jev, gate, voyages: the `fleet_query` tool), `note` and `search` (the `vault_note` and `vault_search` tools), and an opt-in Claude Code SessionStart hook (`bin/fleet-axi setup hooks`). Each is a shared library function in `dashboard/lib/` that the pi tool (through the node) and the CLI both call, so exact questions need no `sqlite3` or `grep`. `vault_patch` and `vault_doctor` are tools only; `vault_patch` is lazy (RARE) and refuses `career/` and `profile/`.
 
 ## Known gaps (2026-10-18)
 

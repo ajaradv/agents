@@ -34,8 +34,12 @@ import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
 import { askPublic } from "./lib/public-helper.ts";
 import { toolText, VIEWS } from "./lib/tool-out.ts";
-import { dueTasks, VAULT_FILTERS, vaultTasksReport, type VaultFilter } from "./lib/vault-tasks.ts";
-import { scheduledVaultCheck } from "./lib/vault-doctor.ts";
+import { dueTasks, VAULT_FILTERS, vaultNextReport, vaultTasksReport, type VaultFilter } from "./lib/vault-tasks.ts";
+import { doctorReport, scheduledVaultCheck } from "./lib/vault-doctor.ts";
+import { fleetQuery } from "./lib/fleet-query.ts";
+import { vaultNote } from "./lib/vault-note.ts";
+import { vaultPatch } from "./lib/vault-patch.ts";
+import { indexVault, searchVault, startVaultIndexer } from "./lib/vault-index.ts";
 import { decideGate, judgeCall, recordLocalStop, screenResult } from "./lib/tool-gate.ts";
 import { adviseCompaction, cutPoint } from "./lib/compaction-advisor.ts";
 import { askAboutFiles } from "./lib/cheap-reads.ts";
@@ -165,6 +169,7 @@ function startRuntime(): void {
   startDigestClock();
   // recall: keep the full-text index of chats, helper results, digests, and notices current.
   startRecallIndexer();
+  startVaultIndexer();
   // Ship config (lib/ship-config.ts): the merged view of every ship, as JSON for bin/launch.
   void readShips().then((ships) => materializeAllShips(ships.map((s) => s.id))).catch((e) => console.error("[node] ship config:", e));
   // Routines (lib/routines.ts, fleet/config/routines.yaml): the jobs below and agent routines, on their schedules.
@@ -408,6 +413,13 @@ function fleetCall(what: string, method: string, q: URLSearchParams, b: Record<s
   if (method === "GET" && what === "chat") return { tool: "agent_chat_read", read: true, args: fromQ(["agent", "n"]) };
   if (method === "GET" && what === "recall") return { tool: "recall", read: true, args: fromQ(["query", "limit"]) };
   if (method === "GET" && what === "vault-tasks") return { tool: "vault_tasks", read: true, args: fromQ(["filter", "id"]) };
+  if (method === "GET" && what === "fleet-query") return { tool: "fleet_query", read: true, args: fromQ(["query", "days", "by"]) };
+  if (method === "GET" && what === "vault-note") return { tool: "vault_note", read: true, args: fromQ(["path", "section", "full"]) };
+  if (method === "GET" && what === "vault-search") return { tool: "vault_search", read: true, args: fromQ(["query", "type", "status", "ship", "path", "limit"]) };
+  if (method === "GET" && what === "vault-doctor") return { tool: "vault_doctor", read: true, args: {} };
+  // Writes: held back while an order runs, like fleet_chat. The edit itself is the tier 1 vault filing Alice's authority names.
+  if (method === "POST" && what === "vault-doctor") return { tool: "vault_doctor", read: false, args: pick((k) => b[k], ["fix"]) };
+  if (method === "POST" && what === "vault-patch") return { tool: "vault_patch", read: false, args: { ...pick((k) => b[k], ["path", "check", "uncheck"]), ...(b.set ? { set: JSON.stringify(b.set) } : {}) } };
   if (method === "POST" && what === "chat") return { tool: "fleet_chat", read: false, args: pick((k) => b[k], ["to", "text"]) };
   return null;
 }
@@ -476,6 +488,15 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
   else if (call.tool === "ship_tasks") res = await shipTasks(a.ship ?? "");
   else if (call.tool === "ship_maneuvers") res = await shipManeuvers(a.ship ?? "");
   else if (call.tool === "agent_chat_read") res = await agentChatRead(a.agent ?? "", Number(a.n) || 12);
+  else if (call.tool === "fleet_query") res = fleetQuery(a.query ?? "", { days: Number(a.days) || undefined, by: a.by });
+  else if (call.tool === "vault_note") res = vaultNote(a.path ?? "", { section: a.section, full: a.full === "true" });
+  else if (call.tool === "vault_search") res = searchVault({ query: a.query, type: a.type, status: a.status, ship: a.ship, path: a.path, limit: Number(a.limit) || undefined });
+  else if (call.tool === "vault_doctor") res = doctorReport(a.fix === "true");
+  else if (call.tool === "vault_patch") {
+    res = vaultPatch({ path: a.path ?? "", set: b.set as Record<string, unknown> | undefined, check: a.check, uncheck: a.uncheck });
+    if (res.ok && res.changed) indexVault(); // so vault_search sees the edit at once
+  }
+  else if (call.tool === "vault_tasks" && a.filter === "next") res = vaultNextReport(a.id ?? "");
   else if (call.tool === "vault_tasks") res = vaultTasksReport((VAULT_FILTERS as string[]).includes(a.filter ?? "") ? (a.filter as VaultFilter) : "ready", a.id ?? "");
   else if (call.tool === "recall") {
     const hits = recall(a.query ?? "", Number(a.limit) || 8);
@@ -487,7 +508,10 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
     res = { ...res, message: `${res.message} (Step ${gate.step} call recorded; now check its expect line and call order_step.)` };
   }
   // Read tools: what the agent sees (lib/tool-out); the JSON stays for anything else that reads it.
-  if (call.read && VIEWS[call.tool]) res = { ...res, text: toolText(res, VIEWS[call.tool], { full: q.get("full") === "true" }) };
+  const view = call.tool === "vault_tasks" && a.filter === "next" ? "vault_next" : call.tool;
+  if (call.read && VIEWS[view]) res = { ...res, text: toolText(res, VIEWS[view], { full: q.get("full") === "true" && call.tool !== "vault_note" }) };
+  // vault_doctor fix=true is a write, but its report is a view like the read.
+  if (call.tool === "vault_doctor" && !call.read) res = { ...res, text: toolText(res, VIEWS.vault_doctor) };
   return reply(res);
 }
 
@@ -560,7 +584,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     return Response.json(r);
   }
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|queue|delegate|public|recall|vault-tasks)$/);
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|queue|delegate|public|recall|vault-tasks|fleet-query|vault-note|vault-search|vault-patch|vault-doctor)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm|look|helper|canvas|crew-request|dock-request|queue-request)(?:\/(\d+))?$/);

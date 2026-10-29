@@ -246,3 +246,22 @@ export function vaultNextSteps(vault = aliceVault()): { ok: boolean; message: st
     ...(unreadable.length ? { unreadable } : {}),
   };
 }
+
+/** The `vault_tasks` tool's filters: the task lists above, plus `next` (what is left on the active ones). */
+export const VAULT_TOOL_FILTERS = [...VAULT_FILTERS, "next"] as const;
+
+const TOOL_STEPS = 3;
+
+/** `next` as the tool shows it: one row per active task, its first open steps on one line, one task with `id`. */
+export function vaultNextReport(id = "", vault = aliceVault()): { ok: boolean; message: string; [k: string]: unknown } {
+  const r = vaultNextSteps(vault);
+  const want = linkName(id);
+  const tasks = (want ? r.tasks.filter((t) => t.id === want) : r.tasks) as (Record<string, unknown> & { next: string[] })[];
+  if (want && !tasks.length) return { ok: false, message: `No active vault task ${want} (active: ${r.tasks.map((t) => t.id).join(", ") || "none"}).` };
+  return {
+    ok: true,
+    message: want ? `${want}: ${tasks[0]!.progress} done` : r.message,
+    tasks: tasks.map((t) => ({ ...t, next: t.next.slice(0, want ? undefined : TOOL_STEPS).map((s, i) => `${i + 1}. ${s}`).join(" | ") + (!want && t.next.length > TOOL_STEPS ? ` | (+${t.next.length - TOOL_STEPS} more)` : "") })),
+    ...(r.unreadable ? { unreadable: r.unreadable } : {}),
+  };
+}

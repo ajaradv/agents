@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { doneWhen, dueTasks, linkName, readVaultTasks, vaultNextSteps, vaultTasksReport } from "./vault-tasks.ts";
+import { doneWhen, dueTasks, linkName, readVaultTasks, vaultNextReport, vaultNextSteps, vaultTasksReport } from "./vault-tasks.ts";
 
 function vault(notes: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "vault-"));
@@ -109,5 +109,26 @@ describe("next steps", () => {
     expect(tasks.find((t) => t.id === "bare")!.closeable).toBeUndefined();
     expect(r.message).toBe("4 active tasks, 2 open steps; 1 looks closeable (all Done-when items checked): sealed");
     expect(r.unreadable).toBeUndefined();
+  });
+});
+
+describe("vault_tasks next (the tool's view)", () => {
+  const root = mkdtempSync(join(tmpdir(), "vault-next-"));
+  mkdirSync(join(root, "tasks"));
+  const task = (id: string, status: string, body: string) => writeFileSync(join(root, "tasks", `${id}.md`), `---\ntype: Task\ntitle: ${id}\nstatus: ${status}\n---\n\n## Done when\n\n${body}\n`);
+  task("busy", "in-progress", "- [x] a\n- [ ] one\n- [ ] two\n- [ ] three\n- [ ] four");
+  task("sealed", "in-progress", "- [x] a");
+  task("finished", "done", "- [ ] ignored");
+
+  test("one row per active task, its first three steps on one line, closeable ones marked", () => {
+    const r = vaultNextReport("", root) as { ok: boolean; message: string; tasks: { id: string; next: string; closeable?: boolean }[] };
+    expect(r.message).toContain("2 active tasks, 4 open steps");
+    expect(r.tasks.find((t) => t.id === "busy")!.next).toBe("1. one | 2. two | 3. three | (+1 more)");
+    expect(r.tasks.find((t) => t.id === "sealed")).toMatchObject({ closeable: true, next: "" });
+  });
+
+  test("id gives that task with every step; an unknown id says which are active", () => {
+    expect((vaultNextReport("busy", root).tasks as { next: string }[])[0]!.next).toBe("1. one | 2. two | 3. three | 4. four");
+    expect(vaultNextReport("finished", root)).toMatchObject({ ok: false, message: expect.stringContaining("active: busy, sealed") });
   });
 });

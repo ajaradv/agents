@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { examineVault, fixVault, quoteColonValues } from "./vault-doctor.ts";
+import { doctorReport, examineVault, fixVault, quoteColonValues } from "./vault-doctor.ts";
 
 function vault(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "doctor-"));
@@ -47,5 +47,16 @@ describe("vault doctor", () => {
     expect(readFileSync(join(root, "a.md"), "utf8")).toBe('---\ntitle: A\ndescription: "one: two"\n---\nbody: stays\n');
     expect(examineVault(root).problems.map((p) => p.note)).toEqual(["b.md"]);
     expect(quoteColonValues('title: "already: quoted"')).toBeNull();
+  });
+  test("the tool's report reads without fix and does what --fix does with it", () => {
+    const root = vault({ "a.md": "---\ntitle: A\ndescription: one: two\n---\nbody\n", "b.md": "---\nbroken: [unclosed\n---\n" });
+    const read = doctorReport(false, root) as unknown as { message: string; problems: { note: string; fixable: boolean }[]; fixed?: string[] };
+    expect(read.message).toBe("2 problem(s) in 2 notes (0 links checked)");
+    expect(read.problems.map((p) => [p.note, p.fixable]).sort()).toEqual([["a.md", true], ["b.md", false]]);
+    expect(readFileSync(join(root, "a.md"), "utf8")).toContain("description: one: two");
+    const fixed = doctorReport(true, root) as unknown as { message: string; fixed: string[]; problems: unknown[] };
+    expect(fixed.fixed).toEqual(["a.md"]);
+    expect(fixed.problems).toHaveLength(1);
+    expect(doctorReport(false, join(root, "nowhere"))).toMatchObject({ ok: false });
   });
 });

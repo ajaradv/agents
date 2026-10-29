@@ -141,6 +141,22 @@ export function fixVault(root: string): string[] {
   return changed;
 }
 
+/** The doctor's report as the vault_doctor tool shows it; `fix` does only what bin/vault-doctor --fix does. */
+export function doctorReport(fix = false, vault = aliceVault()): { ok: boolean; message: string; [k: string]: unknown } {
+  try {
+    const fixed = fix ? fixVault(vault) : [];
+    const r = examineVault(vault);
+    return {
+      ok: true,
+      message: `${r.problems.length} problem(s) in ${r.notes} notes (${r.links} links checked)${fix ? `; fixed ${fixed.length} note(s)` : ""}`,
+      ...(fixed.length ? { fixed } : {}),
+      problems: r.problems.map((p) => ({ check: p.check, note: p.note, detail: p.detail, fixable: Boolean(p.fixable) })),
+    };
+  } catch (e) {
+    return { ok: false, message: `Could not read the vault: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 /** A problem's identity, for telling new problems from known ones. */
 export const problemKey = (p: Problem) => `${p.check}\u0000${p.note}\u0000${p.detail}`;
 
