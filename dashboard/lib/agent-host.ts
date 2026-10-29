@@ -59,6 +59,9 @@ const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 // as network failures; a proxy that ends the response
 // mid-event surfaces as a parse error instead.
 const STREAM_DROPPED = /Could not parse .*SSE event|Unexpected end of JSON input|stream (ended|closed|terminated)|terminated|ECONNRESET|socket hang up/i;
+// The provider (or OpenRouter's upstream) failed on its side and says to try
+// again: a 5xx status first in the message, or OpenRouter's "Upstream error".
+const UPSTREAM_ERROR = /^\s*5\d\d\b|upstream error|please retry|overloaded|internal server error|service unavailable|bad gateway/i;
 const STREAM_RETRIES = 2;
 const BILLING_ERROR = /\b402\b|billing|insufficient|quota|out of credits|requires more credits|balance/i;
 const AUTH_ERROR = /\b401\b|unauthori[sz]ed|invalid (api )?key|authentication failed/i;
@@ -93,11 +96,12 @@ async function recordModelFailure(agentId: string, reason: string): Promise<bool
 }
 
 /** Why a turn's provider error should move the agent to its backup model, or null. */
-export function fallbackReason(error: string): "billing" | "auth" | "stream" | null {
+export function fallbackReason(error: string): "billing" | "auth" | "stream" | "upstream" | null {
   if (BILLING_ERROR.test(error)) return "billing";
   if (AUTH_ERROR.test(error)) return "auth";
   // Only reached once the in-place retries are used up.
   if (STREAM_DROPPED.test(error)) return "stream";
+  if (UPSTREAM_ERROR.test(error)) return "upstream";
   return null;
 }
 
@@ -355,18 +359,26 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
           /* the log is best effort */
         }
       }
-      if (p.turnError && STREAM_DROPPED.test(p.turnError) && p.streamRetries < STREAM_RETRIES) {
+      const turnError = p.turnError ?? "";
+      const dropped = STREAM_DROPPED.test(turnError);
+      const upstream = !dropped && UPSTREAM_ERROR.test(turnError) && !BILLING_ERROR.test(turnError) && !AUTH_ERROR.test(turnError);
+      if ((dropped || upstream) && p.streamRetries < STREAM_RETRIES) {
         // The work so far is in the session; ask the agent to carry on from there.
         p.streamRetries += 1;
-        void dashLog("agent-host", `${p.id} stream dropped (${p.turnError.slice(0, 80)}); continue ${p.streamRetries}/${STREAM_RETRIES}`);
-        hooks.event(p.id, { kind: "notice", text: "The model's connection dropped mid-reply; continuing where it left off.", level: "warning" });
+        void dashLog("agent-host", `${p.id} ${dropped ? "stream dropped" : "upstream error"} (${turnError.slice(0, 80)}); continue ${p.streamRetries}/${STREAM_RETRIES}`);
+        hooks.event(p.id, {
+          kind: "notice",
+          text: dropped ? "The model's connection dropped mid-reply; continuing where it left off." : "The model provider had an error; continuing where it left off.",
+          level: "warning",
+        });
         setTimeout(() => {
           void send(p, {
             type: "prompt",
-            message:
-              "Your last reply was cut off by a dropped connection to the model provider. Continue exactly where you left off; do not redo finished steps. If you were writing a large file, write it in parts: a skeleton first, then one section per edit, each under about 120 lines.",
+            message: dropped
+              ? "Your last reply was cut off by a dropped connection to the model provider. Continue exactly where you left off; do not redo finished steps. If you were writing a large file, write it in parts: a skeleton first, then one section per edit, each under about 120 lines."
+              : "Your last reply failed on an error at the model provider. Continue exactly where you left off; do not redo finished steps.",
           });
-        }, 2000);
+        }, dropped ? 2000 : 5000);
         return;
       }
       if (p.turnError && p.lastCaptainTs) {
@@ -374,12 +386,19 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
         hooks.settled(p.id, { ok: false, ms, error: p.turnError, cost: p.turnCost, tokens: p.turnTokens, cacheRead: p.turnCacheRead, prompt: p.turnPrompt, model: p.model });
         const why = fallbackReason(p.turnError);
         if (why) {
-          // Out of credits, key rejected, or the stream kept dropping after the retries:
+          // Out of credits, key rejected, or the stream or provider kept failing after the retries:
           // stop, mark the primary failed for today (bin/launch then uses fallback_model),
           // and, the first time today, carry on with the work on the backup at once.
           const error = p.turnError;
           const first = await recordModelFailure(p.id, error);
-          const what = why === "stream" ? "kept dropping its connection to the model" : why === "billing" ? "ran out of credits or quota" : "had its key refused";
+          const what =
+            why === "stream"
+              ? "kept dropping its connection to the model"
+              : why === "upstream"
+                ? "kept getting errors from its model provider"
+                : why === "billing"
+                  ? "ran out of credits or quota"
+                  : "had its key refused";
           void dashLog("agent-host", `${p.id} ${what}; moving to its fallback model${first ? " and continuing" : " (already failed today: stopping)"}`);
           hooks.event(p.id, {
             kind: "notice",
