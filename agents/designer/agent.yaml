@@ -61,3 +61,6 @@ authority:
     - backend-code
 # Conversation mode voice (Gemini Live prebuilt voice; breezy; matches af_heart).
 live_voice: Aoede
+# Of the globally installed skills, only impeccable (how this role works); the
+# rest (AWS, archify, ...) cost about 7k tokens a turn.
+discover_skills: [impeccable]

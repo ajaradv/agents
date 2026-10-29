@@ -430,11 +430,35 @@ def vm_env(ship: dict, agent_id: str, inbox: Path, agent: dict | None = None) ->
     return env
 
 
+GLOBAL_SKILL_DIRS = (Path.home() / ".agents" / "skills", Path.home() / ".pi" / "agent" / "skills")
+
+
+def global_skills(agent: dict) -> list[Path] | None:
+    """The globally installed skills an agent gets, from `discover_skills` in agent.yaml.
+
+    Unset or true: None (pi discovers every one). False: none. A list of names
+    (`[impeccable]`): only those, the first folder that has each; a missing one
+    is a warning, not an error. Every listed skill costs every turn: the global
+    folders hold 30 skills (24 of them AWS), about 7k tokens.
+    """
+    want = agent.get("discover_skills")
+    if isinstance(want, list):
+        found: list[Path] = []
+        for name in want:
+            hit = next((d / str(name) for d in GLOBAL_SKILL_DIRS if (d / str(name) / "SKILL.md").is_file()), None)
+            if hit:
+                found.append(hit.resolve())
+            else:
+                print(f"warning: discover_skills names {name}, not installed in {' or '.join(str(d) for d in GLOBAL_SKILL_DIRS)}", file=sys.stderr)
+        return found
+    return [] if str(want).lower() == "false" else None
+
+
 def vm_skill_dirs(agent: dict) -> list[str]:
-    """Skill folders a VM crewmate's pi lists (its skill_paths, and the global skill folders pi discovers)."""
+    """Skill folders a VM crewmate's pi lists (its skill_paths, and the global skills it gets)."""
     dirs = [ROOT / str(rel) for rel in agent.get("skill_paths") or []]
-    if str(agent.get("discover_skills")).lower() != "false":
-        dirs += [Path.home() / ".agents" / "skills", Path.home() / ".pi" / "agent" / "skills"]
+    named = global_skills(agent)
+    dirs += list(GLOBAL_SKILL_DIRS) if named is None else named
     return [str(d.resolve()) for d in dirs if d.is_dir()]
 
 
@@ -934,10 +958,14 @@ def prepare_pi_launch(
             if skill_dir.is_dir():
                 args.extend(["--skill", str(skill_dir)])
 
-    # `discover_skills: false`: only the skills named here, none found on disk (a
-    # skill list in the system prompt costs every turn; Alice's global skills were 28k chars).
-    if str(agent.get("discover_skills")).lower() == "false":
+    # `discover_skills: false` or a list of names: only the skills named here and
+    # those global ones, none else found on disk (a skill list in the system prompt
+    # costs every turn; Alice's global skills were 28k chars).
+    named = global_skills(agent)
+    if named is not None:
         args.append("--no-skills")
+        for skill_dir in named:
+            args.extend(["--skill", str(skill_dir)])
 
     # Repo-relative skill folders (each holds a SKILL.md), for any agent type.
     for rel in agent.get("skill_paths") or []:

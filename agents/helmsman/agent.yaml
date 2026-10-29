@@ -11,3 +11,6 @@ fallback_model: cursor/composer-2.5
 crew: only
 # Conversation mode voice (Gemini Live prebuilt voice; easy-going).
 live_voice: Umbriel
+# No globally installed skills (AWS, archify, ...): they cost about 7k tokens a turn
+# and no part of this role uses them. Repo skills come from skill_paths.
+discover_skills: false
