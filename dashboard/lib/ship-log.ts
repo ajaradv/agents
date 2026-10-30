@@ -132,10 +132,10 @@ export function shipDb(ship: string, root?: string): Database | null {
 
 function open(ship: string, root?: string): Database | null {
   if (!SHIP_RE.test(ship)) return null;
-  const key = `${root ?? ""}\u0000${ship}`;
-  let db = dbs.get(key);
+  // Keyed by the file, not the ship: a new FLEET_INBOX (tests, a copied inbox) opens a new file.
+  const path = shipLogPath(ship, root);
+  let db = dbs.get(path);
   if (!db) {
-    const path = shipLogPath(ship, root);
     const created = !existsSync(path);
     mkdirSync(join(path, ".."), { recursive: true });
     db = new Database(path, { create: true });
@@ -143,7 +143,7 @@ function open(ship: string, root?: string): Database | null {
     // surface as SQLITE_BUSY on the next write.
     db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     migrate(db, MIGRATIONS, `ship.db (${ship})`);
-    dbs.set(key, db);
+    dbs.set(path, db);
     if (created && wantReconcile(root)) scheduleBackupReconcile();
   }
   return db;
