@@ -47,10 +47,24 @@ describe("fleet_query", () => {
     failures.recordToolFailure({ agent: "alice", tool: "bash", args: "sqlite3 x", error: "no such table: turns" }, () => {});
     failures.recordToolFailure({ agent: "alice", tool: "grep", args: "grep zz", error: "Command exited with code 1" }, () => {}); // not bash: counted
     failures.recordToolFailure({ agent: "alice", tool: "bash", args: "grep zz file", error: "Command exited with code 1" }, () => {}); // a "no" answer: not counted
-    const r = q.fleetQuery("tool_failures", { days: 7 }) as unknown as { message: string; failures_by_tool: { tool: string; n: number }[]; latest: { error: string }[] };
+    const r = q.fleetQuery("tool_failures", { days: 7 }) as unknown as Record<string, { tool: string; n: number; error: string; day: string }[] | string>;
+    const list = (k: string) => r[k] as { tool: string; n: number; error: string; day: string }[];
     expect(r.message).toBe("2 tool failure(s) in 7 day(s)");
-    expect(r.failures_by_tool.map((x) => x.tool).sort()).toEqual(["bash", "grep"]);
-    expect(r.latest[1]!.error).toContain("no such table");
+    expect(list("by_agent_tool").map((x) => x.tool).sort()).toEqual(["bash", "grep"]);
+    expect(list("by_tool").map((x) => [x.tool, x.n]).sort()).toEqual([["bash", 1], ["grep", 1]]);
+    expect(list("failures_by_day").map((x) => [x.day, x.n])).toEqual([[new Date().toISOString().slice(0, 10), 2]]);
+    expect(list("latest")[1]!.error).toContain("no such table");
+    expect(Object.keys(r).filter((k) => k.endsWith("_shown"))).toEqual([]); // nothing cut
+  });
+
+  test("tool_failures says how many of each cut list it shows, and totals cover them all", () => {
+    for (let i = 0; i < 10; i++) failures.recordToolFailure({ agent: "bob", tool: "read", error: `boom ${i}` }, () => {});
+    const r = q.fleetQuery("tool_failures", { days: 7 }) as unknown as { by_tool: { tool: string; n: number }[]; latest: unknown[]; latest_shown: string; by_agent_tool_shown?: string };
+    expect(r.latest.length).toBe(8);
+    expect(r.latest_shown).toBe("8 of 12");
+    expect(r.by_agent_tool_shown).toBeUndefined(); // 3 pairs, not cut
+    expect(r.by_tool[0]).toEqual({ tool: "read", n: 10 });
+    expect(toolText(r as never, VIEWS.fleet_query)).toContain("latest_shown: 8 of 12");
   });
 
   test("jev and gate answer with zero rows before anything is logged", () => {
@@ -67,13 +81,47 @@ describe("fleet_query", () => {
     gate("allow", "pwd");
     gate("stop", "rm -rf /tmp/x");
     const r = q.fleetQuery("gate", { days: 1 }) as unknown as { message: string; notable: { decision: string; call: string }[] };
-    expect(r.message).toBe("allow 2, stop 1");
+    expect(r.message).toBe("enforce mode: 2 allowed, 1 stopped");
     expect(r.notable).toEqual([expect.objectContaining({ decision: "stop", call: "rm -rf /tmp/x" })]);
     expect((q.fleetQuery("jev") as unknown as { ok: boolean }).ok).toBe(true);
     d.query("INSERT INTO jev_calls (ts, use, route, ok, input_tokens, cost, ms, error) VALUES (?, 'tool-gate', 'r', 1, 100, 0.002, 300, '')").run(ago(0.1));
     const jev = q.fleetQuery("jev") as unknown as { message: string; uses: { use: string; calls: number }[] };
     expect(jev.message).toBe("1 Jev calls, $0.0020 in 7 day(s)");
     expect(jev.uses[0]).toMatchObject({ use: "tool-gate", calls: 1 });
+  });
+
+  test("gate labels each decision, names the mode, and counts the non-allows by agent and day", () => {
+    const d = m.metricsDb();
+    d.exec("DELETE FROM gate_log");
+    const at = (days: number, agent: string, decision: string, source = "jev") => d.query("INSERT INTO gate_log (ts, agent, tool, summary, decision, source) VALUES (?, ?, 'bash', 'call', ?, ?)").run(ago(days), agent, decision, source);
+    for (let i = 0; i < 3; i++) at(1, "kin", "observe-allow");
+    for (let i = 0; i < 17; i++) at(2, "kin", "observe-hold");
+    at(1, "fleet-lead", "observe-hold");
+    at(1, "kin", "stop", "local");
+    at(1, "kin", "screen-ok");
+    at(1, "kin", "screen-flag");
+    const r = q.fleetQuery("gate", { days: 7 }) as unknown as { message: string; mode: string; decisions: { decision: string; label: string; n: number }[]; not_allowed_by_agent: { agent: string; n: number; decisions: string }[]; not_allowed_by_day: { day: string; n: number }[]; notable: unknown[]; notable_shown: string };
+    expect(r.mode).toBe("observe");
+    expect(r.message).toBe("observe mode: 18 would hold (let through), 3 allowed, 1 stopped; results screened 1 flagged, 1 clean");
+    expect(r.decisions[0]).toEqual({ decision: "observe-hold", label: "would hold (observe mode: let through)", n: 18 });
+    expect(r.decisions.find((x) => x.decision === "stop")!.label).toBe("stopped (local rule, enforced in every mode)");
+    expect(r.decisions.find((x) => x.decision === "screen-flag")!.label).toContain("flagged");
+    expect(r.not_allowed_by_agent).toEqual([
+      { agent: "kin", n: 19, decisions: "observe-hold 17, screen-flag 1, stop 1" },
+      { agent: "fleet-lead", n: 1, decisions: "observe-hold 1" },
+    ]);
+    expect(r.not_allowed_by_day.map((x) => [x.day, x.n])).toEqual([[ago(1).slice(0, 10), 3], [ago(2).slice(0, 10), 17]]);
+    expect(r.notable.length).toBe(15);
+    expect(r.notable_shown).toBe("15 of 20");
+    const text = toolText(r as never, VIEWS.fleet_query);
+    expect(text).toContain("mode: observe");
+    expect(text).toContain("notable_shown: 15 of 20");
+    at(0.1, "kin", "hold");
+    expect((q.fleetQuery("gate", { days: 7 }) as unknown as { mode: string }).mode).toBe("mixed");
+    d.exec("DELETE FROM gate_log WHERE decision LIKE 'observe-%'");
+    expect((q.fleetQuery("gate", { days: 7 }) as unknown as { mode: string }).mode).toBe("enforce");
+    d.exec("DELETE FROM gate_log");
+    expect(q.fleetQuery("gate", { days: 7 })).toMatchObject({ mode: "none", message: "0 gate decisions in 7 day(s)" });
   });
 
   test("voyages lists open ones and those started in the window, with ship and cost", () => {

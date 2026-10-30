@@ -145,7 +145,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fleet_query",
     label: "Fleet query",
-    description: "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool, with the latest errors. jev: Jev calls and cost per use, and the compaction advisor. gate: tool gate decisions and the notable ones. voyages: open and recent voyages with ship and cost. The window is days back from now, or since/until as YYYY-MM-DD (UTC, both days inclusive) for a fixed range.",
+    description: "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool, with totals by tool and day. jev: Jev calls and cost per use, and the compaction advisor. gate: tool gate decisions with mode, counts by agent and day, and the notable ones. voyages: open and recent voyages with ship and cost. The window is days back from now, or since/until as YYYY-MM-DD (UTC, both days inclusive) for a fixed range. A list says \"shown N of M\" when cut: a sample, not totals.",
     parameters: Type.Object({
       query: StringEnum(["spend", "tool_failures", "jev", "gate", "voyages"] as const),
       days: Type.Optional(Type.Number({ description: "How far back, default 7, max 365; ignored when since is given" })),
