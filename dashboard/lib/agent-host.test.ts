@@ -26,3 +26,14 @@ describe("provider errors that move an agent to its backup model", () => {
     expect(fallbackReason("Tool bash failed: exit 1")).toBeNull();
   });
 });
+
+import { codemodeTools } from "./agent-host.ts";
+
+describe("codemode tool names", () => {
+  test("reads tools.name( and tools['name']( calls, deduped in order", () => {
+    expect(codemodeTools('const a = await tools.vault_tasks({}); const b = await tools["fleet_query"]({ query: "spend" }); await tools.vault_tasks({}); return [a, b];')).toEqual(["vault_tasks", "fleet_query"]);
+    expect(codemodeTools("return 1 + 1;")).toEqual([]);
+    expect(codemodeTools("const tools2 = 1; mytools.x(1)")).toEqual([]);
+    expect(codemodeTools(undefined)).toEqual([]);
+  });
+});

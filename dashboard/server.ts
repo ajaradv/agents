@@ -102,6 +102,7 @@ function chatPayload(line: ChatLine) {
     ...(line.go ? { go: line.go } : {}),
     ...(line.requestId ? { requestId: line.requestId } : {}),
     ...(line.step ? { step: true } : {}),
+    ...(line.tools?.length ? { tools: line.tools } : {}),
   };
 }
 

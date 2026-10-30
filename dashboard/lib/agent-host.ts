@@ -135,6 +135,8 @@ type AgentProc = {
   /** Prompt tokens this turn read from the provider's cache, and all prompt tokens (cache share = read / prompt). */
   turnCacheRead: number;
   turnPrompt: number;
+  /** Tools this turn called (codemode's inner tools by name), in first-use order; shown under the answer. */
+  turnTools: string[];
 };
 
 let hooks: HostHooks = { line: () => {}, event: () => {}, settled: () => {} };
@@ -185,8 +187,26 @@ function sendNoReply(p: AgentProc, rec: Record<string, unknown>): void {
   }
 }
 
+/** The tools a codemode script calls: `tools.name(` or `tools["name"](`, deduped in order. */
+export function codemodeTools(code: unknown): string[] {
+  if (typeof code !== "string") return [];
+  const names = [...code.matchAll(/\btools(?:\.([A-Za-z_$][\w$]*)|\[\s*["']([^"']+)["']\s*\])\s*\(/g)].map((m) => m[1] ?? m[2]!);
+  return [...new Set(names)];
+}
+
+/** Tool names a call used: codemode's inner tools, else the tool itself. */
+function toolsUsed(name: string, args: unknown): string[] {
+  return name === "codemode" ? codemodeTools((args as { code?: unknown } | undefined)?.code) : [name];
+}
+
+const MAX_TURN_TOOLS = 12;
+
 function toolSummary(name: string, args: unknown): string {
   const a = (args ?? {}) as Record<string, unknown>;
+  if (name === "codemode") {
+    const inner = codemodeTools(a.code);
+    if (inner.length) return `codemode: ${inner.join(", ")}`.slice(0, 120);
+  }
   const pick = a.command ?? a.path ?? a.file_path ?? a.pattern ?? a.query ?? a.url;
   const detail = typeof pick === "string" ? pick.replace(/\s+/g, " ").slice(0, 120) : "";
   return detail ? `${name}: ${detail}` : name;
@@ -259,7 +279,7 @@ async function onDialog(p: AgentProc, req: Record<string, unknown>): Promise<voi
   hooks.line(p.id, await appendChatLine(p.id, line));
 }
 
-async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<void> {
+export async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<void> {
   p.lastActive = Date.now();
   switch (rec.type) {
     case "response": {
@@ -280,6 +300,7 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
         p.turnTokens = 0;
         p.turnCacheRead = 0;
         p.turnPrompt = 0;
+        p.turnTools = [];
         hooks.event(p.id, { kind: "running", running: true });
       }
       return;
@@ -313,7 +334,8 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
       if (m.model) p.model = m.provider ? `${m.provider}/${m.model}` : m.model;
       const text = assistantText(msg);
       // Text in a message that ends in a tool call is narration on the way (a step), not the answer.
-      if (text) hooks.line(p.id, await appendAgentChat(p.id, p.id, text, { step: msg.stopReason === "toolUse" }));
+      const step = msg.stopReason === "toolUse";
+      if (text) hooks.line(p.id, await appendAgentChat(p.id, p.id, text, { step, tools: step ? [] : p.turnTools }));
       return;
     }
     case "tool_execution_end": {
@@ -335,6 +357,7 @@ async function onRecord(p: AgentProc, rec: Record<string, unknown>): Promise<voi
     }
     case "tool_execution_start": {
       const summary = toolSummary(String(rec.toolName ?? "tool"), rec.args);
+      for (const t of toolsUsed(String(rec.toolName ?? "tool"), rec.args)) if (!p.turnTools.includes(t) && p.turnTools.length < MAX_TURN_TOOLS) p.turnTools.push(t);
       if (rec.toolCallId) p.toolArgs.set(String(rec.toolCallId), summary);
       hooks.event(p.id, { kind: "activity", text: summary });
       return;
@@ -523,6 +546,7 @@ function start(agentId: string, keys: Record<string, string>): AgentProc {
     turnTokens: 0,
     turnCacheRead: 0,
     turnPrompt: 0,
+    turnTools: [],
   };
   procs.set(agentId, p);
   void dashLog("agent-host", `start ${agentId} pid=${proc.pid}`);

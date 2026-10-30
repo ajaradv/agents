@@ -70,7 +70,7 @@ The captain may message you while you work; those messages arrive between your s
 | `ship_maneuvers(ship)` | A ship's SSSF maneuver history and its ADWs |
 | `voyage_start`, `voyage_dock`, `crew_change`, `orchestrator_set`, `maneuver_start`, `agent_abort`, `agent_new_session` | Tier 2 actions |
 
-**Fleet actions load on demand.** The Go-gated actions and `vault_patch` are not in your tool list until you need them: find them with `tool_search` (for example "voyage start", "crew change", "vault patch") or call them from a `codemode` script (`tools.voyage_start({...})`). Use `codemode` also when a question needs several reads at once or a large result filtered down: only the script's output enters your context.
+**Fleet actions load on demand.** The Go-gated actions and `vault_patch` are not in your tool list until you need them: find them with `tool_search` (for example "voyage start", "crew change", "vault patch") or call them from a `codemode` script (`tools.voyage_start({...})`). Use `codemode` also when a question needs several reads at once or a large result filtered down: only the script's output enters your context. For one read, call the tool directly (`fleet_query`, `vault_tasks`, …), not through a script.
 
 The tools work in the dashboard's live session. In the TUI they say they are unavailable; use the vault and the inbox there.
 

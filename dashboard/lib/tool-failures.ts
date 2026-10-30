@@ -101,17 +101,20 @@ export function recentToolFailures(limit = 10): ToolFailure[] {
   return db().query("SELECT * FROM tool_failures WHERE noise = 0 ORDER BY id DESC LIMIT ?").all(limit) as ToolFailure[];
 }
 
-/** Failures per agent and tool since `hours` ago, most first. */
-export function toolFailureCounts(hours = 24): { agent: string; tool: string; n: number; last: string }[] {
-  const since = new Date(Date.now() - hours * 3_600_000).toISOString();
+/** An upper bound that no ISO timestamp reaches. */
+const NO_END = "9999";
+
+/** Failures per agent and tool since `hours` ago (or inside `window`), most first. */
+export function toolFailureCounts(hours = 24, window?: { from: string; to: string }): { agent: string; tool: string; n: number; last: string }[] {
+  const since = window?.from ?? new Date(Date.now() - hours * 3_600_000).toISOString();
   return db()
-    .query("SELECT agent, tool, COUNT(*) AS n, MAX(ts) AS last FROM tool_failures WHERE ts >= ? AND noise = 0 GROUP BY agent, tool ORDER BY n DESC, last DESC")
-    .all(since) as { agent: string; tool: string; n: number; last: string }[];
+    .query("SELECT agent, tool, COUNT(*) AS n, MAX(ts) AS last FROM tool_failures WHERE ts >= ? AND ts < ? AND noise = 0 GROUP BY agent, tool ORDER BY n DESC, last DESC")
+    .all(since, window?.to ?? NO_END) as { agent: string; tool: string; n: number; last: string }[];
 }
 
-/** The newest counted failures since an ISO time, with their errors (fleet_query tool_failures). */
-export function toolFailuresSince(since: string, limit = 8): ToolFailure[] {
-  return db().query("SELECT * FROM tool_failures WHERE ts >= ? AND noise = 0 ORDER BY id DESC LIMIT ?").all(since, limit) as ToolFailure[];
+/** The newest counted failures since an ISO time (and before `until`), with their errors (fleet_query tool_failures). */
+export function toolFailuresSince(since: string, limit = 8, until = NO_END): ToolFailure[] {
+  return db().query("SELECT * FROM tool_failures WHERE ts >= ? AND ts < ? AND noise = 0 ORDER BY id DESC LIMIT ?").all(since, until, limit) as ToolFailure[];
 }
 
 const time = (ts: string) => new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });

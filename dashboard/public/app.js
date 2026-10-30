@@ -1448,7 +1448,7 @@ function dashboardApp() {
         const to = this.chatGroup ? ` → ${t.label}` : "";
         const name = mine ? "You" + to : t.label || m.role;
         const avatar = mine ? `<img class="avatar" src="${face}" alt="" width="48" height="48" />` : this.bubbleFace(t);
-        row.innerHTML = `${avatar}<div class="d-chat-bubble bubble"><span class="bubble-name">${escapeHtml(name)}${!mine && m.step ? " · thinking" : ""}</span><div class="md">${renderMarkdown(m.text)}</div></div>`;
+        row.innerHTML = `${avatar}<div class="d-chat-bubble bubble"><span class="bubble-name">${escapeHtml(name)}${!mine && m.step ? " · thinking" : ""}</span><div class="md">${renderMarkdown(m.text)}</div>${!mine && m.tools?.length ? `<span class="bubble-tools">tools: ${escapeHtml(m.tools.join(", "))}</span>` : ""}</div>`;
         if (!mine) {
           row.dataset.role = m.role;
           if (m.step) row.classList.add("is-step");

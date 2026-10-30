@@ -98,14 +98,14 @@ export async function cutPoint(requests: string[], ask: typeof jevAsk = jevAsk):
 }
 
 /** Measurement: advice in the last `days` (the observe-mode report). */
-export function compactionAdviceSummary(days = 7): { agent: string; checks: number; movedOn: number; avgTokensWhenMovedOn: number }[] {
+export function compactionAdviceSummary(days = 7, window?: { from: string; to: string }): { agent: string; checks: number; movedOn: number; avgTokensWhenMovedOn: number }[] {
   try {
     const d = metricsDb();
     d.exec(LOG);
-    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const since = window?.from ?? new Date(Date.now() - days * 86_400_000).toISOString();
     return d
-      .query("SELECT agent, COUNT(*) AS checks, SUM(moved_on) AS movedOn, CAST(COALESCE(AVG(CASE WHEN moved_on = 1 THEN tokens END), 0) AS INTEGER) AS avgTokensWhenMovedOn FROM compaction_advice WHERE ts >= ? GROUP BY agent ORDER BY checks DESC")
-      .all(since) as ReturnType<typeof compactionAdviceSummary>;
+      .query("SELECT agent, COUNT(*) AS checks, SUM(moved_on) AS movedOn, CAST(COALESCE(AVG(CASE WHEN moved_on = 1 THEN tokens END), 0) AS INTEGER) AS avgTokensWhenMovedOn FROM compaction_advice WHERE ts >= ? AND ts < ? GROUP BY agent ORDER BY checks DESC")
+      .all(since, window?.to ?? "9999") as ReturnType<typeof compactionAdviceSummary>;
   } catch {
     return [];
   }

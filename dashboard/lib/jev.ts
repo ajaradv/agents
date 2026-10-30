@@ -125,14 +125,14 @@ export async function jevAsk(use: string, state: State, questions: Record<string
 }
 
 /** Spend per use over the last `days` (the cost calculator's Jev side). */
-export function jevSpend(days = 7): { use: string; calls: number; failed: number; inputTokens: number; cost: number; avgMs: number }[] {
+export function jevSpend(days = 7, window?: { from: string; to: string }): { use: string; calls: number; failed: number; inputTokens: number; cost: number; avgMs: number }[] {
   try {
     const d = metricsDb();
     d.exec(LOG);
-    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const since = window?.from ?? new Date(Date.now() - days * 86_400_000).toISOString();
     return d
-      .query("SELECT use, COUNT(*) AS calls, SUM(1 - ok) AS failed, SUM(input_tokens) AS inputTokens, SUM(cost) AS cost, CAST(AVG(ms) AS INTEGER) AS avgMs FROM jev_calls WHERE ts >= ? GROUP BY use ORDER BY cost DESC")
-      .all(since) as ReturnType<typeof jevSpend>;
+      .query("SELECT use, COUNT(*) AS calls, SUM(1 - ok) AS failed, SUM(input_tokens) AS inputTokens, SUM(cost) AS cost, CAST(AVG(ms) AS INTEGER) AS avgMs FROM jev_calls WHERE ts >= ? AND ts < ? GROUP BY use ORDER BY cost DESC")
+      .all(since, window?.to ?? "9999") as ReturnType<typeof jevSpend>;
   } catch {
     return [];
   }
