@@ -8,7 +8,9 @@ import { journalDb } from "./journal.ts";
  * the chain says what was true when. The current value is the row nobody has
  * superseded. An observation is a passing note that expires (14 days by
  * default); it stops showing when it expires or is promoted to a fact or to
- * the captain's profile. Nothing is deleted.
+ * the captain's profile. A fact that is no longer true and has no new value is
+ * retired: a tombstone row (retired = 1, the reason as its source) closes the
+ * chain. Nothing is deleted.
  */
 
 type Res = { ok: boolean; message: string; [k: string]: unknown };
@@ -21,7 +23,7 @@ const DEFAULT_TTL_DAYS = 14;
 const MAX_TTL_DAYS = 90;
 const DAY_MS = 86_400_000;
 
-type FactRow = { id: number; subject: string; key: string; value: string; source: string; since: string; superseded_by: number | null; by: string };
+type FactRow = { id: number; subject: string; key: string; value: string; source: string; since: string; superseded_by: number | null; by: string; retired: number };
 type ObsRow = { id: number; text: string; subject: string | null; by: string; ts: string; expires: string; promoted_to: string | null };
 
 const flat = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -35,14 +37,15 @@ export function normName(s: unknown): string | null {
 
 const badName = (what: string, v: unknown) => `${what} "${cut(String(v ?? ""), 40)}" is not usable: use 1-64 characters from a-z, 0-9, _ . - (for example hub or host).`;
 
-export type FactSetArgs = { subject: unknown; key: unknown; value: unknown; source: unknown; by: string; observation?: number; now?: Date };
+export type FactSetArgs = { subject: unknown; key: unknown; value?: unknown; source: unknown; retire?: boolean; by: string; observation?: number; now?: Date };
 
-/** Set a fact: a new value supersedes the current one; the same value changes nothing. */
+/** Set a fact: a new value supersedes the current one; the same value changes nothing. `retire` closes it with no replacement. */
 export function factSet(a: FactSetArgs): Res {
   const subject = normName(a.subject);
   const key = normName(a.key);
   if (!subject) return { ok: false, message: badName("subject", a.subject) };
   if (!key) return { ok: false, message: badName("key", a.key) };
+  if (a.retire) return factRetire(subject, key, a);
   const value = flat(String(a.value ?? ""));
   if (!value) return { ok: false, message: "Give the fact a value." };
   if (value.length > MAX_VALUE) return { ok: false, message: `The value is ${value.length} characters; the limit is ${MAX_VALUE}. Shorten it, or keep the detail in a vault note and put its path here.` };
@@ -69,7 +72,23 @@ export function factSet(a: FactSetArgs): Res {
   return { ok: true, message: a.observation !== undefined ? `${message} Observation ${a.observation} promoted.` : message, id };
 }
 
-const toFact = (r: FactRow) => ({ id: r.id, subject: r.subject, key: r.key, value: r.value, source: r.source, since: r.since.slice(0, 16), by: r.by, ...(r.superseded_by === null ? {} : { superseded_by: r.superseded_by }) });
+function factRetire(subject: string, key: string, a: FactSetArgs): Res {
+  const source = flat(String(a.source ?? ""));
+  if (!source) return { ok: false, message: 'Give the reason as the source, e.g. "renamed to fleet-hub.host" or "past event, not a fact".' };
+  if (source.length > MAX_SOURCE) return { ok: false, message: `The reason is ${source.length} characters; the limit is ${MAX_SOURCE}.` };
+  const d = journalDb();
+  const name = `${subject}.${key}`;
+  const current = d.query("SELECT * FROM facts WHERE subject = ? AND key = ? AND superseded_by IS NULL").get(subject, key) as FactRow | null;
+  if (!current) {
+    const keys = (d.query("SELECT key FROM facts WHERE subject = ? AND superseded_by IS NULL ORDER BY key").all(subject) as { key: string }[]).map((r) => r.key);
+    return { ok: false, message: `No current fact ${name} to retire.${keys.length ? ` Current keys for ${subject}: ${keys.join(", ")}.` : ""}` };
+  }
+  const row = d.query("INSERT INTO facts (subject, key, value, source, since, by, retired) VALUES (?, ?, '', ?, ?, ?, 1) RETURNING id").get(subject, key, source, (a.now ?? new Date()).toISOString(), a.by) as { id: number };
+  d.query("UPDATE facts SET superseded_by = ? WHERE id IN (?, ?)").run(row.id, current.id, row.id);
+  return { ok: true, message: `${name} retired (was ${cut(current.value, 80)}): ${source}`, id: row.id };
+}
+
+const toFact = (r: FactRow) => ({ id: r.id, subject: r.subject, key: r.key, value: r.retired ? "(retired)" : r.value, source: r.source, since: r.since.slice(0, 16), by: r.by, ...(r.superseded_by === null ? {} : { superseded_by: r.superseded_by }) });
 
 export type FactGetArgs = { subject?: unknown; key?: unknown; history?: boolean; limit?: number };
 

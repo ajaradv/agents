@@ -57,10 +57,17 @@ CREATE TABLE IF NOT EXISTS observations (
 );
 `;
 
+// A retired fact is a tombstone row: retired = 1, the reason in `source`, superseded by itself so every
+// "current = superseded_by IS NULL" query skips it and the chain still shows when it ended.
+const SCHEMA_V3 = `
+ALTER TABLE facts ADD COLUMN retired INTEGER NOT NULL DEFAULT 0;
+`;
+
 // recall.ts keeps its own FTS tables in this file, created idempotently by itself.
 const MIGRATIONS: Migration[] = [
   { version: 1, note: "baseline: workflows, steps, events", up: SCHEMA_V1 },
   { version: 2, note: "facts and observations (Alice's memory)", up: SCHEMA_V2 },
+  { version: 3, note: "facts can be retired without a replacement", up: SCHEMA_V3 },
 ];
 
 let db: Database | null = null;

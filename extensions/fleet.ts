@@ -241,17 +241,18 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fact_set",
     label: "Record a fact",
-    description: "Record an exact value that changes: a host, a model, who owns what, a date. A new value supersedes the old one, which stays in the history; the same value changes nothing. Always give the source (who said it or where you saw it, with the date). Not for preferences (remember) or passing notes (log_observation).",
+    description: "Record an exact value that changes: a host, a model, who owns what, a date. A new value supersedes the old one, which stays in the history; the same value changes nothing. retire=true closes a fact that is no longer true and has no new value (source is the reason). Always give the source (who said it or where you saw it, with the date). Not for preferences (remember) or passing notes (log_observation).",
     parameters: Type.Object({
       subject: Type.String({ description: "What it is about, a-z 0-9 _ . -, e.g. hub" }),
       key: Type.String({ description: "The attribute, e.g. host" }),
-      value: Type.String({ description: "The value, up to 500 characters" }),
+      value: Type.Optional(Type.String({ description: "The value, up to 500 characters; not needed with retire" })),
+      retire: Type.Optional(Type.Boolean({ description: "Retire the current fact instead of setting a value; source is why" })),
       source: Type.String({ description: "e.g. captain in chat 2026-10-30" }),
       observation: Type.Optional(Type.Number({ description: "An observation this settles; it stops showing" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("POST", "fact-set", {}, { subject: p.subject, key: p.key, value: p.value, source: p.source, observation: p.observation, order: p.order, step: p.step }));
+      return text(await call("POST", "fact-set", {}, { subject: p.subject, key: p.key, value: p.value, source: p.source, retire: p.retire, observation: p.observation, order: p.order, step: p.step }));
     },
   });
 
