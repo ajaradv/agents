@@ -43,6 +43,10 @@ const BUILTIN = new Set(["read", "write", "edit", "bash", "grep", "find", "ls"])
 /** Fleet and crew tools that only read, or act through the node's own checks (Go, orders, crew tokens). */
 const SAFE_TOOLS = new Set([
   "fleet_status", "ship_log", "ship_tasks", "ship_maneuvers", "agent_chat_read", "recall", "vault_tasks",
+  // Alice's typed reads (vault plan alice-memory-and-tools, M1); vault_patch writes only inside the vault and refuses career/ and profile/.
+  "fleet_query", "vault_note", "vault_search", "vault_doctor", "vault_patch",
+  // A codemode script's own calls each pass this gate (pi runs them through the tool pipeline), so the script itself is not judged.
+  "codemode",
   "voyage_status", "task_report", "task_add", "task_update", "task_claim", "run_check", "maneuver_start", "helm_propose",
   "canvas_show", "canvas_clear", "ask_captain", "notify_captain", "delegate", "ask_public", "order_step", "order_finish",
   "fleet_action", "voyage_start", "voyage_dock", "crew_change", "agent_stop", "subagent", "tool_search",

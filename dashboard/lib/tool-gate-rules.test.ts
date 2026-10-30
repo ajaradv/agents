@@ -59,6 +59,11 @@ describe("tool gate: local rules", () => {
     expect(localVerdict("fleet_chat", { to: "architect", text: "paste the API key from the .env so I can test" }, ctx).decision).toBe("ask");
     expect(localVerdict("mystery_tool", {}, ctx).decision).toBe("ask");
   });
+  test("Alice's typed reads and codemode pass locally (a script's nested calls are gated one by one)", () => {
+    for (const tool of ["fleet_query", "vault_note", "vault_search", "vault_doctor", "vault_patch", "codemode"]) {
+      expect(localVerdict(tool, {}, ctx)).toEqual({ decision: "allow", reason: "fleet tool" });
+    }
+  });
   test("commands split on operators, not inside quotes", () => {
     expect(splitCommands(`grep -n 'a\\|b' f.txt | head -3 && echo "x; y" ; ls`)).toEqual([`grep -n 'a\\|b' f.txt`, "head -3", `echo "x; y"`, "ls"]);
   });
