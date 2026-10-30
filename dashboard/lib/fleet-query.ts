@@ -18,10 +18,12 @@ export const SPEND_BY = ["agent", "model", "day"] as const;
 export type SpendBy = (typeof SPEND_BY)[number];
 
 const MAX_DAYS = 365;
+const MAX_LIMIT = 200;
 const usd = (n: number) => Number(n.toFixed(4));
 const DAY_MS = 86_400_000;
 const LATEST_FAILURES = 8;
 const NOTABLE_GATE = 15;
+const BY_AGENT_TOOL = 20;
 
 /** The time window every query reads: `from` inclusive, `to` exclusive. */
 export type Window = { from: string; to: string; label: string; ranged: boolean };
@@ -80,22 +82,22 @@ export function spendQuery(w: Window, by: SpendBy): Res {
 const shownOf = (name: string, kept: number, total: number): Record<string, string> => (total > kept ? { [`${name}_shown`]: `${kept} of ${total}` } : {});
 
 /** Failed tool calls and dead turns (journal.db tool_failures; expected non-zero exits left out). Totals cover the whole window; the lists are cut and say so. */
-export function toolFailuresQuery(w: Window): Res {
+export function toolFailuresQuery(w: Window, limit?: number): Res {
   const pairs = toolFailureCounts(0, w);
   const total = pairs.reduce((a, r) => a + r.n, 0);
   const byTool = new Map<string, number>();
   for (const r of pairs) byTool.set(r.tool, (byTool.get(r.tool) ?? 0) + r.n);
-  const latest = toolFailuresSince(w.from, LATEST_FAILURES, w.to);
+  const latest = toolFailuresSince(w.from, limit ?? LATEST_FAILURES, w.to);
   const days = toolFailureDays(w);
   return {
     ok: true,
     message: `${total} tool failure(s)${when(w)}`,
     by_tool: [...byTool].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([tool, n]) => ({ tool, n })),
     failures_by_day: days,
-    by_agent_tool: pairs.slice(0, 20).map((r) => ({ agent: r.agent, tool: r.tool, n: r.n, last: r.last })),
-    ...shownOf("by_agent_tool", 20, pairs.length),
+    by_agent_tool: pairs.slice(0, limit ?? BY_AGENT_TOOL).map((r) => ({ agent: r.agent, tool: r.tool, n: r.n, last: r.last })),
+    ...shownOf("by_agent_tool", Math.min(limit ?? BY_AGENT_TOOL, pairs.length), pairs.length),
     latest: latest.map((f) => ({ ts: f.ts, agent: f.agent, tool: f.tool, error: f.error })),
-    ...shownOf("latest", LATEST_FAILURES, total),
+    ...shownOf("latest", latest.length, total),
   };
 }
 
@@ -149,7 +151,7 @@ const GATE_PLAIN = ["allow", "observe-allow", "screen-ok", "allowed"];
  * Tool gate decisions (metrics.db gate_log) over the whole window: counts by decision with what each
  * means, the mode, who and when the non-allows fell, and the latest few of them.
  */
-export function gateQuery(w: Window): Res {
+export function gateQuery(w: Window, limit?: number): Res {
   let rows: { decision: string; source: string; n: number }[] = [];
   let recent: { ts: string; agent: string; decision: string; summary: string }[] = [];
   let byAgent: { k: string; decision: string; n: number }[] = [];
@@ -158,7 +160,7 @@ export function gateQuery(w: Window): Res {
   try {
     const db = metricsDb();
     rows = db.query("SELECT decision, source, COUNT(*) AS n FROM gate_log WHERE ts >= ? AND ts < ? GROUP BY decision, source").all(w.from, w.to) as typeof rows;
-    recent = db.query(`SELECT ts, agent, decision, summary FROM gate_log WHERE ts >= ? AND ts < ? AND decision NOT IN (${plain}) ORDER BY id DESC LIMIT ${NOTABLE_GATE}`).all(w.from, w.to) as typeof recent;
+    recent = db.query(`SELECT ts, agent, decision, summary FROM gate_log WHERE ts >= ? AND ts < ? AND decision NOT IN (${plain}) ORDER BY id DESC LIMIT ${limit ?? NOTABLE_GATE}`).all(w.from, w.to) as typeof recent;
     byAgent = db.query(`SELECT agent AS k, decision, COUNT(*) AS n FROM gate_log WHERE ts >= ? AND ts < ? AND decision NOT IN (${plain}) GROUP BY k, decision`).all(w.from, w.to) as typeof byAgent;
     byDay = db.query(`SELECT substr(ts, 1, 10) AS k, decision, COUNT(*) AS n FROM gate_log WHERE ts >= ? AND ts < ? AND decision NOT IN (${plain}) GROUP BY k, decision`).all(w.from, w.to) as typeof byDay;
   } catch {
@@ -199,7 +201,7 @@ export function gateQuery(w: Window): Res {
     not_allowed_by_agent: fold(byAgent, "agent"),
     not_allowed_by_day: fold(byDay, "day", true),
     notable: recent.map((r) => ({ ts: r.ts, agent: r.agent, decision: r.decision, call: r.summary })),
-    ...shownOf("notable", NOTABLE_GATE, notableTotal),
+    ...shownOf("notable", recent.length, notableTotal),
   };
 }
 
@@ -221,8 +223,11 @@ export function voyagesQuery(w: Window): Res {
   };
 }
 
-/** Run a named query. `days` (default 7) is clamped to 1..365; `since`/`until` set the window instead (see resolveWindow); `by` applies to spend only. */
-export function fleetQuery(name: string, opts: { days?: number; by?: string; since?: string; until?: string } = {}): Res {
+/**
+ * Run a named query. `days` (default 7) is clamped to 1..365; `since`/`until` set the window instead (see resolveWindow); `by` applies to spend only.
+ * `limit` (1..200) sets the rows of the lists the query itself cuts (gate notable, tool_failures latest and by_agent_tool); `full` lifts them to 200.
+ */
+export function fleetQuery(name: string, opts: { days?: number; by?: string; since?: string; until?: string; limit?: number; full?: boolean } = {}): Res {
   if (!(FLEET_QUERIES as readonly string[]).includes(name)) return { ok: false, message: `Unknown query "${name}". Queries: ${FLEET_QUERIES.join(", ")}.` };
   const w = resolveWindow(opts);
   if (typeof w === "string") return { ok: false, message: w };
@@ -232,8 +237,9 @@ export function fleetQuery(name: string, opts: { days?: number; by?: string; sin
     return spendQuery(w, by as SpendBy);
   }
   if (opts.by) return { ok: false, message: `by applies to spend only (not ${name}).` };
-  if (name === "tool_failures") return toolFailuresQuery(w);
+  const limit = opts.limit ? Math.min(MAX_LIMIT, Math.max(1, Math.floor(opts.limit))) : opts.full ? MAX_LIMIT : undefined;
+  if (name === "tool_failures") return toolFailuresQuery(w, limit);
   if (name === "jev") return jevQuery(w);
-  if (name === "gate") return gateQuery(w);
+  if (name === "gate") return gateQuery(w, limit);
   return voyagesQuery(w);
 }

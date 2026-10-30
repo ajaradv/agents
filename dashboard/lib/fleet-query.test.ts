@@ -67,6 +67,24 @@ describe("fleet_query", () => {
     expect(toolText(r as never, VIEWS.fleet_query)).toContain("latest_shown: 8 of 12");
   });
 
+  test("tool_failures limit sets the cut lists, full lifts them, and the limit is clamped to 1..200", () => {
+    type R = { latest: unknown[]; latest_shown?: string; by_agent_tool: unknown[]; by_agent_tool_shown?: string };
+    const some = q.fleetQuery("tool_failures", { days: 7, limit: 2 }) as unknown as R;
+    expect([some.latest.length, some.latest_shown]).toEqual([2, "2 of 12"]);
+    expect([some.by_agent_tool.length, some.by_agent_tool_shown]).toEqual([2, "2 of 3"]);
+    const more = q.fleetQuery("tool_failures", { days: 7, limit: 10 }) as unknown as R;
+    expect([more.latest.length, more.latest_shown, more.by_agent_tool_shown]).toEqual([10, "10 of 12", undefined]);
+    const full = q.fleetQuery("tool_failures", { days: 7, full: true }) as unknown as R;
+    expect([full.latest.length, full.latest_shown]).toEqual([12, undefined]);
+    const low = q.fleetQuery("tool_failures", { days: 7, limit: -4 }) as unknown as R;
+    expect(low.latest.length).toBe(1);
+    const high = q.fleetQuery("tool_failures", { days: 7, limit: 9999 }) as unknown as R;
+    expect(high.latest.length).toBe(12); // clamped to 200, only 12 exist
+    const text = toolText(full as never, VIEWS.fleet_query, { full: true });
+    expect(text).not.toContain("_shown");
+    expect(text).not.toContain("more latest");
+  });
+
   test("jev and gate answer with zero rows before anything is logged", () => {
     expect((q.fleetQuery("jev") as unknown as { message: string }).message).toBe("0 Jev calls, $0.0000 in 7 day(s)");
     expect((q.fleetQuery("gate") as unknown as { message: string }).message).toBe("0 gate decisions in 7 day(s)");
@@ -116,6 +134,12 @@ describe("fleet_query", () => {
     const text = toolText(r as never, VIEWS.fleet_query);
     expect(text).toContain("mode: observe");
     expect(text).toContain("notable_shown: 15 of 20");
+    // limit and full change how many notable rows come back, and the shown line follows.
+    const few = q.fleetQuery("gate", { days: 7, limit: 5 }) as unknown as { notable: unknown[]; notable_shown: string };
+    expect([few.notable.length, few.notable_shown]).toEqual([5, "5 of 20"]);
+    const all = q.fleetQuery("gate", { days: 7, full: true }) as unknown as { notable: unknown[]; notable_shown?: string };
+    expect([all.notable.length, all.notable_shown]).toEqual([20, undefined]);
+    expect(toolText(all as never, VIEWS.fleet_query, { full: true })).not.toContain("full=true");
     at(0.1, "kin", "hold");
     expect((q.fleetQuery("gate", { days: 7 }) as unknown as { mode: string }).mode).toBe("mixed");
     d.exec("DELETE FROM gate_log WHERE decision LIKE 'observe-%'");

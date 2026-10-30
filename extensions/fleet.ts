@@ -70,10 +70,11 @@ export default function (pi: ExtensionAPI) {
       "The whole fleet at a glance: ships (voyage, tasks, crew), who is working, what waits on the captain, today's spend. Call it first for fleet questions.",
     parameters: Type.Object({
       detail: Type.Optional(Type.Boolean({ description: "Add per-crewmate activity, officers, workers, spend per agent" })),
+      full: Type.Optional(Type.Boolean({ description: "Long text uncut" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("GET", "status", { detail: p.detail ? "true" : undefined, order: p.order, step: p.step }));
+      return text(await call("GET", "status", { detail: p.detail ? "true" : undefined, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
     },
   });
 
@@ -97,9 +98,9 @@ export default function (pi: ExtensionAPI) {
     name: "ship_tasks",
     label: "Ship tasks",
     description: "A ship's open voyage: goal and every task with assignee and status.",
-    parameters: Type.Object({ ship: Type.String(), ...OrderArgs }),
+    parameters: Type.Object({ ship: Type.String(), full: Type.Optional(Type.Boolean({ description: "Long text uncut" })), ...OrderArgs }),
     async execute(_id, p) {
-      return text(await call("GET", "tasks", { ship: p.ship, order: p.order, step: p.step }));
+      return text(await call("GET", "tasks", { ship: p.ship, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
     },
   });
 
@@ -107,9 +108,9 @@ export default function (pi: ExtensionAPI) {
     name: "ship_maneuvers",
     label: "Ship maneuvers",
     description: "A ship's recent SSSF maneuvers (ADW runs): status, phases, errors, cost; plus the ADWs it has.",
-    parameters: Type.Object({ ship: Type.String(), ...OrderArgs }),
+    parameters: Type.Object({ ship: Type.String(), full: Type.Optional(Type.Boolean({ description: "Long text uncut" })), ...OrderArgs }),
     async execute(_id, p) {
-      return text(await call("GET", "maneuvers", { ship: p.ship, order: p.order, step: p.step }));
+      return text(await call("GET", "maneuvers", { ship: p.ship, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
     },
   });
 
@@ -135,26 +136,29 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       filter: Type.Optional(StringEnum(["ready", "open", "in-progress", "blocked", "done", "all", "next"] as const, { description: "next: the open Done-when steps of each active task, and which look closeable" })),
       id: Type.Optional(Type.String({ description: "A task's note name, e.g. fleet-tool-standards" })),
+      full: Type.Optional(Type.Boolean({ description: "Long text uncut" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("GET", "vault-tasks", { filter: p.filter, id: p.id, order: p.order, step: p.step }));
+      return text(await call("GET", "vault-tasks", { filter: p.filter, id: p.id, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
     },
   });
 
   pi.registerTool({
     name: "fleet_query",
     label: "Fleet query",
-    description: "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool, with totals by tool and day. jev: Jev calls and cost per use, and the compaction advisor. gate: tool gate decisions with mode, counts by agent and day, and the notable ones. voyages: open and recent voyages with ship and cost. The window is days back from now, or since/until as YYYY-MM-DD (UTC, both days inclusive) for a fixed range. A list says \"shown N of M\" when cut: a sample, not totals.",
+    description: "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool, with totals by tool and day. jev: Jev calls and cost per use, and the compaction advisor. gate: tool gate decisions with mode, counts by agent and day, and the notable ones. voyages: open and recent voyages with ship and cost. The window is days back from now, or since/until as YYYY-MM-DD (UTC, both days inclusive) for a fixed range. A list says \"shown N of M\" when cut: a sample, not totals; limit or full=true shows more.",
     parameters: Type.Object({
       query: StringEnum(["spend", "tool_failures", "jev", "gate", "voyages"] as const),
       days: Type.Optional(Type.Number({ description: "How far back, default 7, max 365; ignored when since is given" })),
       since: Type.Optional(Type.String({ description: "First day, YYYY-MM-DD (UTC, inclusive) or an ISO timestamp" })),
       until: Type.Optional(Type.String({ description: "Last day, YYYY-MM-DD (UTC, inclusive) or an ISO timestamp; with no since, days back from it" })),
       by: Type.Optional(StringEnum(["agent", "model", "day"] as const, { description: "spend only: how to group it, default agent" })),
+      limit: Type.Optional(Type.Number({ description: "Rows per list, default as now, max 200" })),
+      full: Type.Optional(Type.Boolean({ description: "Long text uncut, every row (lists up to 200)" })),
     }),
     async execute(_id, p) {
-      return text(await call("GET", "fleet-query", { query: p.query, days: p.days, since: p.since, until: p.until, by: p.by }));
+      return text(await call("GET", "fleet-query", { query: p.query, days: p.days, since: p.since, until: p.until, by: p.by, limit: p.limit, full: p.full ? "true" : undefined }));
     },
   });
 
@@ -169,9 +173,10 @@ export default function (pi: ExtensionAPI) {
       ship: Type.Optional(Type.String({ description: "Frontmatter ship, e.g. fleet, kinwork" })),
       path: Type.Optional(Type.String({ description: "Path prefix (tasks/) or glob (fleet/plans/**)" })),
       limit: Type.Optional(Type.Number({ description: "Notes, default 8, max 25" })),
+      full: Type.Optional(Type.Boolean({ description: "Long text uncut" })),
     }),
     async execute(_id, p) {
-      return text(await call("GET", "vault-search", { query: p.query, type: p.type, status: p.status, ship: p.ship, path: p.path, limit: p.limit }));
+      return text(await call("GET", "vault-search", { query: p.query, type: p.type, status: p.status, ship: p.ship, path: p.path, limit: p.limit, full: p.full ? "true" : undefined }));
     },
   });
 
@@ -193,9 +198,9 @@ export default function (pi: ExtensionAPI) {
     name: "vault_doctor",
     label: "Check the vault",
     description: "Check the vault's notes: frontmatter that does not parse, Task fields, broken links and blocked_by, the task index. Read-only unless fix=true, which only quotes values that break frontmatter (what bin/vault-doctor --fix does). The rest needs judgement: propose it to the captain.",
-    parameters: Type.Object({ fix: Type.Optional(Type.Boolean({ description: "Repair the problems marked fixable" })) }),
+    parameters: Type.Object({ fix: Type.Optional(Type.Boolean({ description: "Repair the problems marked fixable" })), full: Type.Optional(Type.Boolean({ description: "Long text uncut" })) }),
     async execute(_id, p) {
-      return p.fix ? text(await call("POST", "vault-doctor", {}, { fix: true })) : text(await call("GET", "vault-doctor"));
+      return p.fix ? text(await call("POST", "vault-doctor", {}, { fix: true })) : text(await call("GET", "vault-doctor", { full: p.full ? "true" : undefined }));
     },
   });
 
