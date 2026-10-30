@@ -72,4 +72,14 @@ describe("tool standard", () => {
     );
     expect(longParams).toEqual([]);
   });
+
+  test("a read tool's output may say full=true only if its schema has a full parameter", async () => {
+    const base = { FLEET_DASHBOARD_URL: "http://127.0.0.1:1", FLEET_CREW_TOKEN: "t" };
+    const tools = [
+      ...(await toolsOf(`${EXT}fleet.ts`, { ...base, FLEET_AGENT_ID: "alice" })),
+      ...(await toolsOf(`${EXT}crew.ts`, { ...base, FLEET_SHIP: "demo", FLEET_AGENT_ID: "demo-lead" })),
+    ];
+    const without = tools.filter((t) => VIEWS[t.name] && !("full" in (t.parameters?.properties ?? {}))).map((t) => t.name);
+    expect(without).toEqual([]);
+  });
 });
