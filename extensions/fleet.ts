@@ -230,10 +230,11 @@ export default function (pi: ExtensionAPI) {
       history: Type.Optional(Type.Boolean({ description: "The chain of values for one subject and key" })),
       observations: Type.Optional(Type.Boolean({ description: "List open observations (log_observation) instead" })),
       limit: Type.Optional(Type.Number({ description: "Rows, default 50, max 200" })),
+      full: Type.Optional(Type.Boolean({ description: "Long text uncut" })),
       ...OrderArgs,
     }),
     async execute(_id, p) {
-      return text(await call("GET", "fact-get", { subject: p.subject, key: p.key, history: p.history ? "true" : undefined, observations: p.observations ? "true" : undefined, limit: p.limit, order: p.order, step: p.step }));
+      return text(await call("GET", "fact-get", { subject: p.subject, key: p.key, history: p.history ? "true" : undefined, observations: p.observations ? "true" : undefined, limit: p.limit, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
     },
   });
 
