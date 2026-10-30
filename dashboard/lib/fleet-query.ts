@@ -1,7 +1,7 @@
 import { compactionAdviceSummary } from "./compaction-advisor.ts";
 import { jevSpend } from "./jev.ts";
 import { metricsDb } from "./metrics.ts";
-import { toolFailureCounts, toolFailuresSince } from "./tool-failures.ts";
+import { toolFailureCounts, toolFailureDays, toolFailuresSince } from "./tool-failures.ts";
 
 /**
  * fleet_query (vault plan alice-memory-and-tools, M1): the exact questions an
@@ -20,6 +20,8 @@ export type SpendBy = (typeof SPEND_BY)[number];
 const MAX_DAYS = 365;
 const usd = (n: number) => Number(n.toFixed(4));
 const DAY_MS = 86_400_000;
+const LATEST_FAILURES = 8;
+const NOTABLE_GATE = 15;
 
 /** The time window every query reads: `from` inclusive, `to` exclusive. */
 export type Window = { from: string; to: string; label: string; ranged: boolean };
@@ -74,15 +76,26 @@ export function spendQuery(w: Window, by: SpendBy): Res {
   };
 }
 
-/** Failed tool calls and dead turns (journal.db tool_failures; expected non-zero exits left out). */
+/** `{ <name>_shown: "N of M" }` when a list was cut to its first `max`; nothing when it all fits. */
+const shownOf = (name: string, kept: number, total: number): Record<string, string> => (total > kept ? { [`${name}_shown`]: `${kept} of ${total}` } : {});
+
+/** Failed tool calls and dead turns (journal.db tool_failures; expected non-zero exits left out). Totals cover the whole window; the lists are cut and say so. */
 export function toolFailuresQuery(w: Window): Res {
-  const by = toolFailureCounts(0, w);
-  const total = by.reduce((a, r) => a + r.n, 0);
+  const pairs = toolFailureCounts(0, w);
+  const total = pairs.reduce((a, r) => a + r.n, 0);
+  const byTool = new Map<string, number>();
+  for (const r of pairs) byTool.set(r.tool, (byTool.get(r.tool) ?? 0) + r.n);
+  const latest = toolFailuresSince(w.from, LATEST_FAILURES, w.to);
+  const days = toolFailureDays(w);
   return {
     ok: true,
     message: `${total} tool failure(s)${when(w)}`,
-    failures_by_tool: by.slice(0, 20).map((r) => ({ agent: r.agent, tool: r.tool, n: r.n, last: r.last })),
-    latest: toolFailuresSince(w.from, 8, w.to).map((f) => ({ ts: f.ts, agent: f.agent, tool: f.tool, error: f.error })),
+    by_tool: [...byTool].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([tool, n]) => ({ tool, n })),
+    failures_by_day: days,
+    by_agent_tool: pairs.slice(0, 20).map((r) => ({ agent: r.agent, tool: r.tool, n: r.n, last: r.last })),
+    ...shownOf("by_agent_tool", 20, pairs.length),
+    latest: latest.map((f) => ({ ts: f.ts, agent: f.agent, tool: f.tool, error: f.error })),
+    ...shownOf("latest", LATEST_FAILURES, total),
   };
 }
 
@@ -98,20 +111,95 @@ export function jevQuery(w: Window): Res {
   };
 }
 
-/** Tool gate decisions (metrics.db gate_log): counts by decision, and the ones that were not plain allows. */
+/** What a gate_log decision means, in plain words. `sources` are where its rows came from (a stop is a local rule or Jev). */
+function gateLabel(decision: string, sources: string[]): string {
+  if (decision === "stop") return sources.every((s) => s === "local") ? "stopped (local rule, enforced in every mode)" : "stopped (a local rule, or Jev's verdict in enforce mode)";
+  return (
+    {
+      "observe-allow": "allowed (observe mode)",
+      "observe-hold": "would hold (observe mode: let through)",
+      "observe-stop": "would stop (observe mode: let through)",
+      allow: "allowed",
+      hold: "held for the captain",
+      allowed: "captain allowed",
+      denied: "captain denied",
+      "screen-ok": "result screened: clean",
+      "screen-flag": "result screened: flagged as possible injected instructions",
+      "screen-error": "result screen failed (Jev error)",
+    } as Record<string, string>
+  )[decision] ?? decision;
+}
+
+/** The short phrase for the one-line message. */
+const GATE_SHORT: Record<string, string> = {
+  "observe-allow": "allowed",
+  allow: "allowed",
+  "observe-hold": "would hold (let through)",
+  "observe-stop": "would stop (let through)",
+  hold: "held",
+  stop: "stopped",
+  allowed: "captain allowed",
+  denied: "captain denied",
+};
+
+/** Decisions that let the call go on without a second look; the others are the notable ones. */
+const GATE_PLAIN = ["allow", "observe-allow", "screen-ok", "allowed"];
+
+/**
+ * Tool gate decisions (metrics.db gate_log) over the whole window: counts by decision with what each
+ * means, the mode, who and when the non-allows fell, and the latest few of them.
+ */
 export function gateQuery(w: Window): Res {
-  let rows: { decision: string; n: number }[] = [];
+  let rows: { decision: string; source: string; n: number }[] = [];
   let recent: { ts: string; agent: string; decision: string; summary: string }[] = [];
+  let byAgent: { k: string; decision: string; n: number }[] = [];
+  let byDay: { k: string; decision: string; n: number }[] = [];
+  const plain = GATE_PLAIN.map((d) => `'${d}'`).join(", ");
   try {
-    rows = metricsDb().query("SELECT decision, COUNT(*) AS n FROM gate_log WHERE ts >= ? AND ts < ? GROUP BY decision ORDER BY n DESC").all(w.from, w.to) as typeof rows;
-    recent = metricsDb().query("SELECT ts, agent, decision, summary FROM gate_log WHERE ts >= ? AND ts < ? AND decision NOT IN ('allow', 'observe-allow', 'screen-ok') ORDER BY id DESC LIMIT 15").all(w.from, w.to) as typeof recent;
+    const db = metricsDb();
+    rows = db.query("SELECT decision, source, COUNT(*) AS n FROM gate_log WHERE ts >= ? AND ts < ? GROUP BY decision, source").all(w.from, w.to) as typeof rows;
+    recent = db.query(`SELECT ts, agent, decision, summary FROM gate_log WHERE ts >= ? AND ts < ? AND decision NOT IN (${plain}) ORDER BY id DESC LIMIT ${NOTABLE_GATE}`).all(w.from, w.to) as typeof recent;
+    byAgent = db.query(`SELECT agent AS k, decision, COUNT(*) AS n FROM gate_log WHERE ts >= ? AND ts < ? AND decision NOT IN (${plain}) GROUP BY k, decision`).all(w.from, w.to) as typeof byAgent;
+    byDay = db.query(`SELECT substr(ts, 1, 10) AS k, decision, COUNT(*) AS n FROM gate_log WHERE ts >= ? AND ts < ? AND decision NOT IN (${plain}) GROUP BY k, decision`).all(w.from, w.to) as typeof byDay;
   } catch {
     /* no log yet */
   }
+  const counts = new Map<string, { n: number; sources: string[] }>();
+  for (const r of rows) {
+    const c = counts.get(r.decision) ?? { n: 0, sources: [] };
+    counts.set(r.decision, { n: c.n + r.n, sources: [...c.sources, r.source] });
+  }
+  const decisions = [...counts].sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0])).map(([decision, c]) => ({ decision, label: gateLabel(decision, c.sources), n: c.n }));
+  const has = (f: (d: string) => boolean) => decisions.some((d) => f(d.decision));
+  const observe = has((d) => d.startsWith("observe-"));
+  const enforce = has((d) => d === "hold" || d === "allow");
+  const mode = observe && enforce ? "mixed" : observe ? "observe" : enforce ? "enforce" : "none";
+  const acts = decisions.filter((d) => !d.decision.startsWith("screen-")).map((d) => `${d.n} ${GATE_SHORT[d.decision] ?? d.decision}`);
+  const screened = decisions.filter((d) => d.decision.startsWith("screen-")).map((d) => `${d.n} ${d.decision === "screen-ok" ? "clean" : d.decision === "screen-flag" ? "flagged" : "failed"}`);
+  const message = decisions.length
+    ? [`${mode} mode: ${acts.join(", ") || "no calls judged"}`, screened.length ? `results screened ${screened.join(", ")}` : ""].filter(Boolean).join("; ")
+    : `0 gate decisions${when(w)}`;
+  // Per agent or day: the non-allow decisions as "observe-hold 40, stop 2", biggest first.
+  const fold = (list: typeof byAgent, key: string, newestFirst = false) => {
+    const m = new Map<string, { n: number; by: [string, number][] }>();
+    for (const r of list) {
+      const e = m.get(r.k) ?? { n: 0, by: [] };
+      m.set(r.k, { n: e.n + r.n, by: [...e.by, [r.decision, r.n]] });
+    }
+    return [...m]
+      .sort((a, b) => (newestFirst ? b[0].localeCompare(a[0]) : b[1].n - a[1].n || a[0].localeCompare(b[0])))
+      .map(([k, e]) => ({ [key]: k, n: e.n, decisions: e.by.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([d, n]) => `${d} ${n}`).join(", ") }));
+  };
+  const notableTotal = decisions.filter((d) => !GATE_PLAIN.includes(d.decision)).reduce((a, d) => a + d.n, 0);
   return {
     ok: true,
-    message: rows.length ? rows.map((r) => `${r.decision} ${r.n}`).join(", ") : `0 gate decisions${when(w)}`,
+    message,
+    mode,
+    decisions,
+    not_allowed_by_agent: fold(byAgent, "agent"),
+    not_allowed_by_day: fold(byDay, "day", true),
     notable: recent.map((r) => ({ ts: r.ts, agent: r.agent, decision: r.decision, call: r.summary })),
+    ...shownOf("notable", NOTABLE_GATE, notableTotal),
   };
 }
 

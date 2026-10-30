@@ -112,6 +112,13 @@ export function toolFailureCounts(hours = 24, window?: { from: string; to: strin
     .all(since, window?.to ?? NO_END) as { agent: string; tool: string; n: number; last: string }[];
 }
 
+/** Failures per UTC day inside `window`, newest day first. */
+export function toolFailureDays(window: { from: string; to: string }): { day: string; n: number }[] {
+  return db()
+    .query("SELECT substr(ts, 1, 10) AS day, COUNT(*) AS n FROM tool_failures WHERE ts >= ? AND ts < ? AND noise = 0 GROUP BY day ORDER BY day DESC")
+    .all(window.from, window.to) as { day: string; n: number }[];
+}
+
 /** The newest counted failures since an ISO time (and before `until`), with their errors (fleet_query tool_failures). */
 export function toolFailuresSince(since: string, limit = 8, until = NO_END): ToolFailure[] {
   return db().query("SELECT * FROM tool_failures WHERE ts >= ? AND ts < ? AND noise = 0 ORDER BY id DESC LIMIT ?").all(since, until, limit) as ToolFailure[];
