@@ -1,6 +1,45 @@
 # Agents control center
 
-Fleet catalog: agent personas, harness defaults, Pi extensions, software-factory (SSSF) source, and ship definitions. Product code lives in ship checkouts; this repo defines how agents are launched and which factory gets stamped where.
+> **Work in progress.** This is a personal, actively changing system. Interfaces, file layouts and agent roles move week to week, and parts of this README lag behind the code. Expect rough edges; nothing here is a stable API.
+
+## Why this exists
+
+One person, several software projects, and a crew of AI agents doing the work. This repo is the control center for that crew: it defines who the agents are, what they may do, how they are launched, and how their work is watched, gated and paid for.
+
+The goals:
+
+- **One officer to talk to.** Alice is the captain's (the owner's) chief of staff. She takes requests in a chat, looks things up, and hands work to the right crew. The aim is an "omni agent": she acts only through typed tools (no shell), remembers what matters, and eventually takes up work on her own when the feedback says it is wanted.
+- **Crews per project.** Each project (a *ship*) gets a crew: a lead, a builder, a scout, a helmsman, a designer. They work in their own checkouts and worktrees, report back through the fleet, and never merge or deploy on their own.
+- **Cheap, checked decisions.** Small judgment calls (is this tool call safe? did this order step do what it said? should this context be compacted?) go to Jev, a system-one model that answers typed questions for fractions of a cent. Anything risky waits for the captain's Go.
+- **Everything observable.** Every turn, tool failure, gate decision and voyage is recorded, so the fleet can be asked exact questions about what it did and what it cost.
+
+## How it fits together
+
+| Piece | What it is |
+|---|---|
+| **The hub** | An exe.dev VM that runs the fleet node, the dashboard, Alice and the officers. The laptop is a client and a ship host. Deploy with `bin/hub-deploy`. |
+| **Node** (`dashboard/node.ts`) | Owns the agents: starts them, routes messages, runs routines and orders, keeps the databases (`metrics.db`, `journal.db`, per-ship logs). |
+| **Dashboard** (`dashboard/server.ts`) | The captain's UI: chat with any agent, what needs a decision, health, spend. |
+| **Agents** (`agents/<id>/agent.yaml`, `roles/<id>.md`) | pi agents with a model, extensions, tools and a role prompt. `bin/launch` starts one. |
+| **Fleet tools** (`extensions/fleet.ts`) | The typed tools agents use: fleet status, ship tasks and logs, `fleet_query` for numbers, the vault tools, Go-gated actions. |
+| **Tool gate** (`extensions/tool-gate.ts`) | Every tool call passes local rules, then Jev; in observe mode it logs what it would hold, in enforce mode it holds or stops. |
+| **Orders** (`docs/orders.md`) | Short, exact sequences of fleet actions Alice runs step by step, each checked against the plan. |
+| **The vault** | An Obsidian vault (`~/Workspace/brain`): plans, research, tasks with "Done when" checklists, the captain's profile. The node mirrors it into SQLite for search; `bin/vault-sync` keeps laptop and hub in step. |
+| **SSSF** (`.claude/skills/sssf/`) | The software-factory workflows (ADWs) stamped into ship repos. |
+
+## Status and what is next
+
+The current focus is Alice's memory and tools (vault plan `fleet/plans/research/alice-memory-and-tools.md`), in phases:
+
+- **M0** cleanup and note summaries — done
+- **M1** typed fleet and vault tools, the vault mirror, a session brief — done
+- **M2** facts in `journal.db`, `remember`, observations with expiry, a capped state file
+- **M3** Jev intent routing, and Alice without bash
+- **M4** extraction: Jev proposes what to remember, the captain approves
+- **M5** proactive work from feedback
+- **M6** local embeddings for the vault
+
+`bin/fleet-axi next` lists the open steps of every active vault task.
 
 ## Layout
 
@@ -70,7 +109,7 @@ Firstmate submodule: `vendor/firstmate` (upstream `kunchenguid/firstmate` added 
 
 ## CI
 
-Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on Ubuntu 24.04: Bun 1.4.0 (the version `bin/hub-install` pins), `bun install --frozen-lockfile`, `tsc -p .`, and `bun test` in `dashboard/`. A second job scans the full git history with gitleaks. Shellcheck over the shell scripts in `bin/` is reported and does not fail the workflow. The gate is that Linux job, the same family as `bin/hub-install`. Login Keychain and launchd stay on the laptop; this suite covers them with the file secret store and in-process fakes.
+Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on Ubuntu 24.04: Bun 1.4.4 (the version `bin/hub-install` pins), `bun install --frozen-lockfile`, `tsc -p .`, and `bun test` in `dashboard/`. A second job scans the full git history with gitleaks. Shellcheck over the shell scripts in `bin/` is reported and does not fail the workflow. The gate is that Linux job, the same family as `bin/hub-install`. Login Keychain and launchd stay on the laptop; this suite covers them with the file secret store and in-process fakes.
 
 Reproduce the required jobs locally:
 
@@ -112,15 +151,15 @@ Override vault and bus: `ALICE_VAULT`, `FLEET_INBOX`. See [fleet/inbox/README.md
 
 Only **pi** is wired in this slice. Other harness names in `agent.yaml` are stored and refused until implemented.
 
-Default models (Cursor via `pi-cursor-sdk`, listed per agent, not in `~/.pi/agent/settings.json`). **Do not** route Claude through Cursor for crew panes — use Claude Code (`harness: claude`) for subscription coding, or Grok/Composer for Cursor lanes.
+Default models (listed per agent in `agents/<id>/agent.yaml`, not in `~/.pi/agent/settings.json`; Cursor models go through `pi-cursor-sdk`). **Do not** route Claude through Cursor for crew panes — use Claude Code (`harness: claude`) for subscription coding, or Grok/Composer for Cursor lanes.
 
 | Agent | Model | Why |
 |---|---|---|
-| Alice | `cursor/composer-2.5` | Vault inbox and ship-shaped actions on Cursor |
-| Firstmate | `cursor/grok-4.7@256k` | Routing, supervision, and recon-shaped primary work |
+| Alice | `openrouter/deepseek/deepseek-v4-pro` | The captain's officer: typed fleet and vault tools, long sessions |
+| Firstmate | `openrouter/deepseek/deepseek-v4-pro` | Routing and supervision (being retired in favor of Alice) |
 | Architect | `cursor/grok-4.7@256k` | Interactive plan review; workers spawned by Firstmate |
 | Shipwright | `cursor/composer-2.5` | Repo upkeep: new agents, ship stamping |
-| Designer | `cursor/gpt-5.5@272k` | design taste and image reading; impeccable comps and critique |
+| Designer | `openrouter/anthropic/claude-sonnet-5.5` | Design taste and image reading; impeccable comps and critique |
 
 ## Crew dispatch and billing lanes
 
