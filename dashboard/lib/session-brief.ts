@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { factsBrief } from "./facts.ts";
 import { aliceVault, fleetInboxRoot } from "./paths.ts";
 import { readVaultTasks, vaultNextSteps } from "./vault-tasks.ts";
 
@@ -76,6 +77,25 @@ export function writeSessionBrief(today = new Date().toLocaleDateString("en-CA")
     if (readFileSync(file, "utf8") === text) return false;
   } catch {
     /* first write */
+  }
+  mkdirSync(join(fleetInboxRoot(), "alice"), { recursive: true });
+  writeFileSync(file, text, "utf8");
+  return true;
+}
+
+/** Room for the current facts in Alice's prompt; with the brief it keeps the session start under 3 KB (bin/launch). */
+export const FACTS_CAP = 1200;
+
+export const factsPath = (agent = "alice") => join(fleetInboxRoot(), agent, "facts.md");
+
+/** Write Alice's current facts when they changed; true when it did. Called on the brief's schedule and after each fact_set. */
+export function writeSessionFacts(): boolean {
+  const text = factsBrief(FACTS_CAP);
+  const file = factsPath();
+  try {
+    if (readFileSync(file, "utf8") === text) return false;
+  } catch {
+    if (!text) return false; // no facts yet, no file
   }
   mkdirSync(join(fleetInboxRoot(), "alice"), { recursive: true });
   writeFileSync(file, text, "utf8");

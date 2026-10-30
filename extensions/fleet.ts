@@ -221,6 +221,72 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "fact_get",
+    label: "Read facts",
+    description: "The fleet's recorded facts: exact values that change (a host, a model, an owner, a date), each with its source and since when. Current ones, newest first; subject and key filter. history=true with both gives what it was before (nothing is deleted). observations=true lists your open passing notes instead. Check it before stating such a value from memory.",
+    parameters: Type.Object({
+      subject: Type.Optional(Type.String({ description: "e.g. hub, alice, kinwork" })),
+      key: Type.Optional(Type.String({ description: "e.g. host, model, owner" })),
+      history: Type.Optional(Type.Boolean({ description: "The chain of values for one subject and key" })),
+      observations: Type.Optional(Type.Boolean({ description: "List open observations (log_observation) instead" })),
+      limit: Type.Optional(Type.Number({ description: "Rows, default 50, max 200" })),
+      ...OrderArgs,
+    }),
+    async execute(_id, p) {
+      return text(await call("GET", "fact-get", { subject: p.subject, key: p.key, history: p.history ? "true" : undefined, observations: p.observations ? "true" : undefined, limit: p.limit, order: p.order, step: p.step }));
+    },
+  });
+
+  pi.registerTool({
+    name: "fact_set",
+    label: "Record a fact",
+    description: "Record an exact value that changes: a host, a model, who owns what, a date. A new value supersedes the old one, which stays in the history; the same value changes nothing. Always give the source (who said it or where you saw it, with the date). Not for preferences (remember) or passing notes (log_observation).",
+    parameters: Type.Object({
+      subject: Type.String({ description: "What it is about, a-z 0-9 _ . -, e.g. hub" }),
+      key: Type.String({ description: "The attribute, e.g. host" }),
+      value: Type.String({ description: "The value, up to 500 characters" }),
+      source: Type.String({ description: "e.g. captain in chat 2026-10-30" }),
+      observation: Type.Optional(Type.Number({ description: "An observation this settles; it stops showing" })),
+      ...OrderArgs,
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "fact-set", {}, { subject: p.subject, key: p.key, value: p.value, source: p.source, observation: p.observation, order: p.order, step: p.step }));
+    },
+  });
+
+  pi.registerTool({
+    name: "remember",
+    label: "Remember a preference",
+    description: "Add one line (a bullet) to a section of the captain's profile, fleet/captain.md: a standing preference or instruction. The section must exist (an error lists them; create=true adds one). To change a standing line give replaces: text matching exactly one bullet in that section. The profile stays under 4 KB: tighten rather than pile up. Ask the captain first for anything they did not say themselves.",
+    parameters: Type.Object({
+      section: Type.String({ description: "An existing ## heading, any case" }),
+      line: Type.String({ description: "One line, up to 300 characters" }),
+      replaces: Type.Optional(Type.String({ description: "Text of the one bullet this line replaces" })),
+      create: Type.Optional(Type.Boolean({ description: "Add the section when it does not exist" })),
+      observation: Type.Optional(Type.Number({ description: "An observation this settles; it stops showing" })),
+      ...OrderArgs,
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "remember", {}, { section: p.section, line: p.line, replaces: p.replaces, create: p.create ? "true" : undefined, observation: p.observation, order: p.order, step: p.step }));
+    },
+  });
+
+  pi.registerTool({
+    name: "log_observation",
+    label: "Note an observation",
+    description: "Note something in passing that may be worth checking later (a model that seems slow, a task that keeps slipping). It shows in fact_get observations=true for ttl_days (default 14, max 90), then stops. Promote it by passing its id to fact_set or remember. Not for values (fact_set) or preferences (remember).",
+    parameters: Type.Object({
+      text: Type.String({ description: "Up to 300 characters" }),
+      subject: Type.Optional(Type.String({ description: "What it is about, e.g. hub" })),
+      ttl_days: Type.Optional(Type.Number({ description: "Days to keep showing it, default 14, max 90" })),
+      ...OrderArgs,
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "log-observation", {}, { text: p.text, subject: p.subject, ttl_days: p.ttl_days, order: p.order, step: p.step }));
+    },
+  });
+
+  pi.registerTool({
     name: "recall",
     label: "Recall",
     description: "Full-text search of past fleet talk: every agent's captain thread, helper results, digests, and notices. Use it before asking the captain something they may already have said. Returns snippets with source and time. Not the vault (vault_search).",

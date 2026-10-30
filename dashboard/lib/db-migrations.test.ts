@@ -265,7 +265,7 @@ describe("ship.db migrations", () => {
 });
 
 describe("journal.db migrations", () => {
-  test("a fresh database is at version 1, and an old one keeps its rows", () => {
+  test("a fresh database is at the latest version, and an old one keeps its rows", () => {
     j._closeJournal();
     process.env.FLEET_INBOX = mkdtempSync(join(tmpdir(), "migrations-journal-"));
     mkdirSync(nodeStateDir(), { recursive: true });
@@ -274,7 +274,7 @@ describe("journal.db migrations", () => {
     raw.exec("INSERT INTO workflows (id, kind, status, trace, created, updated) VALUES ('w1', 'go', 'running', 't', 'c', 'u')");
     raw.close();
     const d = j.journalDb();
-    expect(version(d)).toBe(1);
+    expect(version(d)).toBe(2);
     expect(columns(d, "steps")).toContain("workflow");
     expect((d.query("SELECT id FROM workflows").get() as { id: string }).id).toBe("w1");
   });

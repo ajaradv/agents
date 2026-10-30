@@ -2,7 +2,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { aliceVault } from "./paths.ts";
 import { ftsQuery, recallDb } from "./recall.ts";
-import { writeSessionBrief } from "./session-brief.ts";
+import { writeSessionBrief, writeSessionFacts } from "./session-brief.ts";
 import { sectionsOf, splitNote } from "./vault-note.ts";
 
 /**
@@ -218,6 +218,7 @@ export function startVaultIndexer(): void {
     try {
       indexVault();
       writeSessionBrief();
+      writeSessionFacts();
     } catch (e) {
       console.error("[node] vault index:", e);
     }

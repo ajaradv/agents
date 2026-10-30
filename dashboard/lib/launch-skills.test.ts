@@ -29,3 +29,31 @@ print(json.dumps({
     rmSync(home, { recursive: true, force: true });
   });
 });
+
+describe("bin/launch: the session start block stays within 3 KB", () => {
+  test("brief and facts together are capped, facts first to give", () => {
+    const inbox = mkdtempSync(join(tmpdir(), "launch-memory-"));
+    mkdirSync(join(inbox, "alice"), { recursive: true });
+    writeFileSync(join(inbox, "alice", "brief.md"), `# Session brief\n${"- a brief line of some length\n".repeat(80)}`);
+    writeFileSync(join(inbox, "alice", "facts.md"), "- hub.host = exe.dev\n".repeat(200));
+    const py = `import importlib.util, importlib.machinery, json, sys
+from pathlib import Path
+l = importlib.machinery.SourceFileLoader("launch", sys.argv[1]); s = importlib.util.spec_from_loader("launch", l); m = importlib.util.module_from_spec(s); l.exec_module(m)
+inbox = Path(sys.argv[2])
+full = m.session_start_blocks("alice", inbox)
+(inbox / "alice" / "facts.md").write_text("- hub.host = exe.dev\\n")
+(inbox / "alice" / "brief.md").unlink()
+print(json.dumps({"full": full, "small": m.session_start_blocks("alice", inbox), "block": m.memory_block("alice", inbox), "none": m.session_start_blocks("nobody", inbox)}))`;
+    const r = Bun.spawnSync(["/usr/bin/python3", "-B", "-W", "error", "-c", py, join(import.meta.dir, "..", "..", "bin", "launch"), inbox]);
+    expect(r.stderr.toString()).toBe("");
+    const out = JSON.parse(r.stdout.toString()) as Record<string, string>;
+    expect(Buffer.byteLength(out.full!)).toBeLessThanOrEqual(3000);
+    expect(out.full).toContain("### Session brief");
+    expect(out.full).toContain("### Current facts");
+    expect(out.small).toContain("- hub.host = exe.dev");
+    expect(out.small).not.toContain("Session brief");
+    expect(out.block).toContain("fact_set");
+    expect(out.none).toBe("");
+    rmSync(inbox, { recursive: true, force: true });
+  });
+});

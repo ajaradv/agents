@@ -187,6 +187,12 @@ export const VIEWS: Record<string, View> = {
     empty: { by_agent: "0 turns in this window", by_model: "0 turns in this window", by_day: "0 turns in this window", by_tool: "0", failures_by_day: "0", by_agent_tool: "0", latest: "0", uses: "0 calls", compaction_advisor: "0 checks", decisions: "0", not_allowed_by_agent: "0", not_allowed_by_day: "0", notable: "0", voyages: "0 voyages" },
     help: (r) => (/, by (agent|model|day)$/.test(r.message) ? ["fleet_query query=spend by=agent|model|day; days=N widens the window, since/until=YYYY-MM-DD sets a range"] : []),
   },
+  fact_get: {
+    rows: { facts: ["id", "subject", "key", "value", "source", "since", "by"], observations: ["id", "text", "subject", "by", "ts", "expires"] },
+    cut: { value: 500, text: 300, source: 200, subject: 64, key: 64, by: 32, since: 20, ts: 20, expires: 20 },
+    empty: { facts: "0 facts", observations: "0 open observations" },
+    help: (r) => (Array.isArray(r.facts) && r.facts.length ? ["fact_get subject=<s> key=<k> history=true for what it was before; fact_set to change one"] : ["fact_set subject key value source to record one"]),
+  },
   vault_note: {
     rows: { headings: ["heading", "bytes"] },
     cut: { summary: 400, content: 12_500, body: 12_500 },

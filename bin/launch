@@ -620,28 +620,52 @@ def restrict_keys(agent: dict) -> list[str]:
     return dropped
 
 
-# Session brief cap, a little over dashboard/lib/session-brief.ts BRIEF_CAP (1500 bytes).
+# Session brief cap, a little over dashboard/lib/session-brief.ts BRIEF_CAP (1500 bytes), and the
+# facts cap (FACTS_CAP there, 1200). Together with their headings they stay within SESSION_START_CAP.
 BRIEF_CAP = 1600
+FACTS_CAP = 1200
+SESSION_START_CAP = 3000
+
+
+def _cap_bytes(text: str, cap: int) -> str:
+    """Text cut to at most `cap` bytes at a line boundary, with a short note when it was cut."""
+    note = "\n[cut]"
+    if len(text.encode()) <= cap:
+        return text
+    keep = text.encode()[: max(0, cap - len(note.encode()))].decode(errors="ignore")
+    return keep.rsplit("\n", 1)[0].rstrip() + note
+
+
+def session_start_blocks(agent_id: str, inbox: Path) -> str:
+    """The node's brief and current facts for the prompt, never more than SESSION_START_CAP bytes together."""
+    # The node writes these for agents that have them (dashboard/lib/session-brief.ts); each is already capped there.
+    brief = _read_capped(inbox / agent_id / "brief.md", BRIEF_CAP)
+    brief_block = f"\n### Session brief (the node's last pass; vault_tasks filter=next is live)\n\n{brief}\n" if brief else ""
+    facts = _read_capped(inbox / agent_id / "facts.md", FACTS_CAP)
+    facts_head = "\n### Current facts (fact_get has all and the history)\n\n"
+    room = SESSION_START_CAP - len(brief_block.encode()) - len(facts_head.encode()) - 1
+    facts = _cap_bytes(facts, min(FACTS_CAP, room)) if facts and room > 40 else ""
+    facts_block = f"{facts_head}{facts}\n" if facts else ""
+    return _cap_bytes(brief_block + facts_block, SESSION_START_CAP)
 
 
 def memory_block(agent_id: str, inbox: Path) -> str:
     """File-based memory for every assistant: static paths (cache-safe), read on demand."""
     mem = inbox / agent_id / "memory"
     vault = Path(os.environ.get("ALICE_VAULT", "~/Workspace/brain")).expanduser()
-    # The node writes a short brief for agents that have one (dashboard/lib/session-brief.ts); it is already capped there.
-    brief = _read_capped(inbox / agent_id / "brief.md", BRIEF_CAP)
-    brief_block = f"\n### Session brief (the node's last pass; vault_tasks filter=next is live)\n\n{brief}\n" if brief else ""
     return (
         "\n## Memory (files, read on demand)\n\n"
         f"- **Your memory folder:** `{mem}`\n"
-        "  - `state.md`: written automatically after every compaction, a handoff of everything before it. "
+        "  - `state.md`: the short-term handoff, written automatically after every compaction (at most 1.5 KB; `state.full.md` beside it has the whole summary). "
         "**When this session's history is empty or starts with a summary, read `state.md` and `plan.md` first.**\n"
         "  - `plan.md`: your current plan and open threads; keep it up to date when the plan changes.\n"
         "  - `notes.md`: durable notes worth keeping across sessions (decisions, facts you had to look up).\n"
         f"- **The captain's profile (shared, in the vault):** `{vault / 'fleet' / 'captain.md'}`: preferences and standing instructions. "
-        "Read it when a preference matters; Alice keeps it current.\n"
+        "Read it when a preference matters.\n"
+        "- **If you have the memory tools:** a value that changes (host, model, owner, date) goes in with `fact_set` and a source, and `fact_get` reads it; "
+        "a standing preference goes in with `remember`; a passing thing worth checking later goes in with `log_observation`.\n"
         "Do not paste these files into replies; read them when needed, write them with your file tools.\n"
-        + brief_block
+        + session_start_blocks(agent_id, inbox)
     )
 
 

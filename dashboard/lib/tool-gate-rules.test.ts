@@ -60,7 +60,7 @@ describe("tool gate: local rules", () => {
     expect(localVerdict("mystery_tool", {}, ctx).decision).toBe("ask");
   });
   test("Alice's typed reads and codemode pass locally (a script's nested calls are gated one by one)", () => {
-    for (const tool of ["fleet_query", "vault_note", "vault_search", "vault_doctor", "vault_patch", "codemode"]) {
+    for (const tool of ["fleet_query", "vault_note", "vault_search", "vault_doctor", "vault_patch", "fact_get", "fact_set", "remember", "log_observation", "codemode"]) {
       expect(localVerdict(tool, {}, ctx)).toEqual({ decision: "allow", reason: "fleet tool" });
     }
   });

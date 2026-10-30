@@ -44,8 +44,24 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_trace ON events(trace, id);
 `;
 
+// Alice's memory (vault plan alice-memory-and-tools, M2; lib/facts.ts): facts are superseded, never deleted.
+const SCHEMA_V2 = `
+CREATE TABLE IF NOT EXISTS facts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, subject TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
+  source TEXT NOT NULL, since TEXT NOT NULL, superseded_by INTEGER, by TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS facts_current ON facts(subject, key) WHERE superseded_by IS NULL;
+CREATE TABLE IF NOT EXISTS observations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, subject TEXT, by TEXT NOT NULL,
+  ts TEXT NOT NULL, expires TEXT NOT NULL, promoted_to TEXT
+);
+`;
+
 // recall.ts keeps its own FTS tables in this file, created idempotently by itself.
-const MIGRATIONS: Migration[] = [{ version: 1, note: "baseline: workflows, steps, events", up: SCHEMA_V1 }];
+const MIGRATIONS: Migration[] = [
+  { version: 1, note: "baseline: workflows, steps, events", up: SCHEMA_V1 },
+  { version: 2, note: "facts and observations (Alice's memory)", up: SCHEMA_V2 },
+];
 
 let db: Database | null = null;
 let dbPath = "";
