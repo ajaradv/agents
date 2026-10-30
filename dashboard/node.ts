@@ -39,6 +39,9 @@ import { doctorReport, scheduledVaultCheck } from "./lib/vault-doctor.ts";
 import { fleetQuery } from "./lib/fleet-query.ts";
 import { vaultNote } from "./lib/vault-note.ts";
 import { vaultPatch } from "./lib/vault-patch.ts";
+import { factGet, factSet, listObservations, logObservation } from "./lib/facts.ts";
+import { remember } from "./lib/remember.ts";
+import { writeSessionFacts } from "./lib/session-brief.ts";
 import { indexVault, searchVault, startVaultIndexer } from "./lib/vault-index.ts";
 import { decideGate, judgeCall, recordLocalStop, screenResult } from "./lib/tool-gate.ts";
 import { adviseCompaction, cutPoint } from "./lib/compaction-advisor.ts";
@@ -417,9 +420,14 @@ function fleetCall(what: string, method: string, q: URLSearchParams, b: Record<s
   if (method === "GET" && what === "vault-note") return { tool: "vault_note", read: true, args: fromQ(["path", "section", "full"]) };
   if (method === "GET" && what === "vault-search") return { tool: "vault_search", read: true, args: fromQ(["query", "type", "status", "ship", "path", "limit"]) };
   if (method === "GET" && what === "vault-doctor") return { tool: "vault_doctor", read: true, args: {} };
+  if (method === "GET" && what === "fact-get") return { tool: "fact_get", read: true, args: fromQ(["subject", "key", "history", "observations", "limit"]) };
   // Writes: held back while an order runs, like fleet_chat. The edit itself is the tier 1 vault filing Alice's authority names.
   if (method === "POST" && what === "vault-doctor") return { tool: "vault_doctor", read: false, args: pick((k) => b[k], ["fix"]) };
   if (method === "POST" && what === "vault-patch") return { tool: "vault_patch", read: false, args: { ...pick((k) => b[k], ["path", "check", "uncheck"]), ...(b.set ? { set: JSON.stringify(b.set) } : {}) } };
+  // Alice's memory (lib/facts.ts, lib/remember.ts): facts and observations in journal.db, the captain's profile in the vault.
+  if (method === "POST" && what === "fact-set") return { tool: "fact_set", read: false, args: pick((k) => b[k], ["subject", "key", "value", "source", "observation"]) };
+  if (method === "POST" && what === "remember") return { tool: "remember", read: false, args: pick((k) => b[k], ["section", "line", "replaces", "create", "observation"]) };
+  if (method === "POST" && what === "log-observation") return { tool: "log_observation", read: false, args: pick((k) => b[k], ["text", "subject", "ttl_days"]) };
   if (method === "POST" && what === "chat") return { tool: "fleet_chat", read: false, args: pick((k) => b[k], ["to", "text"]) };
   return null;
 }
@@ -496,6 +504,13 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
     res = vaultPatch({ path: a.path ?? "", set: b.set as Record<string, unknown> | undefined, check: a.check, uncheck: a.uncheck });
     if (res.ok && res.changed) indexVault(); // so vault_search sees the edit at once
   }
+  else if (call.tool === "fact_get") res = a.observations === "true" ? listObservations({ subject: a.subject, limit: Number(a.limit) || undefined }) : factGet({ subject: a.subject, key: a.key, history: a.history === "true", limit: Number(a.limit) || undefined });
+  else if (call.tool === "fact_set") {
+    res = factSet({ subject: a.subject, key: a.key, value: a.value, source: a.source, by: from, observation: a.observation ? Number(a.observation) : undefined });
+    if (res.ok) writeSessionFacts(); // her next session starts with it
+  }
+  else if (call.tool === "remember") res = remember({ section: a.section ?? "", line: a.line ?? "", replaces: a.replaces, create: a.create === "true", observation: a.observation ? Number(a.observation) : undefined });
+  else if (call.tool === "log_observation") res = logObservation({ text: a.text, subject: a.subject, ttlDays: Number(a.ttl_days) || undefined, by: from });
   else if (call.tool === "vault_tasks" && a.filter === "next") res = vaultNextReport(a.id ?? "");
   else if (call.tool === "vault_tasks") res = vaultTasksReport((VAULT_FILTERS as string[]).includes(a.filter ?? "") ? (a.filter as VaultFilter) : "ready", a.id ?? "");
   else if (call.tool === "recall") {
@@ -584,7 +599,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     return Response.json(r);
   }
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|queue|delegate|public|recall|vault-tasks|fleet-query|vault-note|vault-search|vault-patch|vault-doctor)$/);
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|queue|delegate|public|recall|vault-tasks|fleet-query|vault-note|vault-search|vault-patch|vault-doctor|fact-get|fact-set|remember|log-observation)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm|look|helper|canvas|crew-request|dock-request|queue-request)(?:\/(\d+))?$/);

@@ -16,7 +16,9 @@
  *   are on disk; the compaction follows when that settles.
  * - Handoff file: after every compaction (ours or Pi's), the summary is written
  *   to $FLEET_INBOX/<agent>/memory/state.md, the starting point for a new
- *   session (file-based memory; the session is not the only record).
+ *   session (file-based memory; the session is not the only record). The file
+ *   is short-term only: at most 1.5 KB, cut at a line; state.full.md beside it
+ *   keeps the whole summary.
  *
  * It compacts again only after context has grown by FLEET_COMPACT_GROWTH
  * percent of the window (default 15) since the last time, so a session whose
@@ -68,6 +70,29 @@ export function stateFile(env: Record<string, string | undefined> = process.env)
   const id = env.FLEET_AGENT_ID;
   const inbox = env.FLEET_INBOX;
   return id && inbox && /^[a-z][a-z0-9_-]{0,63}$/.test(id) ? join(inbox.replace(/^~/, env.HOME ?? ""), id, "memory", "state.md") : null;
+}
+
+export const STATE_CAP = 1500;
+const STATE_CUT = "[cut at 1.5 KB; the session summary has the rest]";
+
+/** The handoff file's text: a header and the summary, cut at a line boundary so the whole stays within STATE_CAP bytes. */
+export function stateText(summary: string, reason: string, now = new Date()): string {
+  const head = `# State handoff\n\nWritten ${now.toISOString()} after a ${reason} compaction. The session's summary of everything before it:\n\n`;
+  const body = summary.trim();
+  const whole = `${head}${body}\n`;
+  if (Buffer.byteLength(whole) <= STATE_CAP) return whole;
+  const room = STATE_CAP - Buffer.byteLength(head) - Buffer.byteLength(`\n${STATE_CUT}\n`);
+  // Whole lines that fit (a single over-long line is cut mid-line rather than dropped).
+  const kept: string[] = [];
+  let used = 0;
+  for (const line of body.split("\n")) {
+    const n = Buffer.byteLength(line) + 1;
+    if (used + n > room) break;
+    kept.push(line);
+    used += n;
+  }
+  const text = kept.length ? kept.join("\n") : Buffer.from(body).subarray(0, Math.max(0, room)).toString("utf8").replace(/\uFFFD+$/, "");
+  return `${head}${text.trimEnd()}\n${STATE_CUT}\n`;
 }
 
 /** Which action a settled run calls for. */
@@ -194,8 +219,9 @@ export default function (pi: ExtensionAPI) {
     if (!path || !summary) return;
     try {
       mkdirSync(join(path, ".."), { recursive: true });
-      const text = `# State handoff\n\nWritten ${new Date().toISOString()} after a ${event.reason} compaction. The session's summary of everything before it:\n\n${summary.trim()}\n`;
-      writeFileSync(path + ".tmp", text, "utf8");
+      // The whole summary beside it, so the cut loses nothing.
+      writeFileSync(path.replace(/state\.md$/, "state.full.md"), `${summary.trim()}\n`, "utf8");
+      writeFileSync(path + ".tmp", stateText(summary, event.reason), "utf8");
       renameSync(path + ".tmp", path);
     } catch {
       /* the session still has the summary */

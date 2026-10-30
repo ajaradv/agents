@@ -45,6 +45,8 @@ const SAFE_TOOLS = new Set([
   "fleet_status", "ship_log", "ship_tasks", "ship_maneuvers", "agent_chat_read", "recall", "vault_tasks",
   // Alice's typed reads (vault plan alice-memory-and-tools, M1); vault_patch writes only inside the vault and refuses career/ and profile/.
   "fleet_query", "vault_note", "vault_search", "vault_doctor", "vault_patch",
+  // Alice's memory (M2): facts and observations in the node's journal, one line in the captain profile; the node holds them during orders.
+  "fact_get", "fact_set", "remember", "log_observation",
   // A codemode script's own calls each pass this gate (pi runs them through the tool pipeline), so the script itself is not judged.
   "codemode",
   "voyage_status", "task_report", "task_add", "task_update", "task_claim", "run_check", "maneuver_start", "helm_propose",

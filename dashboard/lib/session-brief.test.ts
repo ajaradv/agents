@@ -65,3 +65,20 @@ describe("session brief", () => {
     expect(b.writeSessionBrief("2026-10-30", root)).toBe(true);
   });
 });
+
+describe("session facts", () => {
+  test("writes alice/facts.md from the current facts, only when they changed, within the cap", async () => {
+    const j = await import("./journal.ts");
+    const f = await import("./facts.ts");
+    j._closeJournal();
+    expect(b.writeSessionFacts()).toBe(false); // no facts, no file
+    f.factSet({ subject: "hub", key: "host", value: "exe.dev", source: "test", by: "alice" });
+    expect(b.writeSessionFacts()).toBe(true);
+    expect(readFileSync(b.factsPath(), "utf8")).toBe("- hub.host = exe.dev\n");
+    expect(b.writeSessionFacts()).toBe(false);
+    for (let i = 0; i < 40; i++) f.factSet({ subject: "s", key: `k${i}`, value: "v".repeat(100), source: "test", by: "alice" });
+    b.writeSessionFacts();
+    expect(Buffer.byteLength(readFileSync(b.factsPath(), "utf8"))).toBeLessThanOrEqual(b.FACTS_CAP);
+    j._closeJournal();
+  });
+});
