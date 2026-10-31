@@ -22,7 +22,9 @@
  * (holds and stops take effect), or `off`.
  */
 
+import { realpathSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { localVerdict, screenReason, type GateContext } from "./tool-gate/rules.ts";
 
@@ -34,7 +36,12 @@ const mode = ["off", "observe", "enforce"].includes(process.env.FLEET_TOOL_GATE 
 
 function context(cwd: string): GateContext {
 	const writable = [process.env.ALICE_VAULT, process.env.FLEET_INBOX, process.env.FLEET_SHIP_WORKTREE, os.tmpdir(), "/tmp", "/private/tmp"].filter((x): x is string => Boolean(x));
-	return { cwd, home: os.homedir(), inVm, writable };
+	const agent = process.env.FLEET_AGENT_ID;
+	const vault = process.env.ALICE_VAULT?.replace(/^~(?=\/|$)/, os.homedir());
+	const inbox = process.env.FLEET_INBOX && path.resolve(cwd, process.env.FLEET_INBOX.replace(/^~(?=\/|$)/, os.homedir()));
+	// Alice's writes are confined to her vault and her inbox folder; without both set there is nothing to confine to.
+	const aliceFolders = agent === "alice" && vault && inbox ? { vault, inbox: path.join(inbox, "alice") } : undefined;
+	return { cwd, home: os.homedir(), inVm, writable, agent, aliceFolders, realpath: (p) => realpathSync(p) };
 }
 
 async function askNode(tool: string, input: Record<string, unknown>, cwd: string, why: string, writable: string[]): Promise<{ decision: string; message: string }> {

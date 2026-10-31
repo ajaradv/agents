@@ -38,7 +38,9 @@ extra_prompts:
 # tools, FLEET_LAZY_TOOLS), and scripts can batch calls and filter big results
 # so only the answer enters her context. pi's read-only grep, find and ls are
 # off by default; they are her fallback beside the vault tools (plan
-# alice-memory-and-tools, M1), until bash can go.
+# alice-memory-and-tools, M1), until bash can go. Bash stays for now: it comes
+# out (-bash) after a clean week of the gate and intent routing, after 2026-11-05
+# (vault task fleet-memory-m3-no-bash).
 tools:
   - +codemode
   - +tool_search

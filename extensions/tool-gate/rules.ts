@@ -23,6 +23,12 @@ export type GateContext = {
   inVm: boolean;
   /** Folders writes may go to besides cwd (the vault, the fleet inbox, temp). */
   writable: string[];
+  /** The agent's id (FLEET_AGENT_ID); Alice's file writes are confined to her vault and her inbox folder. */
+  agent?: string;
+  /** Alice's vault and her own inbox folder (ALICE_VAULT, FLEET_INBOX/alice). */
+  aliceFolders?: { vault: string; inbox: string };
+  /** Resolves symlinks (fs.realpathSync); without it paths are judged as written. */
+  realpath?: (p: string) => string;
   /** Test seam: is this pid the live fleet node or dashboard? */
   isLiveService?: (pid: number) => boolean;
 };
@@ -248,6 +254,39 @@ function writableAt(p: string, ctx: GateContext): boolean {
   return inside(p, ctx.cwd) || ctx.writable.some((w) => inside(p, w));
 }
 
+/** The path with symlinks resolved as far as it exists (a new file under a linked folder resolves through the folder). */
+function real(p: string, ctx: GateContext): string {
+  if (!ctx.realpath) return p;
+  let rest = "";
+  for (let cur = p; cur !== "/"; cur = cur.slice(0, cur.lastIndexOf("/")) || "/") {
+    try {
+      return normalize(`${ctx.realpath(cur)}${rest}`);
+    } catch {
+      rest = `${cur.slice(cur.lastIndexOf("/"))}${rest}`;
+    }
+  }
+  return p;
+}
+
+/**
+ * Alice writes only in her vault and her inbox folder (vault plan alice-memory-and-tools, M3). Inside the
+ * vault the git and Obsidian folders are off limits and career/ and profile/ wait for the captain, as her role says.
+ */
+function aliceWrite(tool: string, raw: string, p: string, ctx: GateContext): Verdict | null {
+  const f = ctx.aliceFolders;
+  if (!f) return null;
+  const roots = [f.vault, f.inbox].map((r) => [normalize(r), real(normalize(r), ctx)] as const);
+  const target = real(p, ctx);
+  const where = roots.findIndex(([lexical, resolved]) => inside(p, lexical) && inside(target, resolved));
+  if (where < 0) return { decision: "stop", reason: `Alice may write only in her vault (${f.vault}) and her inbox folder (${f.inbox}); ${tool} of ${raw} is outside them` };
+  if (where === 0) {
+    const first = target.slice(roots[0]![1].length).split("/").filter(Boolean)[0] ?? "";
+    if (first === ".git" || first === ".obsidian") return { decision: "stop", reason: `${tool} inside the vault's ${first} folder (${raw})` };
+    if (first === "career" || first === "profile") return { decision: "ask", reason: `${tool} in the vault's ${first}/ folder: the captain approves first (${raw})` };
+  }
+  return null;
+}
+
 /** Decide a tool call locally, or say it needs a closer look. */
 export function localVerdict(tool: string, input: Record<string, unknown>, ctx: GateContext): Verdict {
   if (BUILTIN.has(tool)) {
@@ -258,6 +297,10 @@ export function localVerdict(tool: string, input: Record<string, unknown>, ctx: 
     const p = resolve(raw, ctx.cwd, ctx.home);
     const what = secretPath(p, ctx.home);
     if (what) return { decision: "stop", reason: `${tool} of ${what} (${raw})` };
+    if ((tool === "write" || tool === "edit") && ctx.agent === "alice") {
+      const v = aliceWrite(tool, raw, p, ctx);
+      if (v) return v;
+    }
     if (tool === "write" || tool === "edit") {
       return writableAt(p, ctx) ? { decision: "allow", reason: "write inside the agent's folders" } : { decision: "ask", reason: `${tool} outside the agent's folders: ${raw}` };
     }

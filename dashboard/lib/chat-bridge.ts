@@ -15,6 +15,7 @@ import { allChatTargetIds, chatTarget } from "./chat-targets.ts";
 import { logCrewEvent, logCrewLine, logCrewTurn } from "./ship-events.ts";
 import { budgetRefusal, officerBudgetRefusal } from "./shipyard.ts";
 import { holdForBudget, releaseHeld } from "./budget-hold.ts";
+import { observeIntent } from "./intent-route.ts";
 import { notifyCaptain } from "./notify.ts";
 import { agentSaid, toolUsed, turnEnded, turnStarted } from "./fact-check.ts";
 import { dashLog } from "./log.ts";
@@ -448,6 +449,7 @@ function enqueueCaptainTurn(agentId: string, line: ChatLine): void {
   const st = agentState(agentId);
   if (st.queue.includes(line.ts)) return;
   st.queue.push(line.ts);
+  observeIntent(agentId, line);
   void drainQueue(agentId);
 }
 

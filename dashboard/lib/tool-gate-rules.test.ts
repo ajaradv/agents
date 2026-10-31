@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { localVerdict, screenReason, splitCommands, type GateContext } from "../../extensions/tool-gate/rules.ts";
 
 const ctx: GateContext = { cwd: "/Users/x/Workspace/pochteca", home: "/Users/x", inVm: false, writable: ["/Users/x/Workspace/brain", "/tmp"] };
@@ -123,3 +126,41 @@ describe("tool gate: from the first observe week (2026-10-18 to 10-21)", () => {
     expect(bash("curl -s https://api.example.com/x | python3 -m json.tool", c2)).toBe("allow");
   });
 });
+
+describe("tool gate: Alice's file writes", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "alice-gate-")));
+  const vault = join(root, "brain");
+  const inbox = join(root, "inbox", "alice");
+  const outside = join(root, "elsewhere");
+  for (const d of [vault, join(vault, "fleet"), join(vault, "career"), inbox, outside]) mkdirSync(d, { recursive: true });
+  symlinkSync(outside, join(vault, "link"));
+  const alice: GateContext = { cwd: vault, home: "/Users/x", inVm: false, writable: [vault, join(root, "inbox"), "/tmp"], agent: "alice", aliceFolders: { vault, inbox }, realpath: realpathSync };
+  const write = (path: string, c = alice, tool = "write") => localVerdict(tool, { path }, c).decision;
+
+  test("inside the vault and her inbox folder passes, relative paths included", () => {
+    expect(write(join(vault, "fleet/plans/x.md"))).toBe("allow");
+    expect(write("fleet/x.md")).toBe("allow");
+    expect(write(join(inbox, "state.md"), alice, "edit")).toBe("allow");
+  });
+  test("outside them stops, even where other agents may write", () => {
+    for (const p of ["/tmp/x.md", join(outside, "x"), join(root, "inbox", "firstmate", "x"), "../elsewhere/x", `${vault}/../elsewhere/x`, "/Users/x/Workspace/agents/README.md"]) expect([p, write(p)]).toEqual([p, "stop"]);
+    const reason = localVerdict("write", { path: "/tmp/x.md" }, alice).reason;
+    expect(reason).toContain(vault);
+    expect(reason).toContain(inbox);
+  });
+  test("a symlink out of the vault does not hide the target", () => {
+    expect(write(join(vault, "link", "x.md"))).toBe("stop");
+  });
+  test(".git and .obsidian stop; career and profile wait for the captain", () => {
+    expect(write(join(vault, ".git/config"))).toBe("stop");
+    expect(write(join(vault, ".obsidian/app.json"), alice, "edit")).toBe("stop");
+    expect(write(join(vault, "career/cv.md"))).toBe("ask");
+    expect(write(join(vault, "profile/me.md"), alice, "edit")).toBe("ask");
+  });
+  test("reads and other agents are unchanged", () => {
+    expect(localVerdict("read", { path: "/tmp/x.md" }, alice).decision).toBe("allow");
+    expect(write("/tmp/x.md", { ...alice, agent: "architect", aliceFolders: undefined })).toBe("allow");
+    expect(write(join(vault, "career/cv.md"), { ...alice, agent: "architect", aliceFolders: undefined })).toBe("allow");
+  });
+});
+
