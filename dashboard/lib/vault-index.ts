@@ -18,7 +18,8 @@ import { sectionsOf, splitNote } from "./vault-note.ts";
  *
  * A pass is incremental by mtime and size. A changed or removed note loses all
  * its rows first, so nothing stale is left behind. `.obsidian/`, `templates/`
- * and other dot folders are skipped.
+ * and other dot folders are skipped, and so are `career/` and `profile/`: the
+ * captain's own notes stay out of agents' search (the captain, 2026-10-31).
  */
 
 const SCHEMA = `
@@ -36,9 +37,9 @@ function db() {
 }
 
 /** Bump when what a pass extracts changes: the next pass then rebuilds every note instead of trusting mtimes. */
-const INDEX_VERSION = "1";
+const INDEX_VERSION = "2";
 
-const SKIP_DIRS = new Set(["templates"]);
+const SKIP_DIRS = new Set(["templates", "career", "profile"]);
 /** One FTS entry holds at most this many characters; a longer section becomes several entries under one ref. */
 const CHUNK = 6000;
 
