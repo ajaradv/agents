@@ -77,6 +77,11 @@ export function memoryMessage(open: number): PushMessage {
   return { title: "Remember this?", body: `${open} memory proposal${open === 1 ? "" : "s"}`, tag: "memory", url: "/needs" };
 }
 
+/** One notification for all of Alice's proactive proposals, the same way. */
+export function proactiveMessage(open: number): PushMessage {
+  return { title: "Alice has proposals", body: `${open} proposal${open === 1 ? "" : "s"} from Alice`, tag: "proactive", url: "/needs" };
+}
+
 /** What the notification says for a Needs-you item. */
 export function messageFor(item: NeedItem): PushMessage {
   const who = (i: { label?: string; agentId?: string }) => i.label ?? i.agentId ?? "An agent";
@@ -96,6 +101,8 @@ export function messageFor(item: NeedItem): PushMessage {
     }
     case "memory":
       return memoryMessage(1);
+    case "proactive":
+      return proactiveMessage(1);
     case "order":
       return { title: item.status === "needs-captain" ? "Order paused" : "Order ready for your Go", body: `${item.title}${item.reason ? `: ${item.reason}` : ""}`.slice(0, 180), tag: item.id, url };
     case "hold":
@@ -161,9 +168,10 @@ export async function pushNewNeeds(items: NeedItem[]): Promise<number> {
   // Snoozed or no device: the items are recorded as seen (they stay in Needs you), nothing is sent.
   if (quietState().snoozed || !subscriptions().length) return fresh.length;
   // Several at once (a burst after a reconnect): one notification that says how many.
-  // Memory proposals never buzz one by one: they collapse into one message (shared tag) with the open count.
-  const msgs = fresh.filter((i) => i.kind !== "memory").map(messageFor);
+  // Memory and proactive proposals never buzz one by one: each collapses into one message (shared tag) with the open count.
+  const msgs = fresh.filter((i) => i.kind !== "memory" && i.kind !== "proactive").map(messageFor);
   if (fresh.some((i) => i.kind === "memory")) msgs.push(memoryMessage(items.filter((i) => i.kind === "memory").length));
+  if (fresh.some((i) => i.kind === "proactive")) msgs.push(proactiveMessage(items.filter((i) => i.kind === "proactive").length));
   const msg = msgs.length === 1 ? msgs[0]! : { title: `${msgs.length} things need you`, body: msgs.map((m) => m.title).join(" · ").slice(0, 180), tag: "needs-batch", url: "/needs" };
   await sendToAll(msg);
   // Keep the sent table small: items long gone from Needs you are forgotten after a week.

@@ -205,6 +205,13 @@ export async function memoryAnswer(id: number, action: "approve" | "dismiss", la
   return (await r.json().catch(() => ({ ok: false, message: "bad reply from the fleet node" }))) as { ok: boolean; message: string };
 }
 
+/** The captain's Go, Snooze or Done on one of Alice's proactive proposals; the node runs it, since Go posts to Alice. */
+export async function proactiveAnswer(id: number, action: "go" | "snooze" | "done"): Promise<{ ok: boolean; message: string }> {
+  const r = await call("/v1/proactive", { id, action });
+  if (!r) return { ok: false, message: OFFLINE };
+  return (await r.json().catch(() => ({ ok: false, message: "bad reply from the fleet node" }))) as { ok: boolean; message: string };
+}
+
 /** The captain's Go or No on a held fleet action; the node runs it and tells the officer. */
 export async function decideGo(id: string, go: boolean): Promise<{ ok: boolean; message: string }> {
   const r = await call("/v1/go", { id, decision: go ? "go" : "no" });

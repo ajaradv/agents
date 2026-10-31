@@ -50,4 +50,13 @@ describe("push", () => {
     expect(await p.pushNewNeeds([mem(1), mem(2)])).toBe(2);
     expect(await p.pushNewNeeds([mem(1), mem(2), mem(3)])).toBe(1);
   });
+  test("proactive proposals share one tag and say how many are open", async () => {
+    const pro = (id: number) => ({ kind: "proactive" as const, id: `proactive:${id}`, itemId: id, ts: "", findingKind: "due", summary: "a is due", proposal: "Chase a.", agentId: "alice", label: "Alice", art: null });
+    expect(p.messageFor(pro(1)).tag).toBe("proactive");
+    expect(p.messageFor(pro(1)).tag).toBe(p.messageFor(pro(2)).tag);
+    expect(p.proactiveMessage(1).body).toBe("1 proposal from Alice");
+    expect(p.proactiveMessage(3).body).toBe("3 proposals from Alice");
+    expect(await p.pushNewNeeds([pro(1), pro(2)])).toBe(2);
+    expect(await p.pushNewNeeds([pro(1), pro(2), pro(3)])).toBe(1);
+  });
 });

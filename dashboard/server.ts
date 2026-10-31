@@ -69,6 +69,7 @@ import {
   decideGate,
   kickNodeOrders,
   memoryAnswer,
+  proactiveAnswer,
   newSession,
   refreshNodeTargets,
   startNodeLink,
@@ -556,6 +557,14 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
     if (memoryRoute && req.method === "POST") {
       const b = (await req.json().catch(() => ({}))) as { label?: unknown };
       const res = await memoryAnswer(Number(memoryRoute[1]), memoryRoute[2] as "approve" | "dismiss", typeof b.label === "string" ? b.label : undefined);
+      needsChanged();
+      return Response.json(res, { status: res.ok ? 200 : 409 });
+    }
+
+    // Alice's proactive proposals (lib/proactive.ts): Go hands it back to her; Snooze 7d and Done end it.
+    const proactiveRoute = path.match(/^\/api\/proactive\/(\d+)\/(go|snooze|done)$/);
+    if (proactiveRoute && req.method === "POST") {
+      const res = await proactiveAnswer(Number(proactiveRoute[1]), proactiveRoute[2] as "go" | "snooze" | "done");
       needsChanged();
       return Response.json(res, { status: res.ok ? 200 : 409 });
     }

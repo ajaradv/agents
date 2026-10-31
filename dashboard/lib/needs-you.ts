@@ -8,6 +8,7 @@ import { readCaptainChat, type ChatLine, type ChatQuestion } from "./chat.ts";
 import { listChatTargets, type ChatTarget } from "./chat-targets.ts";
 import { readGoRequests } from "./go-gate.ts";
 import { queuedProposals, replacesText, targetText } from "./memory-queue.ts";
+import { openProposals } from "./proactive.ts";
 import { openNotices, type NoticeKind } from "./notify.ts";
 import { listOrders } from "./order-note.ts";
 import { fleetInboxRoot } from "./paths.ts";
@@ -28,6 +29,9 @@ import { fleetInboxRoot } from "./paths.ts";
  * - memory: something the captain said that Jev thinks is worth remembering
  *   (lib/memory-queue.ts); Remember hands it to Alice, Not this clears it.
  *
+ * - proactive: something Alice proposes after the node's sweep (lib/proactive.ts);
+ *   Go hands it back to her, Snooze 7d and Done end it.
+ *
  * Questions that are no longer live and failed sends can be dismissed; holds
  * are answered or stay.
  */
@@ -42,10 +46,11 @@ export type NeedItem =
   | (Who & { kind: "gate"; id: string; gateId: string; ts: string; tool: string; summary: string; why: string; jev: string })
   | { kind: "helm"; id: string; ship: string; proposalId: string; ts: string; what: string; why: string; note: boolean }
   | { kind: "notice"; id: string; noticeId: number; ts: string; from: string; noticeKind: NoticeKind; summary: string; detail: string; ref: string }
+  | (Who & { kind: "proactive"; id: string; itemId: number; ts: string; findingKind: string; summary: string; proposal: string })
   | (Who & { kind: "memory"; id: string; proposalId: number; ts: string; quote: string; memoryLabel: string; confidence: number; target: string | null; replaces: string | null })
   | { kind: "order"; id: string; slug: string; ts: string; title: string; by: string; status: "queued" | "needs-captain"; steps: string[]; reason?: string; resume?: number };
 
-const KIND_ORDER = { go: 0, gate: 0, question: 0, helm: 1, notice: 1, memory: 1, order: 1, hold: 2, failed: 3 } as const;
+const KIND_ORDER = { go: 0, gate: 0, question: 0, helm: 1, notice: 1, memory: 1, proactive: 1, order: 1, hold: 2, failed: 3 } as const;
 
 function who(t: ChatTarget): Who {
   return { agentId: t.id, label: t.label, art: t.art, ...(t.ship ? { ship: t.ship } : {}) };
@@ -176,5 +181,8 @@ export async function collectNeedsYou(opts: { waiting: (agentId: string) => bool
     const t = agents.concat(workers).find((a) => a.id === p.agent);
     return { kind: "memory", id: `memory:${p.id}`, proposalId: p.id, ts: p.line_ts, quote: p.quote, memoryLabel: p.label, confidence: p.confidence, target: targetText(p), replaces: replacesText(p), agentId: p.agent, label: t?.label ?? p.agent, art: t?.art ?? null, ...(t?.ship ? { ship: t.ship } : {}) };
   });
-  return sortNeeds(items.concat(holdItems(opts.holds), await orderItems(), gos, gates, helm, notices, memory));
+  // Alice's proposals from the proactive sweep that the captain has not answered.
+  const alice = agents.find((a) => a.id === "alice");
+  const proactive: NeedItem[] = openProposals().map((r) => ({ kind: "proactive", id: `proactive:${r.id}`, itemId: r.id, ts: r.proposed_at ?? r.raised_at, findingKind: r.kind, summary: r.summary, proposal: r.proposal ?? "", agentId: "alice", label: alice?.label ?? "Alice", art: alice?.art ?? null, ...(alice?.ship ? { ship: alice.ship } : {}) }));
+  return sortNeeds(items.concat(holdItems(opts.holds), await orderItems(), gos, gates, helm, notices, memory, proactive));
 }

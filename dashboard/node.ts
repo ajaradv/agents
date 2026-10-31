@@ -28,7 +28,7 @@ import { freeRegistryAge, refreshFreeModels } from "./lib/free-models.ts";
 import { readShips } from "./lib/fleet-layers.ts";
 import { SYNC_MS, syncRemoteMemory } from "./lib/memory-sync.ts";
 import { approveProposal, dismissProposal } from "./lib/memory-queue.ts";
-import { runSweep } from "./lib/proactive.ts";
+import { answerProposal, proactiveReport, runSweep } from "./lib/proactive.ts";
 import { addQueueItem } from "./lib/decision-queue.ts";
 import { designReview, specSubmit } from "./lib/decisions.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos, needsChanged } from "./lib/fleet-api.ts";
@@ -432,6 +432,8 @@ function fleetCall(what: string, method: string, q: URLSearchParams, b: Record<s
   if (method === "POST" && what === "fact-set") return { tool: "fact_set", read: false, args: pick((k) => b[k], ["subject", "key", "value", "source", "retire", "observation"]) };
   if (method === "POST" && what === "remember") return { tool: "remember", read: false, args: pick((k) => b[k], ["section", "line", "replaces", "create", "observation"]) };
   if (method === "POST" && what === "log-observation") return { tool: "log_observation", read: false, args: pick((k) => b[k], ["text", "subject", "ttl_days"]) };
+  // Alice's proactive proposals (lib/proactive.ts): they show in Needs you, so a write like the others.
+  if (method === "POST" && what === "proactive-report") return { tool: "proactive_report", read: false, args: { items: JSON.stringify(b.items ?? []), dropped: JSON.stringify(b.dropped ?? []) } };
   if (method === "POST" && what === "chat") return { tool: "fleet_chat", read: false, args: pick((k) => b[k], ["to", "text"]) };
   return null;
 }
@@ -514,6 +516,18 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
     if (res.ok) writeSessionFacts(); // her next session starts with it
   }
   else if (call.tool === "remember") res = remember({ section: a.section ?? "", line: a.line ?? "", replaces: a.replaces, create: a.create === "true", observation: a.observation ? Number(a.observation) : undefined });
+  else if (call.tool === "proactive_report") {
+    const list = (v: string | undefined) => {
+      try {
+        const x = JSON.parse(v ?? "[]");
+        return Array.isArray(x) ? x : [];
+      } catch {
+        return [];
+      }
+    };
+    res = proactiveReport(list(a.items), list(a.dropped));
+    if (res.ok) needsChanged();
+  }
   else if (call.tool === "log_observation") res = logObservation({ text: a.text, subject: a.subject, ttlDays: Number(a.ttl_days) || undefined, by: from });
   else if (call.tool === "vault_tasks" && a.filter === "next") res = vaultNextReport(a.id ?? "");
   else if (call.tool === "vault_tasks") res = vaultTasksReport((VAULT_FILTERS as string[]).includes(a.filter ?? "") ? (a.filter as VaultFilter) : "ready", a.id ?? "");
@@ -603,7 +617,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     return Response.json(r);
   }
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|queue|delegate|public|recall|vault-tasks|fleet-query|vault-note|vault-search|vault-patch|vault-doctor|fact-get|fact-set|remember|log-observation)$/);
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|queue|delegate|public|recall|vault-tasks|fleet-query|vault-note|vault-search|vault-patch|vault-doctor|fact-get|fact-set|remember|log-observation|proactive-report)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm|look|helper|canvas|crew-request|dock-request|queue-request)(?:\/(\d+))?$/);
@@ -633,6 +647,13 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     const id = Number(b.id);
     const opts = typeof b.label === "string" ? { label: b.label } : {};
     const r = b.action === "approve" ? await approveProposal(id, opts) : b.action === "dismiss" ? dismissProposal(id, opts) : { ok: false, message: "action must be approve or dismiss" };
+    needsChanged();
+    return Response.json(r, { status: r.ok ? 200 : 409 });
+  }
+  if (path === "/v1/proactive") {
+    // Here too: Go posts a line to Alice.
+    const action = b.action === "go" || b.action === "snooze" || b.action === "done" ? b.action : null;
+    const r = action ? await answerProposal(Number(b.id), action) : { ok: false, message: "action must be go, snooze or done" };
     needsChanged();
     return Response.json(r, { status: r.ok ? 200 : 409 });
   }
