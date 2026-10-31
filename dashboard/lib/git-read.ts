@@ -1,0 +1,83 @@
+import { readShips } from "./fleet-layers.ts";
+import { localHost, type ShipHost } from "./ship-host.ts";
+import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
+
+/**
+ * git_read (extensions/crew.ts): the lead's and helmsman's read-only git in the
+ * ship's worktree, replacing bash for `git status`, `log`, `diff`, `show`.
+ * The crewmate picks an operation and plain arguments; the argv is fixed per
+ * operation and never passes through a shell, so it cannot write or run a
+ * command (a ref never starts with `-`, a path never leaves the tree).
+ */
+
+export const GIT_OPS = ["status", "log", "diff", "show", "branch"] as const;
+export type GitOp = (typeof GIT_OPS)[number];
+export type GitReadArgs = { op?: unknown; n?: unknown; ref?: unknown; paths?: unknown };
+
+const OUTPUT_MAX = 16_000;
+const TIMEOUT_MS = 30_000;
+const LOG_DEFAULT = 10;
+const LOG_MAX = 50;
+const PATHS_MAX = 20;
+/** Branch, tag, sha, HEAD~2, origin/main, main..HEAD, HEAD:file. Never an option (no leading dash). */
+const REF = /^[A-Za-z0-9_][A-Za-z0-9._\/@{}~^:+=,-]{0,199}$/;
+
+/** Roles that may read git aboard: the lead and the helmsman of this ship. */
+export function gitReadAllowed(shipId: string, from: string): boolean {
+  return from === `${shipId}-lead` || from === `${shipId}-helmsman`;
+}
+
+function badPath(p: unknown): string | null {
+  if (typeof p !== "string" || !p.trim()) return "a path is empty";
+  if (p.length > 300 || /[\0\r\n]/.test(p)) return `path ${JSON.stringify(p.slice(0, 40))} is not a plain path`;
+  if (p.startsWith("/") || p.startsWith("~") || p.startsWith("-") || p.startsWith(":")) return `path ${p} must be relative to the worktree`;
+  if (p.split(/[\\/]/).includes("..")) return `path ${p} leaves the worktree`;
+  return null;
+}
+
+/** The git arguments for one operation, or why the request is refused. */
+export function gitReadArgv(a: GitReadArgs): { ok: true; argv: string[] } | { ok: false; message: string } {
+  const op = a.op;
+  if (typeof op !== "string" || !(GIT_OPS as readonly string[]).includes(op)) return { ok: false, message: `Unknown op "${String(op)}". Ops: ${GIT_OPS.join(", ")}.` };
+  // --no-optional-locks: a read must not touch the index; the ext-diff and textconv switches keep configured programs from running.
+  const base = ["git", "--no-pager", "--no-optional-locks"];
+  if (op === "status") return { ok: true, argv: [...base, "status", "--short", "--branch"] };
+  if (op === "branch") return { ok: true, argv: [...base, "branch", "--show-current"] };
+  if (op === "log") {
+    const n = a.n === undefined ? LOG_DEFAULT : Number(a.n);
+    if (!Number.isInteger(n) || n < 1) return { ok: false, message: `n must be a whole number from 1 to ${LOG_MAX}.` };
+    return { ok: true, argv: [...base, "log", "--oneline", "--decorate", "-n", String(Math.min(n, LOG_MAX))] };
+  }
+  const ref = a.ref === undefined || a.ref === "" ? undefined : a.ref;
+  if (ref !== undefined && (typeof ref !== "string" || !REF.test(ref))) return { ok: false, message: `ref ${JSON.stringify(ref)} is not a plain ref (a branch, tag, sha, HEAD~2, or a..b).` };
+  const paths = a.paths === undefined ? [] : a.paths;
+  if (!Array.isArray(paths) || paths.length > PATHS_MAX) return { ok: false, message: `paths must be a list of at most ${PATHS_MAX} relative paths.` };
+  for (const p of paths) {
+    const why = badPath(p);
+    if (why) return { ok: false, message: `${why}.` };
+  }
+  const rest = [...(ref ? [ref] : op === "show" ? ["HEAD"] : []), ...(paths.length ? ["--", ...(paths as string[])] : [])];
+  return { ok: true, argv: [...base, op, "--no-ext-diff", "--no-textconv", ...rest] };
+}
+
+/** Run one read-only git operation for a crewmate, on the voyage's host, in its worktree (else the ship's repo). */
+export async function gitRead(shipId: string, from: string, args: GitReadArgs, deps: { host?: ShipHost; cwd?: string } = {}): Promise<{ ok: boolean; message: string }> {
+  if (!gitReadAllowed(shipId, from)) return { ok: false, message: "git_read is for the ship's lead and helmsman." };
+  const cmd = gitReadArgv(args);
+  if (!cmd.ok) return cmd;
+  let cwd = deps.cwd ?? voyageWorktree(shipId)?.path;
+  if (!cwd) {
+    const ship = (await readShips()).find((s) => s.id === shipId);
+    if (!ship) return { ok: false, message: `No ship ${shipId}.` };
+    cwd = ship.path;
+  }
+  // The same host as run_check: a VM voyage's worktree exists only on its VM.
+  const host = deps.host ?? voyageHost(shipId) ?? localHost;
+  const r = await host.exec(cmd.argv, { timeoutMs: TIMEOUT_MS, cwd });
+  if (r.timedOut) return { ok: false, message: "git did not answer in time." };
+  if (r.unreachable) return { ok: false, message: "The ship's host did not answer." };
+  const out = r.stdout.trim();
+  if (r.exitCode !== 0) return { ok: false, message: (r.stderr.trim() || out || `git exited ${r.exitCode}`).slice(0, 2000) };
+  if (!out) return { ok: true, message: "(no output)" };
+  return { ok: true, message: out.length <= OUTPUT_MAX ? out : `${out.slice(0, OUTPUT_MAX)}\n[… ${out.length - OUTPUT_MAX} more characters cut; narrow it with paths or a smaller n …]` };
+}

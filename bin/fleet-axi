@@ -14,6 +14,7 @@
 //   bin/fleet-axi jev [--days N]       Jev calls and spend per use, and the compaction advisor
 //   bin/fleet-axi gate [--days N]      tool gate decisions
 //   bin/fleet-axi query <name> [--days N] [--since D] [--until D] [--by X] [--limit N] [--full]   spend, tool_failures, jev, gate, voyages (what the fleet_query tool answers)
+//   bin/fleet-axi bash-use [--days N] [--agent A]   bash tool calls per agent from the session transcripts, by first word (the check before an officer loses bash)
 //   bin/fleet-axi note <path> [--section X] [--full]  one vault note: frontmatter, headings, one section
 //   bin/fleet-axi search [words] [--type T] [--status S] [--ship S] [--path P]   vault notes by words and frontmatter
 //   bin/fleet-axi facts [subject] [--key K] [--history]   Alice's recorded facts (what the fact_get tool answers)
@@ -26,6 +27,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { encode } from "@toon-format/toon";
 import { fleetStatus, shipLog, shipTasks } from "../dashboard/lib/fleet-api.ts";
+import { bashUse, bashUseRows } from "../dashboard/lib/bash-use.ts";
 import { FLEET_QUERIES, fleetQuery, SPEND_BY } from "../dashboard/lib/fleet-query.ts";
 import { factGet } from "../dashboard/lib/facts.ts";
 import { candidates, extract, extractMode, LABELS, labelProposal, proposalReport } from "../dashboard/lib/memory-extract.ts";
@@ -37,7 +39,7 @@ import { linkName, VAULT_FILTERS, vaultNextSteps, vaultTasksReport, type VaultFi
 import { searchVault } from "../dashboard/lib/vault-index.ts";
 import { vaultNote } from "../dashboard/lib/vault-note.ts";
 
-const COMMANDS = ["status", "ship", "vault", "next", "jev", "gate", "query", "note", "search", "facts", "intents", "extract", "proactive", "setup"] as const;
+const COMMANDS = ["status", "ship", "vault", "next", "jev", "gate", "query", "bash-use", "note", "search", "facts", "intents", "extract", "proactive", "setup"] as const;
 const FLAGS: Record<string, string[]> = {
   status: ["--detail"],
   ship: ["--log"],
@@ -46,6 +48,7 @@ const FLAGS: Record<string, string[]> = {
   jev: ["--days"],
   gate: ["--days", "--limit", "--full"],
   query: ["--days", "--since", "--until", "--by", "--limit", "--full"],
+  "bash-use": ["--days", "--agent"],
   note: ["--section", "--full"],
   search: ["--type", "--status", "--ship", "--path", "--limit"],
   facts: ["--key", "--history"],
@@ -61,8 +64,8 @@ const SWITCHES = ["--detail", "--brief", "--full", "--history", "--unlabelled", 
 const HELP: Record<string, string> = {
   "": `command: fleet-axi
 summary: The fleet from any shell (read-only): ships, voyages, logs, vault tasks, Jev spend, tool gate, vault notes
-usage: bin/fleet-axi [status|ship|vault|next|jev|gate|query|note|search|facts|intents|extract|proactive|setup] ...
-commands[14]{command,what}:
+usage: bin/fleet-axi [status|ship|vault|next|jev|gate|query|bash-use|note|search|facts|intents|extract|proactive|setup] ...
+commands[15]{command,what}:
   status,"ships, voyages, crews, spend today (--detail for crewmates and officers)"
   ship,"a ship's voyage tasks and log (bin/fleet-axi ship <id> [--log N])"
   vault,"vault tasks by filter: ready (default), open, in-progress, blocked, done, all; --id for one"
@@ -70,6 +73,7 @@ commands[14]{command,what}:
   jev,"Jev calls and spend per use, and the compaction advisor (--days N)"
   gate,tool gate decisions (--days N)
   query,"exact numbers from the fleet's records: spend (--by agent|model|day), tool_failures, jev, gate, voyages (--days N, or --since/--until YYYY-MM-DD)"
+  bash-use,"bash tool calls per agent from the session transcripts, with the first word of each command (--days N, --agent <id or role>)"
   note,"one vault note: frontmatter, summary, headings with sizes; --section <heading> for one section, --full for the body"
   search,"vault notes by words and frontmatter: --type, --status, --ship, --path (prefix or glob)"
   facts,"Alice's recorded facts (exact values that change, with source and date): bin/fleet-axi facts [subject] [--key k] [--history]"
@@ -90,6 +94,7 @@ examples[3]:
   jev: "command: fleet-axi jev\nusage: bin/fleet-axi jev [--days N]\nflags[2]{flag,default,description}:\n  --days,7,how far back\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi jev\n  bin/fleet-axi jev --days 30",
   gate: "command: fleet-axi gate\nusage: bin/fleet-axi gate [--days N]\nflags[2]{flag,default,description}:\n  --days,1,how far back\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi gate\n  bin/fleet-axi gate --days 7",
   query: `command: fleet-axi query\nusage: bin/fleet-axi query <${FLEET_QUERIES.join("|")}> [--days N] [--since D] [--until D] [--by ${SPEND_BY.join("|")}] [--limit N] [--full]\nsummary: Named read-only queries over the fleet's records; no SQL\nflags[7]{flag,default,description}:\n  --days,7,how far back from now (or from --until)\n  --since,,first day YYYY-MM-DD (UTC, inclusive) or ISO time; ignores --days\n  --until,,last day YYYY-MM-DD (UTC, inclusive) or ISO time\n  --by,agent,spend only: group by agent / model / day\n  --limit,,rows per cut list (1..200); default 15 gate notable, 8 latest failures, 20 agent+tool pairs\n  --full,,long text uncut and cut lists up to 200 rows\n  --help,,show this help\nexamples[4]:\n  bin/fleet-axi query spend --days 7 --by agent\n  bin/fleet-axi query spend --since 2026-10-18 --until 2026-10-25 --by agent\n  bin/fleet-axi query tool_failures --days 7\n  bin/fleet-axi query voyages`,
+  "bash-use": "command: fleet-axi bash-use\nusage: bin/fleet-axi bash-use [--days N] [--agent <id|role>]\nsummary: Bash tool calls per agent in the session transcripts (the tool gate does not log the calls its rules allow), busiest first, with the first word of each command; an agent with 0 has not used bash in the window\nflags[3]{flag,default,description}:\n  --days,7,how far back\n  --agent,,one agent (kinwork-lead) or a role (lead: every <ship>-lead)\n  --help,,show this help\nexamples[3]:\n  bin/fleet-axi bash-use\n  bin/fleet-axi bash-use --days 7 --agent helmsman\n  bin/fleet-axi bash-use --agent architect",
   note: "command: fleet-axi note\nusage: bin/fleet-axi note <path> [--section <heading>] [--full]\nsummary: One vault note without reading the file; the body only when asked, cut at 12 KB\nflags[3]{flag,description}:\n  --section,one section by heading (any case)\n  --full,the whole body\n  --help,show this help\nexamples[3]:\n  bin/fleet-axi note fleet/plans/research/alice-memory-and-tools.md\n  bin/fleet-axi note fleet/plans/research/alice-memory-and-tools.md --section Phases\n  bin/fleet-axi note tasks/fleet-memory-m1-tools --full",
   search: "command: fleet-axi search\nusage: bin/fleet-axi search [words] [--type T] [--status S] [--ship S] [--path P] [--limit N]\nsummary: Vault notes by words (sections, with a snippet) and frontmatter; newest first without words\nflags[6]{flag,default,description}:\n  --type,,frontmatter type, e.g. Task, Plan\n  --status,,frontmatter status\n  --ship,,frontmatter ship\n  --path,,path prefix (tasks/) or glob (fleet/plans/**)\n  --limit,8,notes shown (max 25)\n  --help,,show this help\nexamples[3]:\n  bin/fleet-axi search jev --type Plan\n  bin/fleet-axi search --type Task --status in-progress\n  bin/fleet-axi search \"compaction advisor\" --path fleet/",
   facts: "command: fleet-axi facts\nusage: bin/fleet-axi facts [subject] [--key <key>] [--history]\nsummary: The fleet's recorded facts (hosts, models, owners, dates), current ones newest first, each with its source; nothing is ever deleted\nflags[3]{flag,description}:\n  --key,only that key\n  --history,with a subject and --key: the values it had before (a retired fact shows as \"(retired)\" with its reason)\n  --help,show this help\nexamples[3]:\n  bin/fleet-axi facts\n  bin/fleet-axi facts hub\n  bin/fleet-axi facts hub --key host --history",
@@ -183,6 +188,12 @@ async function main(): Promise<void> {
     const r = fleetQuery(name, { days: days ?? (key === "gate" ? 1 : 7), by: flag("--by"), since: flag("--since"), until: flag("--until"), limit: Number(flag("--limit")) || undefined, full: rest.includes("--full") });
     if (!r.ok) fail(r.message, `bin/fleet-axi query --help (queries: ${FLEET_QUERIES.join(", ")})`);
     return void console.log(toolText(r, VIEWS.fleet_query, { full: rest.includes("--full") }));
+  }
+  if (key === "bash-use") {
+    const days = flag("--days") === undefined ? 7 : Math.max(1, Number(flag("--days")) || 7);
+    const rows = await bashUse({ days, agent: flag("--agent") });
+    if (flag("--agent") && !rows.length) fail(`no sessions for ${flag("--agent")}`, "pass an agent id (kinwork-lead) or a role (lead); the folders under the fleet inbox are the ids");
+    return void console.log(encode({ days, agents: rows.length, bash_calls: rows.reduce((n, r) => n + r.bashCalls, 0), by_agent: bashUseRows(rows) }));
   }
   if (key === "note") {
     const path = positional()[0];

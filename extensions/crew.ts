@@ -8,7 +8,8 @@
  * host commands the captain lists for the ship; FLEET_SHIP_CHECKS names them),
  * and maneuver_start when the ship gives the role maneuvers (FLEET_SHIP_MANEUVERS).
  * The lead (<ship>-lead) also gets: task_add, task_update. The helmsman
- * (<ship>-helmsman) gets helm_propose.
+ * (<ship>-helmsman) gets helm_propose and fleet_query. Both get git_read
+ * (read-only git in the voyage's worktree).
  */
 
 import { StringEnum } from "@mariozechner/pi-ai";
@@ -151,6 +152,49 @@ export default function (pi: ExtensionAPI) {
       }),
       async execute(_id, p) {
         return text(await call("POST", "helm", p as Record<string, unknown>));
+      },
+    });
+  }
+
+  // The lead's and helmsman's read-only git, in the voyage's worktree on the ship's host (dashboard/lib/git-read.ts).
+  if (isLead || me === `${ship}-helmsman`) {
+    pi.registerTool({
+      name: "git_read",
+      label: "Read git",
+      description:
+        "Read-only git in the ship's worktree. op: status (short, with the branch), log (n commits, default 10, max 50), diff (working tree, or against ref; paths narrows it), show (a commit, default HEAD; paths narrows it), branch (the current branch name). ref is a branch, tag, sha, or range like main..HEAD; paths are relative to the worktree. Long output is cut.",
+      parameters: Type.Object({
+        op: StringEnum(["status", "log", "diff", "show", "branch"] as const),
+        n: Type.Optional(Type.Number({ description: "log: how many commits" })),
+        ref: Type.Optional(Type.String({ description: "diff or show: the ref or range" })),
+        paths: Type.Optional(Type.Array(Type.String(), { description: "diff or show: only these paths, relative to the worktree" })),
+      }),
+      async execute(_id, p) {
+        return text(await call("POST", "git", { op: p.op, n: p.n, ref: p.ref, paths: p.paths }));
+      },
+    });
+  }
+
+  // The helmsman reviews with the fleet's numbers instead of SQL over the metrics database (the officers' fleet_query, read-only).
+  if (me === `${ship}-helmsman`) {
+    pi.registerTool({
+      name: "fleet_query",
+      label: "Fleet query",
+      description:
+        "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool. jev: Jev calls and cost per use. gate: tool gate decisions. voyages: open and recent voyages with ship and cost. The window is days back from now, or since/until as YYYY-MM-DD (UTC, inclusive). A list says \"shown N of M\" when cut: limit or full=true shows more.",
+      parameters: Type.Object({
+        query: StringEnum(["spend", "tool_failures", "jev", "gate", "voyages"] as const),
+        days: Type.Optional(Type.Number({ description: "How far back, default 7, max 365; ignored when since is given" })),
+        since: Type.Optional(Type.String({ description: "First day, YYYY-MM-DD (UTC, inclusive)" })),
+        until: Type.Optional(Type.String({ description: "Last day, YYYY-MM-DD (UTC, inclusive)" })),
+        by: Type.Optional(StringEnum(["agent", "model", "day"] as const, { description: "spend only: how to group it, default agent" })),
+        limit: Type.Optional(Type.Number({ description: "Rows per list, max 200" })),
+        full: Type.Optional(Type.Boolean({ description: "Long text uncut, every row" })),
+      }),
+      async execute(_id, p) {
+        const q = new URLSearchParams({ query: p.query });
+        for (const [k, v] of Object.entries({ days: p.days, since: p.since, until: p.until, by: p.by, limit: p.limit, full: p.full ? "true" : undefined })) if (v !== undefined) q.set(k, String(v));
+        return text(await call("GET", `fleet-query?${q}`));
       },
     });
   }

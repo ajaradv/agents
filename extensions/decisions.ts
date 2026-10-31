@@ -3,6 +3,8 @@
  * (dashboard/lib/decisions.ts; vault plan fleet/plans/feature/design-sessions).
  *
  * - spec_submit (architect): hand a drafted spec to the captain's review.
+ * - plan_check (architect): a plan's execution block bound to the crew-dispatch
+ *   rules (what `bun bin/plan-execution.ts <plan>` printed), for the Architect without bash.
  * - design_review (designer): a voyage's screenshots against the approved
  *   design; only a difference reaches the queue.
  */
@@ -18,7 +20,7 @@ function text(t: string) {
   return { content: [{ type: "text" as const, text: t }], details: {} };
 }
 
-async function call(what: "spec" | "design-review", body: Record<string, unknown>): Promise<string> {
+async function call(what: "spec" | "design-review" | "plan-check", body: Record<string, unknown>): Promise<string> {
   if (!base || !token) return "Decision tools work only in a live dashboard session. Tell the captain in chat instead.";
   try {
     const res = await fetch(`${base}/api/decisions/${what}`, {
@@ -46,6 +48,16 @@ export default function (pi: ExtensionAPI) {
       }),
       async execute(_id, p) {
         return text(await call("spec", { queue: p.queue, path: p.path }));
+      },
+    });
+    pi.registerTool({
+      name: "plan_check",
+      label: "Check a plan's execution block",
+      description:
+        "Architect: check a plan's `execution:` block before you move it to reviewed. Gives each task's rule and the profiles it resolves to, or the errors (malformed block, unknown rule id) as TOON. path is the plan's vault path, e.g. fleet/plans/feature/r4-crew-isolation.md; only notes inside the vault.",
+      parameters: Type.Object({ path: Type.String({ description: "The plan's vault path" }) }),
+      async execute(_id, p) {
+        return text(await call("plan-check", { path: p.path }));
       },
     });
   }
