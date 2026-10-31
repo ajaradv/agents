@@ -9,6 +9,9 @@
 #   bin/hub-deploy --restart  restart even when there is nothing new to pull
 #   bin/hub-deploy --reinstall
 #                             reinstall the services (bin/fleet-services install) even when settings and units are unchanged (implies --restart)
+#   bin/hub-deploy --rollback [sha]
+#                             undo the last deploy: reset main to the commit before it (or to
+#                             sha), then restart as usual; --check --rollback only shows the plan
 #   bin/hub-deploy --force    do not wait for busy agents (their turn is cut off)
 #   bin/hub-deploy --new-session alice[,fleet-lead]
 #                             after the restart, start fresh sessions for these agents, so a
@@ -26,6 +29,12 @@
 # up nothing); --check only reports a mismatch. Agents stop with the node; sessions resume on the next message unless
 # --new-session names them.
 #
+# Every deploy that moves the code, and every rollback, appends a line (when the code moves) to
+# fleet/inbox/.node/deploys.log: <time> <from-sha> <to-sha> <deploy|rollback>. A plain
+# --restart that pulled nothing adds none. --rollback with no sha goes to the from-sha of the
+# last "deploy" line. The hub stays on main, so after a rollback it is behind origin/main:
+# push a fix or revert to main first, because the next plain bin/hub-deploy brings main back.
+#
 # FLEET_HUB names the ssh host (default fleet-hub-k1s7.exe.xyz).
 set -euo pipefail
 
@@ -35,15 +44,16 @@ if [ "$(uname)" != Linux ]; then
   exec ssh "$HUB" "bash -s -- $*" <"$0"
 fi
 
-CHECK=0 RESTART=0 REINSTALL=0 FORCE=0 FRESH=""
+CHECK=0 RESTART=0 REINSTALL=0 FORCE=0 FRESH="" ROLLBACK=0 ROLLBACK_SHA=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --check) CHECK=1 ;;
     --restart) RESTART=1 ;;
     --reinstall) REINSTALL=1 RESTART=1 ;;
     --force) FORCE=1 ;;
+    --rollback) ROLLBACK=1; if [ $# -gt 1 ] && [ "${2#--}" = "$2" ]; then ROLLBACK_SHA="$2"; shift; fi ;;
     --new-session) FRESH="${2:?--new-session takes agent ids, comma separated}"; shift ;;
-    *) echo "usage: bin/hub-deploy [--check] [--restart] [--reinstall] [--force] [--new-session a,b]" >&2; exit 2 ;;
+    *) echo "usage: bin/hub-deploy [--check] [--restart] [--reinstall] [--rollback [sha]] [--force] [--new-session a,b]" >&2; exit 2 ;;
   esac
   shift
 done
@@ -55,6 +65,7 @@ WAIT="${FLEET_DEPLOY_WAIT:-300}"
 NODE_URL="http://127.0.0.1:${FLEET_NODE_PORT:-8786}"
 DASH_URL="http://127.0.0.1:${DASHBOARD_PORT:-8787}"
 TOKEN_FILE="$ROOT/fleet/inbox/.node/token"
+DEPLOY_LOG="$ROOT/fleet/inbox/.node/deploys.log"
 
 node_get() { curl -fsS --max-time 5 -H "Authorization: Bearer $(cat "$TOKEN_FILE")" "$NODE_URL$1"; }
 # Agents that are mid-turn or held at a gate, one per line ("alice thinking").
@@ -69,6 +80,23 @@ ls_pinned() { sed -n 's/^LITESTREAM_VERSION=//p' bin/litestream-pin.sh; }
 ls_installed() { "$HOME/.local/bin/litestream" version 2>/dev/null | head -1 || true; }
 ls_unit() { systemctl cat fleet-litestream >/dev/null 2>&1; }
 
+# Full sha to roll back to: the given one, else the from-sha of the last "deploy" line.
+# Prints it, or an error on stderr and a failing status.
+rollback_target() {
+  local want="${1:-}" full
+  if [ -z "$want" ]; then
+    want="$(awk '$4 == "deploy" { f = $2 } END { print f }' "$DEPLOY_LOG" 2>/dev/null || true)"
+    [ -n "$want" ] || { echo "error: no deploy recorded in $DEPLOY_LOG; name a sha: --rollback <sha>" >&2; return 1; }
+  fi
+  full="$(git rev-parse --verify -q "$want^{commit}" </dev/null)" || { echo "error: $want is not a commit on the hub" >&2; return 1; }
+  echo "$full"
+}
+# Append one history line (see the header).
+record_deploy() { # from to kind
+  mkdir -p "$(dirname "$DEPLOY_LOG")"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $1 $2 $3" >>"$DEPLOY_LOG"
+}
+
 branch="$(git branch --show-current)"
 [ "$branch" = main ] || { echo "error: the hub is on $branch, not main; switch it by hand" >&2; exit 1; }
 if ! git diff --quiet || ! git diff --cached --quiet; then
@@ -79,8 +107,21 @@ fi
 
 git fetch -q origin main
 before="$(git rev-parse --short HEAD)"
+before_full="$(git rev-parse HEAD)"
 incoming="$(git log --oneline HEAD..origin/main)"
-if [ -n "$incoming" ]; then
+last_kind="$(awk 'END { print $4 }' "$DEPLOY_LOG" 2>/dev/null || true)"
+if [ "$ROLLBACK" = 1 ]; then
+  target_full="$(rollback_target "$ROLLBACK_SHA")"
+  target="$(git rev-parse --short "$target_full")"
+  [ "$target_full" != "$before_full" ] || { echo "error: the hub is already at $target" >&2; exit 1; }
+  undone="$(git log --oneline "$target_full..HEAD")"
+  echo "== rolling back $before -> $target"
+  if [ -n "$undone" ]; then echo "$undone"; else echo "(no commits undone: $target is ahead of the hub)"; fi
+  echo "== after this the hub is behind origin/main; push a fix or revert first, then bin/hub-deploy brings main back"
+elif [ -n "$incoming" ]; then
+  if [ "$last_kind" = rollback ]; then
+    echo "== the hub was rolled back at $(awk 'END { print $1 }' "$DEPLOY_LOG"); a deploy brings it back to origin/main"
+  fi
   echo "== new on main ($before -> $(git rev-parse --short origin/main))"
   echo "$incoming"
 else
@@ -91,7 +132,8 @@ now_busy="$(busy)"
 
 if [ "$CHECK" = 1 ]; then
   reason="$(reinstall_reason)"
-  if git diff --name-only HEAD origin/main -- bin/fleet-services | grep -q .; then reason="${reason:-bin/fleet-services changes on main}"; fi
+  check_to=origin/main; [ "$ROLLBACK" = 1 ] && check_to="$target_full"
+  if git diff --name-only HEAD "$check_to" -- bin/fleet-services | grep -q .; then reason="${reason:-bin/fleet-services changes in $check_to}"; fi
   if [ -n "$reason" ]; then echo "== would reinstall services ($reason)"; else echo "== would restart services (settings and units unchanged)"; fi
   if ls_unit; then
     pinned="$(ls_pinned)"; have="$(ls_installed)"
@@ -100,21 +142,33 @@ if [ "$CHECK" = 1 ]; then
   fi
   exit 0
 fi
-if [ -z "$incoming" ] && [ "$RESTART" = 0 ] && [ -z "$FRESH" ]; then echo "nothing to deploy (--restart to restart anyway)"; exit 0; fi
+if [ "$ROLLBACK" = 0 ] && [ -z "$incoming" ] && [ "$RESTART" = 0 ] && [ -z "$FRESH" ]; then echo "nothing to deploy (--restart to restart anyway)"; exit 0; fi
 
-deploy() {
-  if [ -n "$incoming" ]; then
-    deps="$(git diff --name-only HEAD origin/main -- package.json bun.lock dashboard/package.json)"
+# Move main to $1 (fast-forward pull, or a hard reset for a rollback), then the
+# submodule and dependencies that go with the new tree.
+move_to() { # target-ref
+  local deps
+  deps="$(git diff --name-only HEAD "$1" -- package.json bun.lock dashboard/package.json)"
+  if [ "$ROLLBACK" = 1 ]; then
+    git reset -q --hard "$1"
+    echo "== reset main to $(git rev-parse --short HEAD)"
+  else
     git pull -q --ff-only origin main
     echo "== pulled to $(git rev-parse --short HEAD)"
-    # Alice's vault skills link into vendor/obsidian-skills (bin/setup-alice-vault).
-    git submodule update -q --init
-    if [ -n "$deps" ]; then
-      echo "== dependencies changed: bun install"
-      bun install --frozen-lockfile
-    fi
   fi
+  # History as soon as the code moves, before the health checks: a deploy that breaks
+  # the node is the one --rollback must undo (a bare --restart adds no line).
+  record_deploy "$before_full" "$(git rev-parse HEAD)" "$([ "$ROLLBACK" = 1 ] && echo rollback || echo deploy)"
+  # Alice's vault skills link into vendor/obsidian-skills (bin/setup-alice-vault).
+  git submodule update -q --init
+  if [ -n "$deps" ]; then
+    echo "== dependencies changed: bun install"
+    bun install --frozen-lockfile
+  fi
+}
 
+# Wait for idle agents, restart or reinstall, and check everything answers.
+restart_and_check() {
   if [ "$FORCE" = 0 ]; then
     waited=0
     while b="$(busy)"; [ -n "$b" ]; do
@@ -174,8 +228,15 @@ deploy() {
     fi
     systemctl is-active --quiet fleet-litestream || echo "warning: fleet-litestream is not active; check bin/fleet-backup drill"
   fi
+
 }
-if [ -n "$incoming" ] || [ "$RESTART" = 1 ]; then deploy; fi
+if [ "$ROLLBACK" = 1 ]; then
+  move_to "$target_full"
+  restart_and_check
+elif [ -n "$incoming" ] || [ "$RESTART" = 1 ]; then
+  [ -z "$incoming" ] || move_to origin/main
+  restart_and_check
+fi
 
 if [ -n "$FRESH" ]; then
   IFS=, read -ra ids <<<"$FRESH"
