@@ -1,0 +1,12 @@
+{
+  "openrouter": {
+    "deepseek/deepseek-v4-pro": {
+      "compat": {
+        "openRouterRouting": {
+          "order": ["streamlake", "baidu"],
+          "allow_fallbacks": true
+        }
+      }
+    }
+  }
+}

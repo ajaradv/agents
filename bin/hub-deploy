@@ -27,7 +27,9 @@
 # fleet-litestream unit exists, the Litestream binary is held to the version pinned in
 # bin/litestream-pin.sh (a v0.3 binary against the v0.5 config shows "active" and backs
 # up nothing); --check only reports a mismatch. Agents stop with the node; sessions resume on the next message unless
-# --new-session names them.
+# --new-session names them. Every deploy also applies bin/pi-model-overrides (OpenRouter
+# routing for the cache) before the restart, and ends by warning about any discover_skills
+# name that is not installed on the hub (bin/hub-skills, from the laptop, copies them).
 #
 # Every deploy that moves the code, and every rollback, appends a line (when the code moves) to
 # fleet/inbox/.node/deploys.log: <time> <from-sha> <to-sha> <deploy|rollback>. A plain
@@ -79,6 +81,16 @@ reinstall_reason() {
 ls_pinned() { sed -n 's/^LITESTREAM_VERSION=//p' bin/litestream-pin.sh; }
 ls_installed() { "$HOME/.local/bin/litestream" version 2>/dev/null | head -1 || true; }
 ls_unit() { systemctl cat fleet-litestream >/dev/null 2>&1; }
+
+# Warn about each discover_skills name the hub does not have (bin/hub-skills lists them).
+skill_warnings() {
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    [ -f "$HOME/.agents/skills/$name/SKILL.md" ] || [ -f "$HOME/.pi/agent/skills/$name/SKILL.md" ] ||
+      echo "warning: skill $name (discover_skills) is not on the hub; run bin/hub-skills from the laptop"
+  done < <(bin/hub-skills --names </dev/null)
+}
 
 # Full sha to roll back to: the given one, else the from-sha of the last "deploy" line.
 # Prints it, or an error on stderr and a failing status.
@@ -140,6 +152,8 @@ if [ "$CHECK" = 1 ]; then
     if [ "$have" != "$pinned" ]; then echo "== litestream ${have:-missing} but pinned $pinned (a deploy would fix it)"; fi
     systemctl is-active --quiet fleet-litestream || echo "warning: fleet-litestream is not active"
   fi
+  bin/pi-model-overrides --check </dev/null || echo "== a deploy would apply them"
+  skill_warnings
   exit 0
 fi
 if [ "$ROLLBACK" = 0 ] && [ -z "$incoming" ] && [ "$RESTART" = 0 ] && [ -z "$FRESH" ]; then echo "nothing to deploy (--restart to restart anyway)"; exit 0; fi
@@ -182,6 +196,9 @@ restart_and_check() {
       waited=$((waited + 5))
     done
   fi
+
+  # OpenRouter routing for pi's cache, in place before the agents restart.
+  bin/pi-model-overrides </dev/null
 
   old_pid="$(node_get /v1/health 2>/dev/null | jq -r .pid || true)"
   reason="$(reinstall_reason)"
@@ -229,6 +246,7 @@ restart_and_check() {
     systemctl is-active --quiet fleet-litestream || echo "warning: fleet-litestream is not active; check bin/fleet-backup drill"
   fi
 
+  skill_warnings
 }
 if [ "$ROLLBACK" = 1 ]; then
   move_to "$target_full"

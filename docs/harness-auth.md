@@ -62,6 +62,8 @@ Run **`just merge-pi-providers`** to merge tracked snippets into `~/.pi/agent/mo
 
 **OpenRouter** uses Pi’s built-in `openrouter` provider; set **`OPENROUTER_API_KEY`** only (no merge file).
 
+**OpenRouter routing and the prompt cache.** OpenRouter serves DeepSeek V4 from about 15 upstream hosts (no first-party DeepSeek), each with its own prompt cache, so a request that lands on a different host than the last one misses the cache even when the prefix is unchanged. Alice missed on 5 of 8 calls in one session (`extensions/cache-watch.ts` warns on this). [fleet/config/pi-model-overrides.json](../fleet/config/pi-model-overrides.json) pins `deepseek/deepseek-v4-pro` to `order: ["streamlake", "baidu"]` with `allow_fallbacks: true` (a fallback host still serves, at the price of a cold cache). `bin/pi-model-overrides` merges it into `~/.pi/agent/models.json` as `providers.openrouter.modelOverrides.<model>` (pi sends `compat.openRouterRouting` as OpenRouter's `provider` field); `bin/hub-deploy` and `bin/hub-install` run it on the hub, and on the laptop run it once by hand (`--check` reports whether it is current). To change the order, edit the JSON, merge it, and restart the agents; a model's entry is replaced as a whole, and other keys in `models.json` are left alone. `bin/voyage-vm-setup` VMs use exe.dev's gateway and are not covered.
+
 Set keys via [onepassword.md](onepassword.md) or `just firstmate-op` / `just alice-op`. `fleet/home/.env` may be a 1Password FIFO — `bin/launch` reads it with a 2s timeout so `just firstmate` does not hang.
 
 For worker panes in tmux/Herdr, list key **names** in `config/launch-env-allowlist` (inherited to remote secondmate homes); values must exist in the **destination pane** environment when spawned.
