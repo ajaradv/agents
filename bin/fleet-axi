@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // fleet-axi - the fleet from any shell: what is running, what waits on the captain,
 // voyages, ship logs, vault tasks and notes, Jev spend, and tool gate decisions. Read-only
-// (search refreshes the vault mirror, a derived cache in the journal database).
+// (search refreshes the vault mirror, a derived cache in the journal database; intents label
+// stores the captain's label).
 // Harness-agnostic (docs/tool-standards.md): Claude Code, pi, or a script can run it.
 // The same libraries and output views as the officers' fleet tools.
 //
@@ -16,6 +17,8 @@
 //   bin/fleet-axi note <path> [--section X] [--full]  one vault note: frontmatter, headings, one section
 //   bin/fleet-axi search [words] [--type T] [--status S] [--ship S] [--path P]   vault notes by words and frontmatter
 //   bin/fleet-axi facts [subject] [--key K] [--history]   Alice's recorded facts (what the fact_get tool answers)
+//   bin/fleet-axi intents [--days N] [--unlabelled]   who Jev would route the captain's messages to (observe mode), with accuracy where labelled
+//   bin/fleet-axi intents label <id> <owner>   the captain's label: who should have owned that message
 //   bin/fleet-axi setup hooks          opt in: show the summary at the start of Claude Code sessions in this repo
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -23,13 +26,14 @@ import { encode } from "@toon-format/toon";
 import { fleetStatus, shipLog, shipTasks } from "../dashboard/lib/fleet-api.ts";
 import { FLEET_QUERIES, fleetQuery, SPEND_BY } from "../dashboard/lib/fleet-query.ts";
 import { factGet } from "../dashboard/lib/facts.ts";
+import { intentOptions, intentReport, labelIntent } from "../dashboard/lib/intent-route.ts";
 import { ROOT } from "../dashboard/lib/paths.ts";
 import { toolText, VIEWS } from "../dashboard/lib/tool-out.ts";
 import { linkName, VAULT_FILTERS, vaultNextSteps, vaultTasksReport, type VaultFilter } from "../dashboard/lib/vault-tasks.ts";
 import { searchVault } from "../dashboard/lib/vault-index.ts";
 import { vaultNote } from "../dashboard/lib/vault-note.ts";
 
-const COMMANDS = ["status", "ship", "vault", "next", "jev", "gate", "query", "note", "search", "facts", "setup"] as const;
+const COMMANDS = ["status", "ship", "vault", "next", "jev", "gate", "query", "note", "search", "facts", "intents", "setup"] as const;
 const FLAGS: Record<string, string[]> = {
   status: ["--detail"],
   ship: ["--log"],
@@ -41,17 +45,18 @@ const FLAGS: Record<string, string[]> = {
   note: ["--section", "--full"],
   search: ["--type", "--status", "--ship", "--path", "--limit"],
   facts: ["--key", "--history"],
+  intents: ["--days", "--unlabelled", "--limit"],
   setup: [],
   "": ["--brief"],
 };
 /** Flags that take no value. */
-const SWITCHES = ["--detail", "--brief", "--full", "--history"];
+const SWITCHES = ["--detail", "--brief", "--full", "--history", "--unlabelled"];
 
 const HELP: Record<string, string> = {
   "": `command: fleet-axi
 summary: The fleet from any shell (read-only): ships, voyages, logs, vault tasks, Jev spend, tool gate, vault notes
-usage: bin/fleet-axi [status|ship|vault|next|jev|gate|query|note|search|facts|setup] ...
-commands[11]{command,what}:
+usage: bin/fleet-axi [status|ship|vault|next|jev|gate|query|note|search|facts|intents|setup] ...
+commands[12]{command,what}:
   status,"ships, voyages, crews, spend today (--detail for crewmates and officers)"
   ship,"a ship's voyage tasks and log (bin/fleet-axi ship <id> [--log N])"
   vault,"vault tasks by filter: ready (default), open, in-progress, blocked, done, all; --id for one"
@@ -62,6 +67,7 @@ commands[11]{command,what}:
   note,"one vault note: frontmatter, summary, headings with sizes; --section <heading> for one section, --full for the body"
   search,"vault notes by words and frontmatter: --type, --status, --ship, --path (prefix or glob)"
   facts,"Alice's recorded facts (exact values that change, with source and date): bin/fleet-axi facts [subject] [--key k] [--history]"
+  intents,"who Jev would route the captain's messages to (observe mode): verdicts, counts, accuracy per confidence bucket; intents label <id> <owner>"
   setup,"setup hooks: opt in to the summary at the start of Claude Code sessions in this repo"
 flags[1]{flag,description}:
   --help,"show this help (also after a command)"
@@ -79,6 +85,7 @@ examples[3]:
   note: "command: fleet-axi note\nusage: bin/fleet-axi note <path> [--section <heading>] [--full]\nsummary: One vault note without reading the file; the body only when asked, cut at 12 KB\nflags[3]{flag,description}:\n  --section,one section by heading (any case)\n  --full,the whole body\n  --help,show this help\nexamples[3]:\n  bin/fleet-axi note fleet/plans/research/alice-memory-and-tools.md\n  bin/fleet-axi note fleet/plans/research/alice-memory-and-tools.md --section Phases\n  bin/fleet-axi note tasks/fleet-memory-m1-tools --full",
   search: "command: fleet-axi search\nusage: bin/fleet-axi search [words] [--type T] [--status S] [--ship S] [--path P] [--limit N]\nsummary: Vault notes by words (sections, with a snippet) and frontmatter; newest first without words\nflags[6]{flag,default,description}:\n  --type,,frontmatter type, e.g. Task, Plan\n  --status,,frontmatter status\n  --ship,,frontmatter ship\n  --path,,path prefix (tasks/) or glob (fleet/plans/**)\n  --limit,8,notes shown (max 25)\n  --help,,show this help\nexamples[3]:\n  bin/fleet-axi search jev --type Plan\n  bin/fleet-axi search --type Task --status in-progress\n  bin/fleet-axi search \"compaction advisor\" --path fleet/",
   facts: "command: fleet-axi facts\nusage: bin/fleet-axi facts [subject] [--key <key>] [--history]\nsummary: The fleet's recorded facts (hosts, models, owners, dates), current ones newest first, each with its source; nothing is ever deleted\nflags[3]{flag,description}:\n  --key,only that key\n  --history,with a subject and --key: the values it had before (a retired fact shows as \"(retired)\" with its reason)\n  --help,show this help\nexamples[3]:\n  bin/fleet-axi facts\n  bin/fleet-axi facts hub\n  bin/fleet-axi facts hub --key host --history",
+  intents: "command: fleet-axi intents\nusage: bin/fleet-axi intents [--days N] [--unlabelled] [--limit N]\n       bin/fleet-axi intents label <id> <owner>\nsummary: Jev's observe-mode verdicts on who should own each captain message to Alice (nothing is rerouted); label a verdict with the right owner to measure accuracy per confidence bucket\nflags[4]{flag,default,description}:\n  --days,7,how far back\n  --unlabelled,,only verdicts without a label\n  --limit,30,rows shown\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi intents --unlabelled\n  bin/fleet-axi intents label 12 architect",
   setup: "command: fleet-axi setup\nusage: bin/fleet-axi setup hooks\nsummary: Add a SessionStart hook to .claude/settings.local.json (gitignored) that prints bin/fleet-axi --brief; running it again changes nothing\nflags[1]{flag,description}:\n  --help,show this help\nexamples[1]:\n  bin/fleet-axi setup hooks",
 };
 
@@ -183,6 +190,18 @@ async function main(): Promise<void> {
     const r = factGet({ subject: positional()[0], key: flag("--key"), history: rest.includes("--history") });
     if (!r.ok) fail(r.message, "bin/fleet-axi facts --help");
     return void console.log(toolText(r, VIEWS.fact_get));
+  }
+  if (key === "intents") {
+    if (positional()[0] === "label") {
+      const [, id, owner] = positional();
+      if (!id || !owner || !Number.isInteger(Number(id))) fail("label needs an id and an owner", `bin/fleet-axi intents label <id> <${intentOptions().map((o) => o.name).join("|")}>`);
+      const r = labelIntent(Number(id), owner);
+      if (!r.ok) fail(r.message, "bin/fleet-axi intents lists the verdict ids");
+      return void console.log(encode({ ok: r.message }));
+    }
+    const days = flag("--days") === undefined ? 7 : Math.max(1, Number(flag("--days")) || 7);
+    const r = intentReport({ days, unlabelledOnly: rest.includes("--unlabelled"), limit: Math.min(200, Number(flag("--limit")) || 30) });
+    return void console.log(encode({ verdicts: r.total, per_choice: r.perChoice, by_confidence: r.buckets, recent: r.rows.map((x) => ({ id: x.id, ts: x.ts, excerpt: x.excerpt, choice: x.choice, confidence: Math.round(x.confidence * 100) / 100, label: x.label ?? "" })) }));
   }
   if (key === "setup") {
     if (rest[0] !== "hooks") fail("setup takes hooks", "bin/fleet-axi setup hooks");
