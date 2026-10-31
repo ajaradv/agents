@@ -44,11 +44,18 @@ die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 # Machine settings the services run with (FLEET_LAPTOP_URL on the hub, ports,
 # the vault): KEY=VALUE lines in ~/.config/fleet/services.env, read on every
 # install, so reinstalling never drops one. The environment still wins.
+# Any FLEET_* key in the file goes through as well (FLEET_MEMORY_QUEUE_DAYS on 2026-10-31
+# was silently dropped when only the fixed list did).
 SETTINGS="${XDG_CONFIG_HOME:-$HOME/.config}/fleet/services.env"
 SETTING_KEYS="DASHBOARD_PORT FLEET_INBOX ALICE_VAULT FLEET_NODE_PORT FLEET_TAILNET_USERS FLEET_LAPTOP_URL FLEET_NODE_PUBLIC_URL"
 if [ -f "$SETTINGS" ]; then
   while IFS='=' read -r k v; do
-    case " $SETTING_KEYS " in *" $k "*) [ -n "${!k:-}" ] || export "$k=$v" ;; esac
+    case " $SETTING_KEYS " in
+      *" $k "*) ;;
+      *) [[ "$k" == FLEET_* ]] || { echo "fleet-services: $SETTINGS: $k is not a service setting; skipped" >&2; continue; }
+         SETTING_KEYS="$SETTING_KEYS $k" ;;
+    esac
+    [ -n "${!k:-}" ] || export "$k=$v"
   done < <(grep -E '^[A-Z_]+=' "$SETTINGS")
 fi
 xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
