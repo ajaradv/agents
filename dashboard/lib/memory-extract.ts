@@ -50,13 +50,13 @@ export type Candidate = { agent: string; line_ts: string; text: string };
 
 /**
  * The captain's own words only. Skipped: lines that are not captain chat; Claude Code's messages relayed
- * into Alice's thread ("(From Claude Code..."); anything under 12 characters ("yes", "ok", "go ahead");
+ * into a thread ("(From Claude Code..." or the older "(Claude Code) ..."); anything under 12 characters ("yes", "ok", "go ahead");
  * and a bare question (one sentence ending in "?"), which asks for something and states nothing.
  */
 export function isCandidate(l: { from?: unknown; kind?: unknown; text?: unknown }): boolean {
   if (l.from !== "captain" || l.kind !== "chat" || typeof l.text !== "string") return false;
   const t = l.text.trim();
-  if (t.length < MIN_CHARS || t.startsWith("(From Claude Code")) return false;
+  if (t.length < MIN_CHARS || /^\((From )?Claude Code\b/.test(t)) return false;
   if (t.endsWith("?") && !/[.!\n]/.test(t.slice(0, -1))) return false;
   return true;
 }
