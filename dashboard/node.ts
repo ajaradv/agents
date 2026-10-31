@@ -28,6 +28,7 @@ import { freeRegistryAge, refreshFreeModels } from "./lib/free-models.ts";
 import { readShips } from "./lib/fleet-layers.ts";
 import { SYNC_MS, syncRemoteMemory } from "./lib/memory-sync.ts";
 import { approveProposal, dismissProposal } from "./lib/memory-queue.ts";
+import { runSweep } from "./lib/proactive.ts";
 import { addQueueItem } from "./lib/decision-queue.ts";
 import { designReview, specSubmit } from "./lib/decisions.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos, needsChanged } from "./lib/fleet-api.ts";
@@ -248,7 +249,7 @@ function startRuntime(): void {
   const exeIdle = exeIdleJob();
   const goldenRefresh = () => refreshGoldens();
   startRoutines({
-    jobs: { backups: backupsJob(), "exe-idle": exeIdle, "golden-refresh": goldenRefresh, "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, "helm-review": helmReview, "codegraph-sync": codegraphSync, "session-archive": sessionArchive },
+    jobs: { backups: backupsJob(), "exe-idle": exeIdle, "golden-refresh": goldenRefresh, "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, proactive: () => runSweep(acceptCrewLine), "helm-review": helmReview, "codegraph-sync": codegraphSync, "session-archive": sessionArchive },
     runAgent: async (agentId, text) => void (await acceptCrewLine(agentId, "routine", text)),
     agentExists: (agentId) => allChatTargetIds().includes(agentId),
     budgetRefusal: (ship, agentId) => budgetRefusal(ship, agentId),

@@ -274,7 +274,7 @@ describe("journal.db migrations", () => {
     raw.exec("INSERT INTO workflows (id, kind, status, trace, created, updated) VALUES ('w1', 'go', 'running', 't', 'c', 'u')");
     raw.close();
     const d = j.journalDb();
-    expect(version(d)).toBe(5);
+    expect(version(d)).toBe(6);
     expect(columns(d, "steps")).toContain("workflow");
     expect((d.query("SELECT id FROM workflows").get() as { id: string }).id).toBe("w1");
   });
@@ -291,7 +291,7 @@ describe("journal.db v2 to v3", () => {
     raw.exec("PRAGMA user_version = 2");
     raw.close();
     const d = j.journalDb();
-    expect(version(d)).toBe(5);
+    expect(version(d)).toBe(6);
     expect(columns(d, "facts")).toContain("retired");
     expect((d.query("SELECT value, retired FROM facts").get() as { value: string; retired: number })).toEqual({ value: "laptop", retired: 0 });
   });
@@ -308,7 +308,7 @@ describe("journal.db v4 to v5", () => {
     raw.exec("PRAGMA user_version = 4");
     raw.close();
     const d = j.journalDb();
-    expect(version(d)).toBe(5);
+    expect(version(d)).toBe(6);
     expect(columns(d, "memory_proposals")).toContain("captain_label");
     expect((d.query("SELECT COUNT(*) AS n FROM intent_routes").get() as { n: number }).n).toBe(1);
   });
