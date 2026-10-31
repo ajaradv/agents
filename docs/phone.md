@@ -3,7 +3,9 @@
 The dashboard installs as an app on your phone and sends a push notification
 whenever something lands in **Needs you**: a question, a Go request, a done /
 blocked / decision / milestone notice, an order waiting for you, a hold, or a
-message that did not go through. Tapping the notification opens Needs you.
+message that did not go through. Memory proposals (things you said that Jev
+thinks are worth remembering) arrive as one notification that says how many
+are open, not one each. Tapping the notification opens Needs you.
 
 ## How it is reached
 

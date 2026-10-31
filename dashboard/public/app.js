@@ -778,6 +778,35 @@ function dashboardApp() {
         });
         const on = card.querySelector("[data-open-notice]");
         if (on) on.addEventListener("click", () => this.openChat(item.from));
+      } else if (item.kind === "memory") {
+        card.classList.add("is-notice");
+        const sure = `${Math.round(item.confidence * 100)}%`;
+        const goes = item.target ? `<p class="muted">Would go in <code>${escapeHtml(item.target)}</code>${item.replaces ? `, replacing <code>${escapeHtml(item.replaces)}</code>` : ""}</p>` : "";
+        const options = ["none", "preference", "fact", "decision", "correction", "task"].map((l) => `<option value="${l}">${l}</option>`).join("");
+        card.innerHTML = `${face}<div class="need-body">
+          <div class="need-head"><h3>Remember this? (${escapeHtml(item.memoryLabel)}, ${sure})</h3>${when}</div>
+          <p class="need-reason">${escapeHtml(item.quote)}</p>
+          <p class="muted">You said this to ${escapeHtml(item.label)}.</p>
+          ${goes}
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-memory="approve">Remember</button><button type="button" class="d-btn d-btn-sm" data-memory="dismiss">Not this</button><select class="d-select d-select-sm" data-relabel aria-label="It was really">${options}</select>${openChat}<span class="muted" data-note></span></div>
+        </div>`;
+        card.querySelectorAll("[data-memory]").forEach((b) =>
+          b.addEventListener("click", async () => {
+            const note = card.querySelector("[data-note]");
+            card.querySelectorAll("button").forEach((x) => (x.disabled = true));
+            try {
+              const body = b.dataset.memory === "dismiss" ? { label: card.querySelector("[data-relabel]").value } : {};
+              const r = await fetch(`/api/memory/${item.proposalId}/${b.dataset.memory}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+              const j = await r.json();
+              if (!j.ok) throw new Error(j.message);
+              card.classList.add("is-done");
+            } catch {
+              note.textContent = "Not done; try again.";
+              card.querySelectorAll("button").forEach((x) => (x.disabled = false));
+            }
+            this.refreshNeeds();
+          }),
+        );
       } else if (item.kind === "go") {
         card.classList.add("is-question");
         card.innerHTML = `${face}<div class="need-body">

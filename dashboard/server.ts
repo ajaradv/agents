@@ -20,6 +20,7 @@ import {
 } from "./lib/chat.ts";
 import { metricsStripHtml } from "./lib/bus.ts";
 import { collectCaptainHolds, fleetStripHtml, lastFleetSnapshot } from "./lib/fleet-snapshot.ts";
+import { approveProposal, dismissProposal as dismissMemory } from "./lib/memory-queue.ts";
 import { collectNeedsYou, dismissNeed } from "./lib/needs-you.ts";
 import { toolFailuresHtml } from "./lib/tool-failures.ts";
 import { routinesHtml } from "./lib/routines.ts";
@@ -548,6 +549,16 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       const ok = await dismissNeed(String(b.id ?? ""));
       if (ok) needsChanged();
       return Response.json({ ok }, { status: ok ? 200 : 400 });
+    }
+
+    // Memory proposals (lib/memory-queue.ts): Remember hands it to Alice; Not this clears it, with an optional relabel.
+    const memoryAnswer = path.match(/^\/api\/memory\/(\d+)\/(approve|dismiss)$/);
+    if (memoryAnswer && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { label?: unknown };
+      const opts = typeof b.label === "string" ? { label: b.label } : {};
+      const res = memoryAnswer[2] === "approve" ? await approveProposal(Number(memoryAnswer[1]), opts) : dismissMemory(Number(memoryAnswer[1]), opts);
+      needsChanged();
+      return Response.json(res, { status: res.ok ? 200 : 409 });
     }
 
     const gateAnswer = path.match(/^\/api\/gate\/(gate-[a-z0-9-]{6,40})$/);
