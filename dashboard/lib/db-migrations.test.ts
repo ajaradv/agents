@@ -274,7 +274,7 @@ describe("journal.db migrations", () => {
     raw.exec("INSERT INTO workflows (id, kind, status, trace, created, updated) VALUES ('w1', 'go', 'running', 't', 'c', 'u')");
     raw.close();
     const d = j.journalDb();
-    expect(version(d)).toBe(4);
+    expect(version(d)).toBe(5);
     expect(columns(d, "steps")).toContain("workflow");
     expect((d.query("SELECT id FROM workflows").get() as { id: string }).id).toBe("w1");
   });
@@ -291,8 +291,25 @@ describe("journal.db v2 to v3", () => {
     raw.exec("PRAGMA user_version = 2");
     raw.close();
     const d = j.journalDb();
-    expect(version(d)).toBe(4);
+    expect(version(d)).toBe(5);
     expect(columns(d, "facts")).toContain("retired");
     expect((d.query("SELECT value, retired FROM facts").get() as { value: string; retired: number })).toEqual({ value: "laptop", retired: 0 });
+  });
+});
+
+describe("journal.db v4 to v5", () => {
+  test("a v4 database gains memory_proposals and keeps its intent verdicts", () => {
+    j._closeJournal();
+    process.env.FLEET_INBOX = mkdtempSync(join(tmpdir(), "migrations-journal-v4-"));
+    mkdirSync(nodeStateDir(), { recursive: true });
+    const raw = new Database(join(nodeStateDir(), "journal.db"), { create: true });
+    raw.exec("CREATE TABLE intent_routes (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, agent TEXT NOT NULL, line_ts TEXT NOT NULL, excerpt TEXT NOT NULL, choice TEXT NOT NULL, confidence REAL NOT NULL, probabilities TEXT NOT NULL, label TEXT, labelled_at TEXT)");
+    raw.exec("INSERT INTO intent_routes (ts, agent, line_ts, excerpt, choice, confidence, probabilities) VALUES ('t', 'alice', 'l', 'x', 'alice', 0.9, '{}')");
+    raw.exec("PRAGMA user_version = 4");
+    raw.close();
+    const d = j.journalDb();
+    expect(version(d)).toBe(5);
+    expect(columns(d, "memory_proposals")).toContain("captain_label");
+    expect((d.query("SELECT COUNT(*) AS n FROM intent_routes").get() as { n: number }).n).toBe(1);
   });
 });

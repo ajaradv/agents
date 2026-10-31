@@ -74,12 +74,25 @@ CREATE TABLE IF NOT EXISTS intent_routes (
 CREATE INDEX IF NOT EXISTS intent_routes_ts ON intent_routes(ts);
 `;
 
+// Observe-mode memory extraction (lib/memory-extract.ts): what Jev would remember from each captain message,
+// and what it would replace, measured against the captain's label. One row per captain line.
+const SCHEMA_V5 = `
+CREATE TABLE IF NOT EXISTS memory_proposals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, agent TEXT NOT NULL, line_ts TEXT NOT NULL,
+  quote TEXT NOT NULL, label TEXT NOT NULL, confidence REAL NOT NULL, target TEXT, replaces TEXT, replace_p REAL,
+  status TEXT NOT NULL DEFAULT 'observed', captain_label TEXT, captain_target TEXT, labelled_at TEXT,
+  UNIQUE (agent, line_ts)
+);
+CREATE INDEX IF NOT EXISTS memory_proposals_ts ON memory_proposals(ts);
+`;
+
 // recall.ts keeps its own FTS tables in this file, created idempotently by itself.
 const MIGRATIONS: Migration[] = [
   { version: 1, note: "baseline: workflows, steps, events", up: SCHEMA_V1 },
   { version: 2, note: "facts and observations (Alice's memory)", up: SCHEMA_V2 },
   { version: 3, note: "facts can be retired without a replacement", up: SCHEMA_V3 },
   { version: 4, note: "intent routing verdicts and labels", up: SCHEMA_V4 },
+  { version: 5, note: "memory extraction proposals and labels", up: SCHEMA_V5 },
 ];
 
 let db: Database | null = null;

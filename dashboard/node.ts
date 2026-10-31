@@ -42,6 +42,7 @@ import { vaultPatch } from "./lib/vault-patch.ts";
 import { factGet, factSet, listObservations, logObservation } from "./lib/facts.ts";
 import { remember } from "./lib/remember.ts";
 import { writeSessionFacts } from "./lib/session-brief.ts";
+import { startMemoryExtract } from "./lib/memory-extract.ts";
 import { indexVault, searchVault, startVaultIndexer } from "./lib/vault-index.ts";
 import { decideGate, judgeCall, recordLocalStop, screenResult } from "./lib/tool-gate.ts";
 import { adviseCompaction, cutPoint } from "./lib/compaction-advisor.ts";
@@ -173,6 +174,7 @@ function startRuntime(): void {
   // recall: keep the full-text index of chats, helper results, digests, and notices current.
   startRecallIndexer();
   startVaultIndexer();
+  startMemoryExtract();
   // Ship config (lib/ship-config.ts): the merged view of every ship, as JSON for bin/launch.
   void readShips().then((ships) => materializeAllShips(ships.map((s) => s.id))).catch((e) => console.error("[node] ship config:", e));
   // Routines (lib/routines.ts, fleet/config/routines.yaml): the jobs below and agent routines, on their schedules.

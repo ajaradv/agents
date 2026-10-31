@@ -26,6 +26,7 @@ import { encode } from "@toon-format/toon";
 import { fleetStatus, shipLog, shipTasks } from "../dashboard/lib/fleet-api.ts";
 import { FLEET_QUERIES, fleetQuery, SPEND_BY } from "../dashboard/lib/fleet-query.ts";
 import { factGet } from "../dashboard/lib/facts.ts";
+import { candidates, extract, extractMode, LABELS, labelProposal, proposalReport } from "../dashboard/lib/memory-extract.ts";
 import { intentOptions, intentReport, labelIntent } from "../dashboard/lib/intent-route.ts";
 import { ROOT } from "../dashboard/lib/paths.ts";
 import { toolText, VIEWS } from "../dashboard/lib/tool-out.ts";
@@ -33,7 +34,7 @@ import { linkName, VAULT_FILTERS, vaultNextSteps, vaultTasksReport, type VaultFi
 import { searchVault } from "../dashboard/lib/vault-index.ts";
 import { vaultNote } from "../dashboard/lib/vault-note.ts";
 
-const COMMANDS = ["status", "ship", "vault", "next", "jev", "gate", "query", "note", "search", "facts", "intents", "setup"] as const;
+const COMMANDS = ["status", "ship", "vault", "next", "jev", "gate", "query", "note", "search", "facts", "intents", "extract", "setup"] as const;
 const FLAGS: Record<string, string[]> = {
   status: ["--detail"],
   ship: ["--log"],
@@ -46,17 +47,18 @@ const FLAGS: Record<string, string[]> = {
   search: ["--type", "--status", "--ship", "--path", "--limit"],
   facts: ["--key", "--history"],
   intents: ["--days", "--unlabelled", "--limit"],
+  extract: ["--days", "--unlabelled", "--limit", "--agent", "--since", "--dry-run", "--target"],
   setup: [],
   "": ["--brief"],
 };
 /** Flags that take no value. */
-const SWITCHES = ["--detail", "--brief", "--full", "--history", "--unlabelled"];
+const SWITCHES = ["--detail", "--brief", "--full", "--history", "--unlabelled", "--dry-run"];
 
 const HELP: Record<string, string> = {
   "": `command: fleet-axi
 summary: The fleet from any shell (read-only): ships, voyages, logs, vault tasks, Jev spend, tool gate, vault notes
-usage: bin/fleet-axi [status|ship|vault|next|jev|gate|query|note|search|facts|intents|setup] ...
-commands[12]{command,what}:
+usage: bin/fleet-axi [status|ship|vault|next|jev|gate|query|note|search|facts|intents|extract|setup] ...
+commands[13]{command,what}:
   status,"ships, voyages, crews, spend today (--detail for crewmates and officers)"
   ship,"a ship's voyage tasks and log (bin/fleet-axi ship <id> [--log N])"
   vault,"vault tasks by filter: ready (default), open, in-progress, blocked, done, all; --id for one"
@@ -68,6 +70,7 @@ commands[12]{command,what}:
   search,"vault notes by words and frontmatter: --type, --status, --ship, --path (prefix or glob)"
   facts,"Alice's recorded facts (exact values that change, with source and date): bin/fleet-axi facts [subject] [--key k] [--history]"
   intents,"who Jev would route the captain's messages to (observe mode): verdicts, counts, accuracy per confidence bucket; intents label <id> <owner>"
+  extract,"what Jev would remember from the captain's messages (observe mode): preference, fact, decision, correction; extract run to backfill, extract label <id> <label>"
   setup,"setup hooks: opt in to the summary at the start of Claude Code sessions in this repo"
 flags[1]{flag,description}:
   --help,"show this help (also after a command)"
@@ -86,6 +89,7 @@ examples[3]:
   search: "command: fleet-axi search\nusage: bin/fleet-axi search [words] [--type T] [--status S] [--ship S] [--path P] [--limit N]\nsummary: Vault notes by words (sections, with a snippet) and frontmatter; newest first without words\nflags[6]{flag,default,description}:\n  --type,,frontmatter type, e.g. Task, Plan\n  --status,,frontmatter status\n  --ship,,frontmatter ship\n  --path,,path prefix (tasks/) or glob (fleet/plans/**)\n  --limit,8,notes shown (max 25)\n  --help,,show this help\nexamples[3]:\n  bin/fleet-axi search jev --type Plan\n  bin/fleet-axi search --type Task --status in-progress\n  bin/fleet-axi search \"compaction advisor\" --path fleet/",
   facts: "command: fleet-axi facts\nusage: bin/fleet-axi facts [subject] [--key <key>] [--history]\nsummary: The fleet's recorded facts (hosts, models, owners, dates), current ones newest first, each with its source; nothing is ever deleted\nflags[3]{flag,description}:\n  --key,only that key\n  --history,with a subject and --key: the values it had before (a retired fact shows as \"(retired)\" with its reason)\n  --help,show this help\nexamples[3]:\n  bin/fleet-axi facts\n  bin/fleet-axi facts hub\n  bin/fleet-axi facts hub --key host --history",
   intents: "command: fleet-axi intents\nusage: bin/fleet-axi intents [--days N] [--unlabelled] [--limit N]\n       bin/fleet-axi intents label <id> <owner>\nsummary: Jev's observe-mode verdicts on who should own each captain message to Alice (nothing is rerouted); label a verdict with the right owner to measure accuracy per confidence bucket\nflags[4]{flag,default,description}:\n  --days,7,how far back\n  --unlabelled,,only verdicts without a label\n  --limit,30,rows shown\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi intents --unlabelled\n  bin/fleet-axi intents label 12 architect",
+  extract: `command: fleet-axi extract\nusage: bin/fleet-axi extract [--days N] [--unlabelled] [--limit N]\n       bin/fleet-axi extract run [--agent A] [--since DATE] [--dry-run]\n       bin/fleet-axi extract label <id> <label> [--target T]\nsummary: Jev's observe-mode proposals from the captain's own chat messages (nothing is written to captain.md or the facts); run classifies the messages not yet seen, label sets the right class (${LABELS.join("|")}) to measure accuracy per confidence bucket\nflags[6]{flag,default,description}:\n  --days,7,how far back\n  --unlabelled,,only proposals without a label\n  --limit,30,rows shown\n  --agent,,run: one agent's chat only\n  --since,,run: only messages from this date or time\n  --dry-run,,run: list the candidates and the call count without calling Jev\nexamples[3]:\n  bin/fleet-axi extract run --dry-run\n  bin/fleet-axi extract --unlabelled\n  bin/fleet-axi extract label 12 preference`,
   setup: "command: fleet-axi setup\nusage: bin/fleet-axi setup hooks\nsummary: Add a SessionStart hook to .claude/settings.local.json (gitignored) that prints bin/fleet-axi --brief; running it again changes nothing\nflags[1]{flag,description}:\n  --help,show this help\nexamples[1]:\n  bin/fleet-axi setup hooks",
 };
 
@@ -202,6 +206,25 @@ async function main(): Promise<void> {
     const days = flag("--days") === undefined ? 7 : Math.max(1, Number(flag("--days")) || 7);
     const r = intentReport({ days, unlabelledOnly: rest.includes("--unlabelled"), limit: Math.min(200, Number(flag("--limit")) || 30) });
     return void console.log(encode({ verdicts: r.total, per_choice: r.perChoice, by_confidence: r.buckets, recent: r.rows.map((x) => ({ id: x.id, ts: x.ts, excerpt: x.excerpt, choice: x.choice, confidence: Math.round(x.confidence * 100) / 100, label: x.label ?? "" })) }));
+  }
+  if (key === "extract") {
+    if (positional()[0] === "run") {
+      if (extractMode() === "off") fail("memory extraction is off", "unset FLEET_MEMORY_EXTRACT");
+      const list = candidates({ agent: flag("--agent"), since: flag("--since") });
+      if (rest.includes("--dry-run")) return void console.log(encode({ candidates: list.length, jev_calls_for_classify: Math.ceil(list.length / 5), note: "preferences and facts add a few match calls each", messages: list.map((c) => ({ agent: c.agent, ts: c.line_ts, quote: c.text.slice(0, 120) })) }));
+      const r = await extract(list);
+      return void console.log(encode({ candidates: r.candidates, proposed: r.proposed, matched_to_memory: r.matched, failed: r.failed, jev_calls: r.calls, per_label: r.byLabel }));
+    }
+    if (positional()[0] === "label") {
+      const [, id, label] = positional();
+      if (!id || !label || !Number.isInteger(Number(id))) fail("label needs an id and a label", `bin/fleet-axi extract label <id> <${LABELS.join("|")}>`);
+      const r = labelProposal(Number(id), label, flag("--target"));
+      if (!r.ok) fail(r.message, "bin/fleet-axi extract lists the proposal ids");
+      return void console.log(encode({ ok: r.message }));
+    }
+    const days = flag("--days") === undefined ? 7 : Math.max(1, Number(flag("--days")) || 7);
+    const r = proposalReport({ days, unlabelledOnly: rest.includes("--unlabelled"), limit: Math.min(200, Number(flag("--limit")) || 30) });
+    return void console.log(encode({ proposals: r.total, per_label: r.perLabel, by_confidence: r.buckets, recent: r.rows.map((x) => ({ id: x.id, agent: x.agent, quote: x.quote.slice(0, 160), label: x.label, confidence: Math.round(x.confidence * 100) / 100, target: x.target ?? "", replaces: x.replaces ?? "", captain_label: x.captain_label ?? "" })) }));
   }
   if (key === "setup") {
     if (rest[0] !== "hooks") fail("setup takes hooks", "bin/fleet-axi setup hooks");
