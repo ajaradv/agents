@@ -72,6 +72,11 @@ export function subscriptions(): { sub: PushSub; label: string }[] {
 
 export type PushMessage = { title: string; body: string; tag: string; url: string };
 
+/** One notification for all memory proposals: a fixed tag, so a new one replaces the one before, and the count of what is open. */
+export function memoryMessage(open: number): PushMessage {
+  return { title: "Remember this?", body: `${open} memory proposal${open === 1 ? "" : "s"}`, tag: "memory", url: "/needs" };
+}
+
 /** What the notification says for a Needs-you item. */
 export function messageFor(item: NeedItem): PushMessage {
   const who = (i: { label?: string; agentId?: string }) => i.label ?? i.agentId ?? "An agent";
@@ -89,6 +94,8 @@ export function messageFor(item: NeedItem): PushMessage {
       const k = { done: "Done", blocked: "Blocked", decision: "Decision needed", milestone: "Milestone", info: "Note", digest: "Digest" }[item.noticeKind] ?? "Notice";
       return { title: `${k}: ${item.from}`, body: item.summary.slice(0, 180), tag: item.id, url };
     }
+    case "memory":
+      return memoryMessage(1);
     case "order":
       return { title: item.status === "needs-captain" ? "Order paused" : "Order ready for your Go", body: `${item.title}${item.reason ? `: ${item.reason}` : ""}`.slice(0, 180), tag: item.id, url };
     case "hold":
@@ -154,7 +161,10 @@ export async function pushNewNeeds(items: NeedItem[]): Promise<number> {
   // Snoozed or no device: the items are recorded as seen (they stay in Needs you), nothing is sent.
   if (quietState().snoozed || !subscriptions().length) return fresh.length;
   // Several at once (a burst after a reconnect): one notification that says how many.
-  const msg = fresh.length === 1 ? messageFor(fresh[0]!) : { title: `${fresh.length} things need you`, body: fresh.map((i) => messageFor(i).title).join(" · ").slice(0, 180), tag: "needs-batch", url: "/needs" };
+  // Memory proposals never buzz one by one: they collapse into one message (shared tag) with the open count.
+  const msgs = fresh.filter((i) => i.kind !== "memory").map(messageFor);
+  if (fresh.some((i) => i.kind === "memory")) msgs.push(memoryMessage(items.filter((i) => i.kind === "memory").length));
+  const msg = msgs.length === 1 ? msgs[0]! : { title: `${msgs.length} things need you`, body: msgs.map((m) => m.title).join(" · ").slice(0, 180), tag: "needs-batch", url: "/needs" };
   await sendToAll(msg);
   // Keep the sent table small: items long gone from Needs you are forgotten after a week.
   d.query("DELETE FROM push_sent WHERE ts < ?").run(new Date(Date.now() - 7 * 86_400_000).toISOString());

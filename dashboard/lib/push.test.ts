@@ -41,4 +41,13 @@ describe("push", () => {
     expect(await p.pushNewNeeds([notice(1, "old"), notice(2, "new")])).toBe(1);
     expect(await p.pushNewNeeds([notice(1, "old"), notice(2, "new")])).toBe(0);
   });
+  test("memory proposals share one tag and say how many are open", async () => {
+    const mem = (id: number) => ({ kind: "memory" as const, id: `memory:${id}`, proposalId: id, ts: "", quote: "q", memoryLabel: "preference", confidence: 0.9, target: null, replaces: null, agentId: "alice", label: "Alice", art: null });
+    expect(p.messageFor(mem(1)).tag).toBe("memory");
+    expect(p.messageFor(mem(1)).tag).toBe(p.messageFor(mem(2)).tag);
+    expect(p.memoryMessage(1).body).toBe("1 memory proposal");
+    expect(p.memoryMessage(3).body).toBe("3 memory proposals");
+    expect(await p.pushNewNeeds([mem(1), mem(2)])).toBe(2);
+    expect(await p.pushNewNeeds([mem(1), mem(2), mem(3)])).toBe(1);
+  });
 });

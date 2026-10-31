@@ -67,6 +67,8 @@ export function needLine(n: NeedItem): Record<string, unknown> {
     }
     case "notice":
       return { id: n.id, kind: n.kind, summary: `${n.from}: ${n.summary}`, from: n.from, notice: n.noticeKind };
+    case "memory":
+      return { id: n.id, kind: n.kind, summary: `Memory proposal from ${n.agentId} chat (${n.memoryLabel}): ${n.quote.slice(0, 120)}`, agent: n.agentId, memory: n.memoryLabel };
     case "order":
       return { id: n.id, kind: n.kind, summary: `Order ${n.slug} (${n.status}): ${n.title}${n.reason ? `; ${n.reason}` : ""}`, order: n.slug, title: n.title, status: n.status, ...(n.reason ? { reason: n.reason } : {}) };
     case "failed": {

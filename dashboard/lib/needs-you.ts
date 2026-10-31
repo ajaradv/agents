@@ -7,6 +7,7 @@ import type { WaitHold } from "./captain-wait.ts";
 import { readCaptainChat, type ChatLine, type ChatQuestion } from "./chat.ts";
 import { listChatTargets, type ChatTarget } from "./chat-targets.ts";
 import { readGoRequests } from "./go-gate.ts";
+import { queuedProposals, replacesText, targetText } from "./memory-queue.ts";
 import { openNotices, type NoticeKind } from "./notify.ts";
 import { listOrders } from "./order-note.ts";
 import { fleetInboxRoot } from "./paths.ts";
@@ -24,6 +25,9 @@ import { fleetInboxRoot } from "./paths.ts";
  * - notice: something an agent told the captain through notify_captain (done,
  *   blocked, decision, milestone) or a digest; "Got it" clears it.
  *
+ * - memory: something the captain said that Jev thinks is worth remembering
+ *   (lib/memory-queue.ts); Remember hands it to Alice, Not this clears it.
+ *
  * Questions that are no longer live and failed sends can be dismissed; holds
  * are answered or stay.
  */
@@ -38,9 +42,10 @@ export type NeedItem =
   | (Who & { kind: "gate"; id: string; gateId: string; ts: string; tool: string; summary: string; why: string; jev: string })
   | { kind: "helm"; id: string; ship: string; proposalId: string; ts: string; what: string; why: string; note: boolean }
   | { kind: "notice"; id: string; noticeId: number; ts: string; from: string; noticeKind: NoticeKind; summary: string; detail: string; ref: string }
+  | (Who & { kind: "memory"; id: string; proposalId: number; ts: string; quote: string; memoryLabel: string; confidence: number; target: string | null; replaces: string | null })
   | { kind: "order"; id: string; slug: string; ts: string; title: string; by: string; status: "queued" | "needs-captain"; steps: string[]; reason?: string; resume?: number };
 
-const KIND_ORDER = { go: 0, gate: 0, question: 0, helm: 1, notice: 1, order: 1, hold: 2, failed: 3 } as const;
+const KIND_ORDER = { go: 0, gate: 0, question: 0, helm: 1, notice: 1, memory: 1, order: 1, hold: 2, failed: 3 } as const;
 
 function who(t: ChatTarget): Who {
   return { agentId: t.id, label: t.label, art: t.art, ...(t.ship ? { ship: t.ship } : {}) };
@@ -166,5 +171,10 @@ export async function collectNeedsYou(opts: { waiting: (agentId: string) => bool
     )
   ).flat();
   const notices: NeedItem[] = openNotices().map((n) => ({ kind: "notice", id: `notice:${n.id}`, noticeId: n.id, ts: n.ts, from: n.from, noticeKind: n.kind, summary: n.summary, detail: n.detail, ref: n.ref }));
-  return sortNeeds(items.concat(holdItems(opts.holds), await orderItems(), gos, gates, helm, notices));
+  // Jev's memory proposals the captain has not answered (read-time queue; see lib/memory-queue.ts).
+  const memory: NeedItem[] = queuedProposals().map((p) => {
+    const t = agents.concat(workers).find((a) => a.id === p.agent);
+    return { kind: "memory", id: `memory:${p.id}`, proposalId: p.id, ts: p.line_ts, quote: p.quote, memoryLabel: p.label, confidence: p.confidence, target: targetText(p), replaces: replacesText(p), agentId: p.agent, label: t?.label ?? p.agent, art: t?.art ?? null, ...(t?.ship ? { ship: t.ship } : {}) };
+  });
+  return sortNeeds(items.concat(holdItems(opts.holds), await orderItems(), gos, gates, helm, notices, memory));
 }

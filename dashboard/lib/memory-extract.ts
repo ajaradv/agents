@@ -256,7 +256,24 @@ export type ProposalReport = {
   rows: ProposalRow[];
   perLabel: Record<string, number>;
   buckets: { bucket: string; count: number; labelled: number; right: number; accuracy: number | null }[];
+  acceptance: Acceptance;
 };
+
+type Tally = { approved: number; dismissed: number; rate: number | null };
+/** What the captain did with the queue (lib/memory-queue.ts): approved and dismissed, overall and by Jev's label and confidence bucket. */
+export type Acceptance = Tally & { perLabel: Record<string, Tally>; buckets: (Tally & { bucket: string })[] };
+
+const tally = (rows: ProposalRow[]): Tally => {
+  const approved = rows.filter((r) => r.status === "approved").length;
+  const dismissed = rows.filter((r) => r.status === "dismissed").length;
+  return { approved, dismissed, rate: approved + dismissed ? Math.round((approved / (approved + dismissed)) * 100) / 100 : null };
+};
+
+export function acceptance(all: ProposalRow[]): Acceptance {
+  const perLabel: Record<string, Tally> = {};
+  for (const l of new Set(all.map((r) => r.label))) perLabel[l] = tally(all.filter((r) => r.label === l));
+  return { ...tally(all), perLabel, buckets: BUCKETS.map((b) => ({ bucket: b.name, ...tally(all.filter((r) => r.confidence >= b.min && r.confidence < b.max)) })) };
+}
 
 /** Recent proposals and the summary: per label, per confidence bucket, accuracy over the captain-labelled rows. */
 export function proposalReport(opts: { days?: number; unlabelledOnly?: boolean; limit?: number } = {}): ProposalReport {
@@ -271,7 +288,7 @@ export function proposalReport(opts: { days?: number; unlabelledOnly?: boolean; 
     return { bucket: b.name, count: inB.length, labelled: lab.length, right, accuracy: lab.length ? Math.round((right / lab.length) * 100) / 100 : null };
   });
   const shown = opts.unlabelledOnly ? all.filter((r) => r.captain_label === null) : all;
-  return { total: all.length, rows: shown.slice(0, opts.limit ?? 30), perLabel, buckets };
+  return { total: all.length, rows: shown.slice(0, opts.limit ?? 30), perLabel, buckets, acceptance: acceptance(all) };
 }
 
 /** The captain's label: the right class (one of LABELS), and optionally the right target. */
