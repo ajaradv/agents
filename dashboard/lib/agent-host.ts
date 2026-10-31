@@ -511,7 +511,21 @@ export function crewCaller(token: string): string | null {
   return (token && crewTokens.get(token)) || null;
 }
 
+/**
+ * FLEET_NODE_SPAWN=0 marks a process that is not the fleet node (the dashboard unit, a rig):
+ * it must reach agents through the node, whose crew tokens are the only ones the fleet tools
+ * accept. An agent started here would be a second one the node cannot recognise.
+ */
+export function assertMayHostAgents(agentId: string): void {
+  if (process.env.FLEET_NODE_SPAWN !== "0") return;
+  const msg = `refusing to start ${agentId}: this process runs with FLEET_NODE_SPAWN=0, so it must call the fleet node instead of hosting agents`;
+  void dashLog("agent-host", msg);
+  console.error(`[agent-host] ${msg}\n${new Error().stack}`);
+  throw new Error(msg);
+}
+
 function start(agentId: string, keys: Record<string, string>): AgentProc {
+  assertMayHostAgents(agentId);
   const crewToken = crypto.randomUUID();
   crewTokens.set(crewToken, agentId);
   // On the ship host of the crewmate's voyage (lib/ship-host.ts); officers and idle ships run here.

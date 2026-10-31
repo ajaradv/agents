@@ -198,6 +198,13 @@ export async function decideGate(id: string, allow: boolean): Promise<{ ok: bool
   return (await r.json().catch(() => ({ ok: false, message: "bad reply from the fleet node" }))) as { ok: boolean; message: string };
 }
 
+/** The captain's Remember or Not this on a memory proposal; the node runs it, so Alice's line comes from the process that hosts her. */
+export async function memoryAnswer(id: number, action: "approve" | "dismiss", label?: string): Promise<{ ok: boolean; message: string }> {
+  const r = await call("/v1/memory", { id, action, label });
+  if (!r) return { ok: false, message: OFFLINE };
+  return (await r.json().catch(() => ({ ok: false, message: "bad reply from the fleet node" }))) as { ok: boolean; message: string };
+}
+
 /** The captain's Go or No on a held fleet action; the node runs it and tells the officer. */
 export async function decideGo(id: string, go: boolean): Promise<{ ok: boolean; message: string }> {
   const r = await call("/v1/go", { id, decision: go ? "go" : "no" });
