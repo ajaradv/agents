@@ -289,6 +289,20 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "proactive_report",
+    label: "Report proactive proposals",
+    description: "Answer a message from `proactive` (the node's sweep): one proposal per item, by the id the line gave (p1, p2, ...), as one sentence on what you propose (close the task, chase it, confirm or retire the fact, promote or drop the observation). Each shows to the captain as a card with Go, Snooze 7d, Done. dropped lists items you checked and found wrong, with why; they are not raised again until the thing changes. Call it once, after checking each item. Not for anything else (notify_captain).",
+    parameters: Type.Object({
+      items: Type.Array(Type.Object({ id: Type.String({ description: "The item's id from the line, e.g. p1" }), proposal: Type.String({ description: "One sentence: what you propose to do" }) })),
+      dropped: Type.Optional(Type.Array(Type.Object({ id: Type.String({ description: "The item's id from the line" }), why: Type.String({ description: "What you found that makes it wrong" }) }))),
+      ...OrderArgs,
+    }),
+    async execute(_id, p) {
+      return text(await call("POST", "proactive-report", {}, { items: p.items, dropped: p.dropped ?? [], order: p.order, step: p.step }));
+    },
+  });
+
+  pi.registerTool({
     name: "recall",
     label: "Recall",
     description: "Full-text search of past fleet talk: every agent's captain thread, helper results, digests, and notices. Use it before asking the captain something they may already have said. Returns snippets with source and time. Not the vault (vault_search).",

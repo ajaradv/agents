@@ -24,7 +24,7 @@ const ago = (days: number) => new Date(now.getTime() - days * 86_400_000);
 const input = (o: Partial<import("./proactive.ts").SweepInput> = {}) => ({ now, tasks: [], steps: [], facts: [], observations: [], ...o });
 const task = (id: string, o: { status?: string; due?: string; modified?: Date | null } = {}) => ({ id, title: id, status: o.status ?? "open", due: o.due ?? "", modified: o.modified === undefined ? ago(1) : o.modified });
 
-beforeEach(() => journalDb().exec("DELETE FROM proactive_raised"));
+beforeEach(() => journalDb().exec("DELETE FROM proactive_raised; DELETE FROM proactive_items"));
 
 describe("findings", () => {
   test("due: within 2 days or overdue, open or in progress only", () => {
@@ -37,10 +37,18 @@ describe("findings", () => {
     const f = p.computeFindings(input({ steps: [{ id: "a", closeable: true, progress: "3/3" }, { id: "b", progress: "1/2" }] }));
     expect(f.map((x) => [x.kind, x.key, x.fingerprint])).toEqual([["closeable", "a", "closeable:a:3/3"]]);
   });
-  test("stale task: in progress and untouched for over 14 days", () => {
-    const f = p.computeFindings(input({ tasks: [task("old", { status: "in-progress", modified: ago(20) }), task("fresh", { status: "in-progress", modified: ago(13) }), task("open-old", { modified: ago(40) }), task("nodate", { status: "in-progress", modified: null })] }));
+  test("stale task: in progress and untouched for over 21 days", () => {
+    const f = p.computeFindings(input({ tasks: [task("old", { status: "in-progress", modified: ago(25) }), task("fresh", { status: "in-progress", modified: ago(20) }), task("open-old", { modified: ago(40) }), task("nodate", { status: "in-progress", modified: null })] }));
     expect(f.map((x) => [x.kind, x.key])).toEqual([["stale-task", "old"]]);
-    expect(f[0]!.summary).toContain("20 days");
+    expect(f[0]!.summary).toContain("25 days");
+    process.env.FLEET_PROACTIVE_STALE_DAYS = "10";
+    expect(p.computeFindings(input({ tasks: [task("fresh", { status: "in-progress", modified: ago(20) })] }))).toHaveLength(1);
+    delete process.env.FLEET_PROACTIVE_STALE_DAYS;
+  });
+  test("stale task: skipped while it waits on something", () => {
+    const tasks = [task("parked", { status: "in-progress", modified: ago(40) }), task("free", { status: "in-progress", modified: ago(40) })];
+    const f = p.computeFindings(input({ tasks, steps: [{ id: "parked", progress: "0/1", waitingOn: ["other"] }, { id: "free", progress: "0/1" }] }));
+    expect(f.map((x) => x.key)).toEqual(["free"]);
   });
   test("stale fact: current facts older than 60 days", () => {
     const f = p.computeFindings(input({ facts: [{ subject: "hub", key: "host", since: ago(61).toISOString() }, { subject: "hub", key: "model", since: ago(59).toISOString() }] }));
@@ -142,9 +150,10 @@ describe("the sweep", () => {
     expect(note).toBe("3 findings, 3 sent to alice");
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ to: "alice", from: "proactive" });
-    const lines = sent[0]!.text.split("\n").filter((l) => /^\d\. /.test(l));
-    expect(lines.map((l) => l.split("]")[0])).toEqual(["1. [due", "2. [closeable", "3. [stale-task"]);
-    expect(sent[0]!.text).toContain("ONE notify_captain");
+    const lines = sent[0]!.text.split("\n").filter((l) => /^p\d+\. /.test(l));
+    expect(lines.map((l) => l.split("]")[0])).toEqual(["p1. [due", "p2. [closeable", "p3. [stale-task"]);
+    expect(sent[0]!.text).toContain("proactive_report");
+    expect(sent[0]!.text).toContain("notify_captain");
     expect(sent[0]!.text).toContain("Change nothing yourself");
     expect(await p.runSweep(send, now, "on")).toBe("3 findings, nothing new");
     expect(sent).toHaveLength(1);
@@ -157,7 +166,7 @@ describe("the sweep", () => {
     expect(await p.runSweep(send, now, "off")).toStartWith("skipped:");
     for (let i = 0; i < 10; i++) writeFileSync(join(vault, "tasks", `d${i}.md`), "---\ntype: Task\ntitle: D\nstatus: open\ndue: 2026-10-01\n---\n");
     expect(await p.runSweep(send, now, "on")).toBe("13 findings, 8 sent to alice (5 more tomorrow)");
-    expect(sent[0]!.text.split("\n").filter((l) => /^\d\. /.test(l))).toHaveLength(8);
+    expect(sent[0]!.text.split("\n").filter((l) => /^p\d+\. /.test(l))).toHaveLength(8);
   });
   test("the mode reads FLEET_PROACTIVE", () => {
     for (const [v, m] of [["on", "on"], ["OFF", "off"], ["observe", "observe"], ["bogus", "observe"]] as const) {
@@ -169,9 +178,101 @@ describe("the sweep", () => {
 });
 
 describe("migration", () => {
-  test("journal.db has proactive_raised at schema version 6", () => {
+  test("journal.db has proactive_raised and proactive_items at schema version 7", () => {
     const cols = (journalDb().query("PRAGMA table_info(proactive_raised)").all() as { name: string }[]).map((c) => c.name);
     expect(cols).toEqual(["fingerprint", "kind", "key", "first_raised", "last_raised", "times", "status", "snoozed_until"]);
-    expect((journalDb().query("PRAGMA user_version").get() as { user_version: number }).user_version).toBeGreaterThanOrEqual(6);
+    expect((journalDb().query("PRAGMA user_version").get() as { user_version: number }).user_version).toBeGreaterThanOrEqual(7);
+  });
+});
+
+describe("proposals", () => {
+  const sent: { to: string; from: string; text: string }[] = [];
+  const send = async (to: string, from: string, text: string) => void sent.push({ to, from, text });
+  const fnd = (key: string, due = "2026-10-31") => ({ kind: "due" as const, key, summary: `${key} is due ${due}`, fingerprint: `due:${key}:${due}`, rank: 1 });
+  const rows = () => journalDb().query("SELECT * FROM proactive_items ORDER BY id").all() as import("./proactive.ts").ItemRow[];
+  const raised = (...keys: string[]) => p.markRaised(keys.map((k) => fnd(k)), now);
+  beforeEach(() => (sent.length = 0));
+
+  test("short ids map back to the sweep's findings", () => {
+    raised("a", "b");
+    expect(rows().map((r) => [r.short_id, r.key])).toEqual([["p1", "a"], ["p2", "b"]]);
+    expect(p.aliceLine([fnd("a"), fnd("b")])).toContain("p2. [due] b is due");
+  });
+  test("proactive_report stores proposals against the latest line and shows them open", () => {
+    raised("a", "b");
+    const r = p.proactiveReport([{ id: "p1", proposal: "Chase a." }, { id: "P2", proposal: "Close b." }, { id: "p9", proposal: "x" }, { id: "p1", proposal: "" }], [], now);
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("2 proposals shown");
+    expect(r.message).toContain("p9: not in the latest sweep line");
+    expect(p.openProposals().map((x) => x.proposal)).toEqual(["Chase a.", "Close b."]);
+    // A later line replaces the mapping: p1 now means another finding.
+    p.markRaised([fnd("c")], new Date(now.getTime() + 1000));
+    expect(p.proactiveReport([{ id: "p1", proposal: "Chase c." }], [], now).ok).toBe(true);
+    expect(rows().find((x) => x.key === "c")!.proposal).toBe("Chase c.");
+    expect(rows().find((x) => x.key === "a")!.proposal).toBe("Chase a.");
+    expect(p.proactiveReport([{ id: "p7", proposal: "x" }]).ok).toBe(false);
+  });
+  test("dropped items are marked done for their fingerprint, with why", () => {
+    raised("a", "b");
+    p.proactiveReport([{ id: "p1", proposal: "Chase a." }], [{ id: "p2", why: "it was finished yesterday" }], now);
+    expect(rows()[1]!.dropped_why).toBe("it was finished yesterday");
+    expect(p.openProposals().map((x) => x.key)).toEqual(["a"]);
+    expect(p.judge([fnd("b")], new Date(now.getTime() + 30 * 86_400_000))[0]).toMatchObject({ raise: false, why: "marked done" });
+    expect(p.proactiveReport([], [{ id: "p2", why: "again" }]).ok).toBe(true);
+  });
+  test("Go posts the line to alice from proactive, once", async () => {
+    raised("a");
+    p.proactiveReport([{ id: "p1", proposal: "Chase a" }], [], now);
+    const id = rows()[0]!.id;
+    expect(await p.answerProposal(id, "go", send, now)).toMatchObject({ ok: true });
+    expect(sent).toEqual([{ to: "alice", from: "proactive", text: "The captain said Go to your proposal for a is due 2026-10-31: Chase a. Do it now with your tools (Go-gated actions still ask), and reply in one line." }]);
+    expect(await p.answerProposal(id, "go", send, now)).toMatchObject({ ok: true, already: true });
+    expect(await p.answerProposal(id, "done", send, now)).toMatchObject({ ok: false, already: true });
+    expect(sent).toHaveLength(1);
+    expect(p.openProposals()).toEqual([]);
+  });
+  test("a Go that cannot reach Alice leaves the card open", async () => {
+    raised("a");
+    p.proactiveReport([{ id: "p1", proposal: "Chase a" }], [], now);
+    const r = await p.answerProposal(rows()[0]!.id, "go", async () => { throw new Error("no host"); }, now);
+    expect(r).toMatchObject({ ok: false });
+    expect(r.message).toContain("no host");
+    expect(p.openProposals()).toHaveLength(1);
+  });
+  test("Snooze holds the finding for 7 days; Done ends it; unreported items cannot be answered", async () => {
+    raised("a", "b", "c");
+    p.proactiveReport([{ id: "p1", proposal: "x" }, { id: "p2", proposal: "y" }], [], now);
+    const [a, b, c] = rows();
+    expect((await p.answerProposal(a!.id, "snooze", send, now)).message).toBe("snoozed 7 days");
+    expect(p.judge([fnd("a")], new Date(now.getTime() + 6 * 86_400_000))[0]!.raise).toBe(false);
+    expect(p.judge([fnd("a")], new Date(now.getTime() + 8 * 86_400_000))[0]!.raise).toBe(true);
+    expect((await p.answerProposal(b!.id, "done", send, now)).message).toBe("marked done");
+    expect(p.judge([fnd("b")], new Date(now.getTime() + 90 * 86_400_000))[0]!.why).toBe("marked done");
+    expect((await p.answerProposal(c!.id, "go", send, now)).ok).toBe(false);
+    expect((await p.answerProposal(9999, "go", send, now)).ok).toBe(false);
+    expect(sent).toEqual([]);
+  });
+  test("Needs you gets one proactive card per open proposal", async () => {
+    raised("a", "b");
+    p.proactiveReport([{ id: "p1", proposal: "Chase a." }, { id: "p2", proposal: "Close b." }], [], now);
+    const { collectNeedsYou } = await import("./needs-you.ts");
+    const cards = (await collectNeedsYou({ waiting: () => false, holds: [] })).filter((i) => i.kind === "proactive");
+    expect(cards.map((c) => c.kind === "proactive" && [c.findingKind, c.summary, c.proposal, c.id === `proactive:${c.itemId}`])).toEqual([["due", "a is due 2026-10-31", "Chase a.", true], ["due", "b is due 2026-10-31", "Close b.", true]]);
+    await p.answerProposal(rows()[0]!.id, "done", send, now);
+    expect((await collectNeedsYou({ waiting: () => false, holds: [] })).filter((i) => i.kind === "proactive")).toHaveLength(1);
+  });
+  test("the report counts reported, answers, drops and the go rate per kind", async () => {
+    p.markRaised([fnd("a"), fnd("b"), fnd("c"), fnd("d"), { ...fnd("e"), kind: "closeable", fingerprint: "closeable:e:1/1" }], now);
+    p.proactiveReport([{ id: "p1", proposal: "x" }, { id: "p2", proposal: "x" }, { id: "p3", proposal: "x" }, { id: "p5", proposal: "x" }], [{ id: "p4", why: "wrong" }], now);
+    const [a, b, , , e] = rows();
+    await p.answerProposal(a!.id, "go", send, now);
+    await p.answerProposal(b!.id, "snooze", send, now);
+    await p.answerProposal(e!.id, "go", send, now);
+    const r = p.proposalReport(30, now);
+    expect(r).toMatchObject({ reported: 4, open: 1, go: 2, snoozed: 1, done: 0, dropped: 1, goRate: 0.67 });
+    expect(r.perKind).toEqual([
+      { kind: "closeable", reported: 1, go: 1, snoozed: 0, done: 0, dropped: 0, goRate: 1 },
+      { kind: "due", reported: 3, go: 1, snoozed: 1, done: 0, dropped: 1, goRate: 0.5 },
+    ]);
   });
 });

@@ -96,6 +96,16 @@ CREATE TABLE IF NOT EXISTS proactive_raised (
 CREATE INDEX IF NOT EXISTS proactive_raised_key ON proactive_raised(key);
 `;
 
+// What Alice proposed for each raised finding and what the captain answered (lib/proactive.ts): one row per
+// finding sent to her, kept after the answer so the go rate per kind can be measured.
+const SCHEMA_V7 = `
+CREATE TABLE IF NOT EXISTS proactive_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL, summary TEXT NOT NULL,
+  short_id TEXT NOT NULL, raised_at TEXT NOT NULL, proposal TEXT, proposed_at TEXT, dropped_why TEXT, answer TEXT, answered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS proactive_items_raised ON proactive_items(raised_at);
+`;
+
 // recall.ts keeps its own FTS tables in this file, created idempotently by itself.
 const MIGRATIONS: Migration[] = [
   { version: 1, note: "baseline: workflows, steps, events", up: SCHEMA_V1 },
@@ -104,6 +114,7 @@ const MIGRATIONS: Migration[] = [
   { version: 4, note: "intent routing verdicts and labels", up: SCHEMA_V4 },
   { version: 5, note: "memory extraction proposals and labels", up: SCHEMA_V5 },
   { version: 6, note: "proactive sweep: what was raised, snoozed, or done", up: SCHEMA_V6 },
+  { version: 7, note: "proactive proposals from Alice and the captain's answers", up: SCHEMA_V7 },
 ];
 
 let db: Database | null = null;

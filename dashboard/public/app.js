@@ -807,6 +807,30 @@ function dashboardApp() {
             this.refreshNeeds();
           }),
         );
+      } else if (item.kind === "proactive") {
+        card.classList.add("is-notice");
+        card.innerHTML = `${face}<div class="need-body">
+          <div class="need-head"><h3>Alice proposes (${escapeHtml(item.findingKind)})</h3>${when}</div>
+          <p class="muted">${escapeHtml(item.summary)}</p>
+          <p class="need-reason">${escapeHtml(item.proposal)}</p>
+          <div class="row question-actions"><button type="button" class="d-btn d-btn-neutral d-btn-sm" data-proactive="go">Go</button><button type="button" class="d-btn d-btn-sm" data-proactive="snooze">Snooze 7d</button><button type="button" class="d-btn d-btn-sm" data-proactive="done">Done</button>${openChat}<span class="muted" data-note></span></div>
+        </div>`;
+        card.querySelectorAll("[data-proactive]").forEach((b) =>
+          b.addEventListener("click", async () => {
+            const note = card.querySelector("[data-note]");
+            card.querySelectorAll("button").forEach((x) => (x.disabled = true));
+            try {
+              const r = await fetch(`/api/proactive/${item.itemId}/${b.dataset.proactive}`, { method: "POST" });
+              const j = await r.json();
+              if (!j.ok) throw new Error(j.message);
+              card.classList.add("is-done");
+            } catch {
+              note.textContent = "Not done; try again.";
+              card.querySelectorAll("button").forEach((x) => (x.disabled = false));
+            }
+            this.refreshNeeds();
+          }),
+        );
       } else if (item.kind === "go") {
         card.classList.add("is-question");
         card.innerHTML = `${face}<div class="need-body">
