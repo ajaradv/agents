@@ -18,3 +18,10 @@ live_voice: Schedar
 # No globally installed skills (AWS, archify, ...): they cost about 7k tokens a turn
 # and no part of this role uses them. Repo skills come from skill_paths.
 discover_skills: false
+# pi's read-only grep, find and ls are off by default: the officers' fallback beside their typed
+# tools (plan alice-memory-and-tools, M5). Bash stays for now; it comes out (-bash) after a week
+# of measured use (bin/fleet-axi bash-use).
+tools:
+  - +grep
+  - +find
+  - +ls

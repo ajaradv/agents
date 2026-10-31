@@ -69,6 +69,8 @@ const SAFE_TOOLS = new Set([
   "queue_add", "queue_request",
   // The flagship officers' decisions (dashboard/lib/decisions.ts): a spec to review, a design difference.
   "spec_submit", "design_review",
+  // Officers without bash (plan alice-memory-and-tools, M5): git_read runs a fixed read-only git argv in the worktree; plan_check reads a vault plan.
+  "git_read", "plan_check",
 ]);
 
 /** Tools whose free text reaches another agent: screened for steering. */

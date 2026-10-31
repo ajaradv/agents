@@ -17,6 +17,8 @@ import { busPost, busRead } from "./lib/bus-api.ts";
 import { cursorAtEnd, decodeCursor, encodeCursor, eventsAfter, sseFrame, streamShips } from "./lib/ship-stream.ts";
 import { crewAddTask, crewCanvas, crewDockRequest, crewQueueRequest, crewHelper, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
+import { gitRead } from "./lib/git-read.ts";
+import { planCheck } from "./lib/plan-check.ts";
 import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
 import { handleIngest } from "./lib/ingest.ts";
 import { backupsJob } from "./lib/backups.ts";
@@ -85,7 +87,7 @@ import { OFFICER_SHIP } from "./lib/ship-events.ts";
  *   POST /v1/abort|stop|new-session  { agentId }
  *   POST /v1/refresh-targets after crew changes
  *   POST /v1/ingest          { source, events }  what a worker recorded offline; node token or a worker's ingest token (docs/metrics.md)
- * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers|check|vm|helm|look|helper|canvas|...>
+ * Crew API (extensions/crew.ts, crew token): /api/crew/<ship>/<status|tasks|message|maneuvers|check|git|fleet-query|vm|helm|look|helper|canvas|...>
  * Bus API (extensions/bus.ts, any agent's token): POST /api/bus/post, GET /api/bus/read
  * Fleet API (extensions/fleet.ts, officers' crew token): GET /api/fleet/<status|log|tasks|maneuvers|chat>, POST /api/fleet/chat
  */
@@ -385,6 +387,13 @@ async function crewApi(req: Request, shipId: string, what: string, num: string |
   if (what === "status" && req.method === "GET") {
     res = await voyageStatus(shipId, from);
     res = { ...res, text: toolText(res, VIEWS.voyage_status, { full: new URL(req.url).searchParams.get("full") === "true" }) };
+  } else if (what === "fleet-query" && req.method === "GET") {
+    // The helmsman's numbers (fleet_query in extensions/crew.ts): the officers' read, for the one role that reviews with data.
+    if (from !== `${shipId}-helmsman`) return Response.json({ ok: false, message: "fleet_query aboard a ship is the helmsman's." }, { status: 403 });
+    const q = new URL(req.url).searchParams;
+    const full = q.get("full") === "true";
+    res = fleetQuery(q.get("query") ?? "", { days: Number(q.get("days")) || undefined, by: q.get("by") ?? undefined, since: q.get("since") ?? undefined, until: q.get("until") ?? undefined, limit: Number(q.get("limit")) || undefined, full });
+    res = { ...res, text: toolText(res, VIEWS.fleet_query, { full }) };
   } else if (req.method === "POST") {
     const b = await body(req);
     if (what === "tasks" && num) res = await crewUpdateTask(shipId, Number(num), { ...b, from } as never);
@@ -398,6 +407,7 @@ async function crewApi(req: Request, shipId: string, what: string, num: string |
     else if (what === "canvas") res = await crewCanvas(shipId, { ...b, from });
     else if (what === "maneuvers") res = await crewStartManeuver(shipId, { ...b, from } as never);
     else if (what === "check") res = await runCheck(shipId, from, String(b.name ?? ""));
+    else if (what === "git") res = await gitRead(shipId, from, b);
     else if (what === "helm") res = await helmPropose(shipId, from, b as Record<string, unknown>);
     else if (what === "vm") res = crewVmEvent(shipId, from, String(b.event ?? ""), String(b.detail ?? ""));
     else res = { ok: false, message: "unknown crew call" };
@@ -593,11 +603,12 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   }
 
   // The flagship officers' decisions (lib/decisions.ts, extensions/decisions.ts): spec_submit, design_review.
-  const decision = path.match(/^\/api\/decisions\/(spec|design-review)$/);
+  const decision = path.match(/^\/api\/decisions\/(spec|design-review|plan-check)$/);
   if (decision && req.method === "POST") {
     const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
     if (!from) return Response.json({ ok: false, message: "Decision calls come from a live agent session." }, { status: 403 });
     const b = await body(req);
+    if (decision[1] === "plan-check") return Response.json(from === "architect" ? planCheck(String(b.path ?? "")) : { ok: false, message: "plan_check is the architect's." });
     const r = decision[1] === "spec" ? specSubmit(from, b) : designReview(from, b);
     if (r.ok) emit("ship", OFFICER_SHIP);
     return Response.json(r);
@@ -606,7 +617,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|queue|delegate|public|recall|vault-tasks|fleet-query|vault-note|vault-search|vault-patch|vault-doctor|fact-get|fact-set|remember|log-observation)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
-  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|vm|helm|look|helper|canvas|crew-request|dock-request|queue-request)(?:\/(\d+))?$/);
+  const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|git|fleet-query|vm|helm|look|helper|canvas|crew-request|dock-request|queue-request)(?:\/(\d+))?$/);
   if (crew) return crewApi(req, crew[1]!, crew[2]!, crew[3]);
 
   if (!path.startsWith("/v1/")) return new Response("not found", { status: 404 });
