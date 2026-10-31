@@ -65,7 +65,7 @@ fi
 step "packages and security updates"
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  unattended-upgrades just sqlite3 unzip ripgrep fd-find python3-venv python3-pip ffmpeg \
+  unattended-upgrades jq python3-yaml rsync just sqlite3 unzip ripgrep fd-find python3-venv python3-pip ffmpeg \
   ca-certificates gnupg fonts-noto-color-emoji fonts-dejavu-core >/dev/null
 sudo dpkg-reconfigure -f noninteractive unattended-upgrades >/dev/null 2>&1 || true
 
@@ -136,6 +136,10 @@ mkdir -p "$HOME/.pi/agent/npm"
 if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-cursor-sdk" ]; then
   (cd "$HOME/.pi/agent/npm" && [ -f package.json ] || echo '{"name":"pi-extensions","private":true}' > package.json; npm install --silent "${PI_EXTENSIONS[@]}" >/dev/null)
 fi
+
+# OpenRouter routing for pi's prompt cache (docs/harness-auth.md). A worker reaches models
+# through exe.dev's gateway instead (bin/voyage-vm-setup), so it skips this.
+[ "$WORKER" = 1 ] || "$ROOT/bin/pi-model-overrides"
 
 # exe.dev's image ships a pi extension that asks, on an agent's first turn, whether
 # to use exe.dev's LLM integrations; a fleet agent cannot answer and exits. The

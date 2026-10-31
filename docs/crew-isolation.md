@@ -85,6 +85,11 @@ paths in the VM, so a crewmate can read a skill and run its scripts but never
 change one. Nothing else under the home folder is mounted: the folders along
 those paths exist in the guest only as empty parents of the mounts.
 
+On the hub, the global skills an agent names in `discover_skills: [..]` (today `impeccable`
+for the designer) must be installed there too. `bin/hub-skills` (from the laptop) copies them to the
+hub's `~/.agents/skills/`, `--check` reports missing, differing or same, and `bin/hub-deploy` warns
+about any named skill the hub lacks.
+
 ## Setup (once)
 
 - `brew install qemu e2fsprogs` (e2fsprogs is keg-only and only used to build images).

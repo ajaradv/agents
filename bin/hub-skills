@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# hub-skills - copy the globally installed skills that agents name in
+# `discover_skills: [..]` (agents/*/agent.yaml) from the laptop to the hub, so a
+# designer on the hub has impeccable too. bin/launch looks for each one in
+# ~/.agents/skills/<name> or ~/.pi/agent/skills/<name>; so does this, on the
+# laptop (first hit), and the copy lands in the hub's ~/.agents/skills/<name>/.
+# Run it from the laptop; bin/hub-deploy warns when a named skill is missing on the hub.
+#
+# Usage:
+#   bin/hub-skills            rsync each named skill to the hub (--delete: the hub's copy mirrors the laptop's)
+#   bin/hub-skills --check    only report per skill: missing on the hub, differs, or same
+#   bin/hub-skills --names    print the skill names the agents list, one per line (works on any host, no ssh)
+#
+# Leaves out .git, node_modules and .DS_Store. A name the laptop does not have is a warning.
+#
+# FLEET_HUB names the ssh host (default fleet-hub-k1s7.exe.xyz).
+set -euo pipefail
+
+HUB="${FLEET_HUB:-fleet-hub-k1s7.exe.xyz}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Union of the names in every agent's discover_skills list (false, true or unset name nothing).
+names() {
+  python3 -I - "$ROOT" <<'PY'
+import sys, glob, yaml
+seen = set()
+for f in sorted(glob.glob(sys.argv[1] + "/agents/*/agent.yaml")):
+    with open(f) as fh:
+        want = (yaml.safe_load(fh) or {}).get("discover_skills")
+    if isinstance(want, list):
+        seen.update(str(n) for n in want)
+print("\n".join(sorted(seen)))
+PY
+}
+
+case "${1:-}" in
+  --names) names; exit 0 ;;
+  ""|--check) ;;
+  *) echo "usage: bin/hub-skills [--check | --names]" >&2; exit 2 ;;
+esac
+CHECK=0; [ "${1:-}" = --check ] && CHECK=1
+
+if [ "$(uname)" = Linux ]; then
+  echo "error: run bin/hub-skills from the laptop, where the skills are installed" >&2
+  exit 1
+fi
+
+EXCLUDES=(--exclude .git --exclude node_modules --exclude .DS_Store)
+status=0
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
+  src=""
+  for d in "$HOME/.agents/skills" "$HOME/.pi/agent/skills"; do
+    if [ -f "$d/$name/SKILL.md" ]; then src="$d/$name"; break; fi
+  done
+  if [ -z "$src" ]; then
+    echo "warning: skill $name is not installed on this machine (~/.agents/skills or ~/.pi/agent/skills); skipped" >&2
+    status=1
+    continue
+  fi
+  if ssh -q "$HUB" "test -f ~/.agents/skills/$name/SKILL.md" </dev/null; then
+    # Directory timestamp lines (".d...") are noise; anything else is a real difference.
+    diff="$(rsync -an --delete --itemize-changes "${EXCLUDES[@]}" "$src/" "$HUB:.agents/skills/$name/" | grep -v '^\.d' || true)"
+    if [ -n "$diff" ]; then state=differs; else state=same; fi
+  else
+    state="missing on the hub"
+  fi
+  if [ "$CHECK" = 1 ]; then
+    echo "$name: $state"
+  elif [ "$state" = same ]; then
+    echo "$name: same"
+  else
+    ssh -q "$HUB" "mkdir -p ~/.agents/skills/$name" </dev/null
+    rsync -a --delete "${EXCLUDES[@]}" "$src/" "$HUB:.agents/skills/$name/"
+    echo "$name: synced ($state)"
+  fi
+done < <(names)
+exit "$status"

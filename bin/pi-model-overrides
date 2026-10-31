@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# pi-model-overrides - merge fleet/config/pi-model-overrides.json into pi's
+# ~/.pi/agent/models.json, as providers.<provider>.modelOverrides.<model>. The one use today:
+# pin DeepSeek V4 Pro on OpenRouter to hosts that keep a prompt cache for us (docs/harness-auth.md).
+#
+# Usage:
+#   bin/pi-model-overrides            apply; prints the model ids that changed
+#   bin/pi-model-overrides --check    only report whether models.json is current (exit 1 if not)
+#
+# Each listed model's entry is replaced wholesale, so a field dropped from the file goes away
+# here too; everything else in models.json (keys, other providers, other models) is untouched.
+# Written atomically, keeping the file's mode (0600 when new). Safe to run again. bin/hub-deploy
+# and bin/hub-install run it on the hub; run it once on the laptop by hand.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="$ROOT/fleet/config/pi-model-overrides.json"
+DEST="$HOME/.pi/agent/models.json"
+CHECK=0
+case "${1:-}" in
+  "") ;;
+  --check) CHECK=1 ;;
+  *) echo "usage: bin/pi-model-overrides [--check]" >&2; exit 2 ;;
+esac
+
+# provider/model pairs whose current entry differs from the file's, as "provider/model" lines
+current='{"providers":{}}'
+[ -f "$DEST" ] && current="$(cat "$DEST")"
+stale="$(jq -r --slurpfile want "$SRC" '
+  . as $cur | $want[0] | to_entries[] | .key as $p | .value | to_entries[]
+  | select(($cur.providers[$p].modelOverrides[.key] // null) != .value)
+  | "\($p)/\(.key)"' <<<"$current")"
+
+if [ -z "$stale" ]; then
+  echo "pi model overrides: current"
+  exit 0
+fi
+if [ "$CHECK" = 1 ]; then
+  echo "pi model overrides: out of date for:"
+  echo "$stale" | sed 's/^/  /'
+  exit 1
+fi
+
+mkdir -p "$(dirname "$DEST")"
+tmp="$(mktemp "$DEST.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+jq --slurpfile want "$SRC" '
+  reduce ($want[0] | to_entries[] | .key as $p | .value | to_entries[] | {p: $p, m: .key, v: .value}) as $o
+    (. + {providers: (.providers // {})};
+     .providers[$o.p] = ((.providers[$o.p] // {}) | .modelOverrides = ((.modelOverrides // {}) | .[$o.m] = $o.v)))
+' <<<"$current" >"$tmp"
+if [ -f "$DEST" ]; then
+  # same mode as the file: GNU chmod has --reference, BSD does not
+  chmod "$(stat -c %a "$DEST" 2>/dev/null || stat -f %Lp "$DEST")" "$tmp"
+else
+  chmod 600 "$tmp"
+fi
+mv "$tmp" "$DEST"
+trap - EXIT
+echo "pi model overrides: updated"
+echo "$stale" | sed 's/^/  /'
