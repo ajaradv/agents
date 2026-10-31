@@ -65,6 +65,47 @@ describe("fact_set", () => {
   });
 });
 
+describe("fact_set retire", () => {
+  const retire = (o: Partial<Parameters<typeof f.factSet>[0]> = {}) => f.factSet({ subject: "hub", key: "host", source: "renamed to fleet-hub.host", retire: true, by: "alice", now: new Date("2026-10-28T10:00:00Z"), ...o });
+
+  test("closes the current fact with no replacement; get and the brief stop listing it", () => {
+    set({ key: "since", value: "2026-10-26" });
+    set();
+    const r = retire({ key: "since", source: "past event" });
+    expect(r.message).toBe("hub.since retired (was 2026-10-26): past event");
+    expect((f.factGet({ subject: "hub", key: "since" }).facts as unknown[]).length).toBe(0);
+    expect((f.factGet().facts as { key: string }[]).map((x) => x.key)).toEqual(["host"]);
+    expect(f.factsBrief(1200)).toBe("- hub.host = laptop\n");
+  });
+  test("history shows the retirement with its reason and when", () => {
+    set();
+    retire();
+    const chain = f.factGet({ subject: "hub", key: "host", history: true }).facts as { value: string; source: string; since: string }[];
+    expect(chain.map((x) => x.value)).toEqual(["(retired)", "laptop"]);
+    expect(chain[0]!.source).toBe("renamed to fleet-hub.host");
+    expect(chain[0]!.since).toBe("2026-10-28T10:00");
+  });
+  test("retiring what has no current row is an error naming it and the current keys", () => {
+    set({ key: "since", value: "x" });
+    const r = retire();
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("hub.host");
+    expect(r.message).toContain("since");
+    expect(retire({ source: "" }).ok).toBe(false);
+    set();
+    retire();
+    expect(retire().ok).toBe(false);
+  });
+  test("a later value starts a fresh current fact; the history keeps the retirement", () => {
+    set();
+    retire();
+    expect(set({ value: "exe.dev" }).message).toContain("new fact");
+    expect((f.factGet({ subject: "hub", key: "host" }).facts as { value: string }[]).map((x) => x.value)).toEqual(["exe.dev"]);
+    const chain = f.factGet({ subject: "hub", key: "host", history: true }).facts as { value: string }[];
+    expect(chain.map((x) => x.value)).toEqual(["exe.dev", "(retired)", "laptop"]);
+  });
+});
+
 describe("facts brief", () => {
   test("lists current facts, most recently set first, and says how many were cut", () => {
     set();

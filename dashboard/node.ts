@@ -425,7 +425,7 @@ function fleetCall(what: string, method: string, q: URLSearchParams, b: Record<s
   if (method === "POST" && what === "vault-doctor") return { tool: "vault_doctor", read: false, args: pick((k) => b[k], ["fix"]) };
   if (method === "POST" && what === "vault-patch") return { tool: "vault_patch", read: false, args: { ...pick((k) => b[k], ["path", "check", "uncheck"]), ...(b.set ? { set: JSON.stringify(b.set) } : {}) } };
   // Alice's memory (lib/facts.ts, lib/remember.ts): facts and observations in journal.db, the captain's profile in the vault.
-  if (method === "POST" && what === "fact-set") return { tool: "fact_set", read: false, args: pick((k) => b[k], ["subject", "key", "value", "source", "observation"]) };
+  if (method === "POST" && what === "fact-set") return { tool: "fact_set", read: false, args: pick((k) => b[k], ["subject", "key", "value", "source", "retire", "observation"]) };
   if (method === "POST" && what === "remember") return { tool: "remember", read: false, args: pick((k) => b[k], ["section", "line", "replaces", "create", "observation"]) };
   if (method === "POST" && what === "log-observation") return { tool: "log_observation", read: false, args: pick((k) => b[k], ["text", "subject", "ttl_days"]) };
   if (method === "POST" && what === "chat") return { tool: "fleet_chat", read: false, args: pick((k) => b[k], ["to", "text"]) };
@@ -506,7 +506,7 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
   }
   else if (call.tool === "fact_get") res = a.observations === "true" ? listObservations({ subject: a.subject, limit: Number(a.limit) || undefined }) : factGet({ subject: a.subject, key: a.key, history: a.history === "true", limit: Number(a.limit) || undefined });
   else if (call.tool === "fact_set") {
-    res = factSet({ subject: a.subject, key: a.key, value: a.value, source: a.source, by: from, observation: a.observation ? Number(a.observation) : undefined });
+    res = factSet({ subject: a.subject, key: a.key, value: a.value, source: a.source, retire: String(a.retire) === "true", by: from, observation: a.observation ? Number(a.observation) : undefined });
     if (res.ok) writeSessionFacts(); // her next session starts with it
   }
   else if (call.tool === "remember") res = remember({ section: a.section ?? "", line: a.line ?? "", replaces: a.replaces, create: a.create === "true", observation: a.observation ? Number(a.observation) : undefined });

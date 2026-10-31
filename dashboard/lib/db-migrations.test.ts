@@ -274,8 +274,25 @@ describe("journal.db migrations", () => {
     raw.exec("INSERT INTO workflows (id, kind, status, trace, created, updated) VALUES ('w1', 'go', 'running', 't', 'c', 'u')");
     raw.close();
     const d = j.journalDb();
-    expect(version(d)).toBe(2);
+    expect(version(d)).toBe(3);
     expect(columns(d, "steps")).toContain("workflow");
     expect((d.query("SELECT id FROM workflows").get() as { id: string }).id).toBe("w1");
+  });
+});
+
+describe("journal.db v2 to v3", () => {
+  test("a v2 database with facts gains the retired column and keeps its rows as not retired", () => {
+    j._closeJournal();
+    process.env.FLEET_INBOX = mkdtempSync(join(tmpdir(), "migrations-journal-v2-"));
+    mkdirSync(nodeStateDir(), { recursive: true });
+    const raw = new Database(join(nodeStateDir(), "journal.db"), { create: true });
+    raw.exec("CREATE TABLE facts (id INTEGER PRIMARY KEY AUTOINCREMENT, subject TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, source TEXT NOT NULL, since TEXT NOT NULL, superseded_by INTEGER, by TEXT NOT NULL)");
+    raw.exec("INSERT INTO facts (subject, key, value, source, since, by) VALUES ('hub', 'host', 'laptop', 's', '2026-10-20T00:00:00Z', 'alice')");
+    raw.exec("PRAGMA user_version = 2");
+    raw.close();
+    const d = j.journalDb();
+    expect(version(d)).toBe(3);
+    expect(columns(d, "facts")).toContain("retired");
+    expect((d.query("SELECT value, retired FROM facts").get() as { value: string; retired: number })).toEqual({ value: "laptop", retired: 0 });
   });
 });
