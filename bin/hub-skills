@@ -20,8 +20,9 @@ HUB="${FLEET_HUB:-fleet-hub-k1s7.exe.xyz}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Union of the names in every agent's discover_skills list (false, true or unset name nothing).
+# uv supplies PyYAML, so neither machine's own Python needs it (python3 -I hid the laptop's user-site copy).
 names() {
-  python3 -I - "$ROOT" <<'PY'
+  uv run -q --no-project --with pyyaml python -I - "$ROOT" <<'PY'
 import sys, glob, yaml
 seen = set()
 for f in sorted(glob.glob(sys.argv[1] + "/agents/*/agent.yaml")):
