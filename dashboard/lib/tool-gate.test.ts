@@ -51,6 +51,7 @@ describe("tool gate: the node's layer", () => {
     const html = toolGateHtml((s) => s);
     expect(html).toContain("observe-stop");
     expect(html).toContain("observe-hold");
+    expect(html).toContain("mixed mode");
   });
   test("result screen: flagged at 0.7 and above; a Jev failure never flags", async () => {
     const said = (p: number) => (async () => ({ ok: true, answers: { injected: { type: "noul", noul: p } }, route: "typesafe", inputTokens: 100, cost: 0, ms: 1 })) as never;

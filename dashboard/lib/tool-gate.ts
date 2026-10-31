@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { acceptCrewLine } from "./chat-bridge.ts";
+import { gateQuery, resolveWindow } from "./fleet-query.ts";
 import { jevAsk, type Question } from "./jev.ts";
 import { redact } from "./redact.ts";
 import { getWorkflow, listWorkflows, updateWorkflow, upsertWorkflow } from "./journal.ts";
@@ -216,22 +217,24 @@ export async function decideGate(id: string, allow: boolean): Promise<{ ok: bool
   return { ok: true, message: allow ? "Allowed once; the agent was told to retry." : "Denied; the agent was told." };
 }
 
-/** Health: what the gate decided in the last day (observe mode shows what it would have done). */
+/** Health: what the gate decided in the last day, from the same query as fleet_query's gate (mode, plain labels, totals per agent and day). */
 export function toolGateHtml(esc: (s: string) => string): string {
-  let rows: { decision: string; n: number }[] = [];
-  let recent: { ts: string; agent: string; summary: string; decision: string; reason: string }[] = [];
-  try {
-    const since = new Date(Date.now() - 86_400_000).toISOString();
-    rows = db().query("SELECT decision, COUNT(*) AS n FROM gate_log WHERE ts >= ? GROUP BY decision ORDER BY n DESC").all(since) as typeof rows;
-    recent = db().query("SELECT ts, agent, summary, decision, reason FROM gate_log WHERE ts >= ? AND decision NOT IN ('allow', 'observe-allow') ORDER BY id DESC LIMIT 10").all(since) as typeof recent;
-  } catch {
-    /* no log yet */
-  }
-  const mode = "Mode is set per agent by FLEET_TOOL_GATE (observe by default: clear dangers are blocked, everything else is judged and logged but allowed).";
-  if (!rows.length) return `<details class="fold"><summary>Tool gate · nothing judged in 24h</summary><p class="muted">Calls the local rules cannot decide are judged by Jev and listed here. ${mode}</p></details>`;
-  const counts = rows.map((r) => `${esc(r.decision)} ${r.n}`).join(" · ");
-  const list = recent
-    .map((r) => `<li><b>${esc(r.decision)}</b> · ${esc(r.agent)} · <code>${esc(r.summary.slice(0, 140))}</code><br><span class="muted">${esc(r.reason.slice(0, 160))} · ${esc(new Date(r.ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</span></li>`)
+  db(); // makes sure the log table exists before gateQuery reads it
+  const w = resolveWindow({ days: 1 });
+  if (typeof w === "string") return "";
+  const g = gateQuery(w, 10) as unknown as {
+    message: string;
+    decisions: { decision: string; label: string; n: number }[];
+    not_allowed_by_agent: { agent: string; n: number; decisions: string }[];
+    not_allowed_by_day: { day: string; n: number; decisions: string }[];
+    notable: { ts: string; agent: string; decision: string; call: string }[];
+    notable_shown?: string;
+  };
+  const note = "Mode is set per agent by FLEET_TOOL_GATE (observe by default: clear dangers are blocked, everything else is judged and logged but allowed).";
+  if (!g.decisions.length) return `<details class="fold"><summary>Tool gate · nothing judged in 24h</summary><p class="muted">Calls the local rules cannot decide are judged by Jev and listed here. ${note}</p></details>`;
+  const list = g.notable
+    .map((r) => `<li><b>${esc(r.decision)}</b> · ${esc(r.agent)} · <code>${esc(r.call.slice(0, 140))}</code><br><span class="muted">${esc(new Date(r.ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</span></li>`)
     .join("");
-  return `<details class="fold"${recent.length ? " open" : ""}><summary>Tool gate · ${counts}</summary>${list ? `<ul class="fail-list">${list}</ul>` : ""}<p class="muted">${mode}</p></details>`;
+  const byAgent = g.not_allowed_by_agent.map((a) => `${esc(a.agent)}: ${esc(a.decisions)}`).join(" · ");
+  return `<details class="fold"${g.notable.length ? " open" : ""}><summary>Tool gate · ${esc(g.message)}</summary>${list ? `<ul class="fail-list">${list}</ul>` : ""}${g.notable_shown ? `<p class="muted">shown ${esc(g.notable_shown)}</p>` : ""}${byAgent ? `<p class="muted">By agent: ${byAgent}</p>` : ""}<p class="muted">${note}</p></details>`;
 }

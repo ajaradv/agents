@@ -206,6 +206,7 @@ export const VIEWS: Record<string, View> = {
     help: (r) => (Array.isArray(r.hits) && r.hits.length ? ["vault_note path=<path> section=<heading> reads one section"] : ["Try other words, or drop a filter (type, status, ship, path)"]),
   },
   vault_doctor: {
+    hide: ["notes", "links"],
     rows: { problems: ["check", "note", "detail", "fixable"] },
     cut: { detail: 200 },
     empty: { problems: "0 problems" },

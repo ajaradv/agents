@@ -17,7 +17,7 @@ import { busPost, busRead } from "./lib/bus-api.ts";
 import { cursorAtEnd, decodeCursor, encodeCursor, eventsAfter, sseFrame, streamShips } from "./lib/ship-stream.ts";
 import { crewAddTask, crewCanvas, crewDockRequest, crewQueueRequest, crewHelper, crewLook, crewMessage, crewRequestRole, crewStartManeuver, crewUpdateTask, voyageStatus } from "./lib/crew-api.ts";
 import { recoverManeuvers } from "./lib/crew-api.ts";
-import { gitRead } from "./lib/git-read.ts";
+import { architectGitRead, gitRead } from "./lib/git-read.ts";
 import { planCheck } from "./lib/plan-check.ts";
 import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
 import { handleIngest } from "./lib/ingest.ts";
@@ -617,12 +617,13 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   }
 
   // The flagship officers' decisions (lib/decisions.ts, extensions/decisions.ts): spec_submit, design_review.
-  const decision = path.match(/^\/api\/decisions\/(spec|design-review|plan-check)$/);
+  const decision = path.match(/^\/api\/decisions\/(spec|design-review|plan-check|git)$/);
   if (decision && req.method === "POST") {
     const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
     if (!from) return Response.json({ ok: false, message: "Decision calls come from a live agent session." }, { status: 403 });
     const b = await body(req);
     if (decision[1] === "plan-check") return Response.json(from === "architect" ? planCheck(String(b.path ?? "")) : { ok: false, message: "plan_check is the architect's." });
+    if (decision[1] === "git") return Response.json(await architectGitRead(from, b));
     const r = decision[1] === "spec" ? specSubmit(from, b) : designReview(from, b);
     if (r.ok) emit("ship", OFFICER_SHIP);
     return Response.json(r);
