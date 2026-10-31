@@ -8,6 +8,7 @@
 #   bin/fleet-services uninstall   stop both and remove the plists
 #   bin/fleet-services status      show each job and its pid
 #   bin/fleet-services restart     restart both (agents stop; sessions resume on the next message)
+#   bin/fleet-services drift       Linux: print why the installed units are out of date (nothing if current)
 #
 # The node job (com.fleet.node) owns the agents; launchd restarts it when it
 # exits, including when the dashboard stops a node that runs older code. The
@@ -48,6 +49,20 @@ die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 # was silently dropped when only the fixed list did).
 SETTINGS="${XDG_CONFIG_HOME:-$HOME/.config}/fleet/services.env"
 SETTING_KEYS="DASHBOARD_PORT FLEET_INBOX ALICE_VAULT FLEET_NODE_PORT FLEET_TAILNET_USERS FLEET_LAPTOP_URL FLEET_NODE_PUBLIC_URL"
+
+# What the installed units were built from: services.env (missing hashes as empty)
+# plus this script, which holds the unit templates. A Linux install records it;
+# bin/hub-deploy compares it after a pull and reinstalls when it moved.
+INSTALLED="${XDG_CONFIG_HOME:-$HOME/.config}/fleet/.services.installed${SUFFIX:+.$SUFFIX}"
+fingerprint() {
+  { cat "$SETTINGS" 2>/dev/null || true; echo ---; cat "${BASH_SOURCE[0]}"; } | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1
+}
+case "${1:-}" in
+  drift)
+    if [ ! -f "$INSTALLED" ]; then echo "no record of the last install"
+    elif [ "$(cat "$INSTALLED")" != "$(fingerprint)" ]; then echo "settings or units changed since the last install"; fi
+    exit 0 ;;
+esac
 if [ -f "$SETTINGS" ]; then
   while IFS='=' read -r k v; do
     case " $SETTING_KEYS " in
@@ -144,6 +159,7 @@ if [ "$(uname)" = Linux ]; then
       sc daemon-reload
       # restart, not just enable --now: a running service would keep its old settings (FLEET_LAPTOP_URL on 2026-10-22).
       for u in "$U_NODE" "$U_DASH" "$U_BROWSER"; do sc enable "$u.service" >/dev/null 2>&1; sc restart "$u.service" && echo "started $u"; done
+      mkdir -p "$(dirname "$INSTALLED")"; fingerprint > "$INSTALLED"
       ;;
     uninstall)
       for u in "$U_BROWSER" "$U_DASH" "$U_NODE"; do sc disable --now "$u.service" 2>/dev/null; sudo rm -f "$UNITS/$u.service"; echo "removed $u"; done

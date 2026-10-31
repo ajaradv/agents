@@ -9,6 +9,12 @@ The laptop is no longer the hub. A LaunchAgent that would read the Keychain on m
 is a follow-up; `bin/fleet-backup` exits 2 there. `bin/hub-install --litestream` can
 still install the binary on a Mac (the pin covers darwin-arm64 and darwin-x86_64).
 
+`bin/hub-deploy` keeps the binary on the pin: when `fleet-litestream` exists and
+`~/.local/bin/litestream version` differs from `LITESTREAM_VERSION` in
+`bin/litestream-pin.sh`, it runs the pin script and restarts the unit (`--check` only
+reports it). A v0.3 binary against the v0.5 config shows the unit as active while it
+writes nothing, so `bin/fleet-backup drill` is the real check.
+
 Nothing was replicated with Litestream 0.3, so this is a fresh 0.5 config. There is
 no generation migration.
 
