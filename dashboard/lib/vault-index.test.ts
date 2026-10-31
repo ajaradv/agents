@@ -30,10 +30,12 @@ put("fleet/plans/cat.md", "---\ncategory: research\ntitle: Categorised\n---\n\nb
 put("notes/plain.md", "no frontmatter here, only wombats\n");
 put(".obsidian/workspace.md", "---\ntype: Config\n---\nsecretword\n");
 put("templates/task.md", "---\ntype: Task\n---\n<% tp.date.now() %> secretword\n");
+put("career/cv.md", "---\ntitle: CV\n---\n\nsecretword career\n");
+put("profile/me.md", "---\ntitle: Me\n---\n\nsecretword profile\n");
 put("notes/broken.md", "---\ntitle: a: b\n---\n\n## Heading\n\nbrokenfm content\n");
 
 describe("vault mirror", () => {
-  test("mirrors frontmatter for every note, skipping .obsidian and templates", () => {
+  test("mirrors frontmatter for every note, skipping .obsidian, templates, career and profile", () => {
     expect(idx.indexVault(root)).toEqual({ added: 6, removed: 0 });
     expect(rows("SELECT path FROM vault_notes ORDER BY path").map((r) => r.path)).toEqual(["fleet/plans/cat.md", "fleet/plans/jev.md", "fleet/plans/other.md", "notes/broken.md", "notes/plain.md", "tasks/m1.md"]);
     const t = rows("SELECT * FROM vault_notes WHERE path = 'tasks/m1.md'")[0]!;
