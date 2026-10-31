@@ -5,7 +5,7 @@
 #   title     what the captain sees on Health > Diagnostics
 #   every     "every 30m" | "every 6h" | "every 2d" | "daily 08:30" | "weekly mon 09:00" (local time)
 #   agent     an agent id: it gets `prompt` as a message and a turn, and reports with notify_captain
-#   job       or a built-in node job: vault-doctor, free-models, due-tasks, codegraph-sync, session-archive, exe-idle, golden-refresh, backups, helm-review (needs `ship`)
+#   job       or a built-in node job: vault-doctor, free-models, due-tasks, proactive, codegraph-sync, session-archive, exe-idle, golden-refresh, backups, helm-review (needs `ship`)
 #   enabled   false to keep a routine declared but off (default true)
 #   watch     what the routine reads: ships, ship:<id>, vault:<folder>; when none of it changed since
 #             the last run, the run is skipped (helm reviews watch their own ship by default)
@@ -39,6 +39,13 @@ routines:
     title: Due vault tasks (a notice the day one comes due)
     every: every 3h
     job: due-tasks
+
+  # FLEET_PROACTIVE: observe (default; findings logged here, no Alice turn), on (Alice gets
+  # one turn and raises one notice), off. See lib/proactive.ts.
+  - id: proactive
+    title: Proactive sweep (due, closeable and stale items; Alice proposes, the captain decides)
+    every: daily 08:30
+    job: proactive
 
   - id: exe-idle
     title: exe.dev voyage VMs paused after FLEET_EXE_IDLE_MIN quiet minutes (default 60); they resume on the next call

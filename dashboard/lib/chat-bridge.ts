@@ -191,8 +191,8 @@ function parseChatLine(raw: string): ChatLine | null {
 /** Officers who may message other agents (lib/fleet-api.ts fleet_chat). */
 export const FLEET_OFFICERS = new Set(["alice"]);
 
-/** Senders whose messages explain themselves (the order watcher, the Go gate, the memory queue): no "message from" prefix. */
-const SYSTEM_SENDERS = new Set(["orders", "go", "router", "budget", "fact-check", "delivery", "memory"]);
+/** Senders whose messages explain themselves (the order watcher, the Go gate, the memory queue, the proactive sweep): no "message from" prefix. */
+const SYSTEM_SENDERS = new Set(["orders", "go", "router", "budget", "fact-check", "delivery", "memory", "proactive"]);
 
 /** A captain line written by the node on the captain's behalf (a voyage brief after their Go): saved, shown, and run. */
 export async function postCaptainLine(agentId: string, text: string): Promise<ChatLine> {

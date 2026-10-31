@@ -52,7 +52,7 @@ describe("routines file", () => {
   test("the fleet's routines.yaml reads cleanly and names only built-in jobs", () => {
     const { routines, problems } = r.loadFleetRoutines(join(import.meta.dir, "..", "..", "fleet", "config", "routines.yaml"));
     expect(problems).toEqual([]);
-    for (const x of routines) if (x.job) expect(["vault-doctor", "free-models", "due-tasks", "helm-review", "codegraph-sync", "session-archive", "exe-idle", "golden-refresh", "backups"]).toContain(x.job);
+    for (const x of routines) if (x.job) expect(["vault-doctor", "free-models", "due-tasks", "proactive", "helm-review", "codegraph-sync", "session-archive", "exe-idle", "golden-refresh", "backups"]).toContain(x.job);
     for (const x of routines) if (x.job === "helm-review") expect(x.ship).toBeTruthy();
   });
 });

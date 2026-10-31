@@ -86,6 +86,16 @@ CREATE TABLE IF NOT EXISTS memory_proposals (
 CREATE INDEX IF NOT EXISTS memory_proposals_ts ON memory_proposals(ts);
 `;
 
+// The proactive sweep (lib/proactive.ts): what Alice was already told about, so a finding is raised once
+// until it changes or the repeat window passes, with the captain's snooze and done as feedback.
+const SCHEMA_V6 = `
+CREATE TABLE IF NOT EXISTS proactive_raised (
+  fingerprint TEXT PRIMARY KEY, kind TEXT NOT NULL, key TEXT NOT NULL, first_raised TEXT NOT NULL, last_raised TEXT NOT NULL,
+  times INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'raised', snoozed_until TEXT
+);
+CREATE INDEX IF NOT EXISTS proactive_raised_key ON proactive_raised(key);
+`;
+
 // recall.ts keeps its own FTS tables in this file, created idempotently by itself.
 const MIGRATIONS: Migration[] = [
   { version: 1, note: "baseline: workflows, steps, events", up: SCHEMA_V1 },
@@ -93,6 +103,7 @@ const MIGRATIONS: Migration[] = [
   { version: 3, note: "facts can be retired without a replacement", up: SCHEMA_V3 },
   { version: 4, note: "intent routing verdicts and labels", up: SCHEMA_V4 },
   { version: 5, note: "memory extraction proposals and labels", up: SCHEMA_V5 },
+  { version: 6, note: "proactive sweep: what was raised, snoozed, or done", up: SCHEMA_V6 },
 ];
 
 let db: Database | null = null;
