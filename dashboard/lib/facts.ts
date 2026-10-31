@@ -39,7 +39,7 @@ const badName = (what: string, v: unknown) => `${what} "${cut(String(v ?? ""), 4
 
 export type FactSetArgs = { subject: unknown; key: unknown; value?: unknown; source: unknown; retire?: boolean; by: string; observation?: number; now?: Date };
 
-/** Set a fact: a new value supersedes the current one; the same value changes nothing. `retire` closes it with no replacement. */
+/** Set a fact: a new value supersedes the current one; the same value and source change nothing (a new source on the same value is recorded as a correction). `retire` closes it with no replacement. */
 export function factSet(a: FactSetArgs): Res {
   const subject = normName(a.subject);
   const key = normName(a.key);
@@ -59,14 +59,14 @@ export function factSet(a: FactSetArgs): Res {
   const name = `${subject}.${key}`;
   let message: string;
   let id: number;
-  if (current && current.value === value) {
+  if (current && current.value === value && current.source === source) {
     id = current.id;
     message = `${name} is already ${cut(value, 80)} (unchanged).`;
   } else {
     const row = d.query("INSERT INTO facts (subject, key, value, source, since, by) VALUES (?, ?, ?, ?, ?, ?) RETURNING id").get(subject, key, value, source, (a.now ?? new Date()).toISOString(), a.by) as { id: number };
     id = row.id;
     if (current) d.query("UPDATE facts SET superseded_by = ? WHERE id = ?").run(id, current.id);
-    message = current ? `${name}: ${cut(current.value, 80)} → ${cut(value, 80)} (replaced; the old value stays in the history).` : `${name} = ${cut(value, 80)} (new fact).`;
+    message = !current ? `${name} = ${cut(value, 80)} (new fact).` : current.value === value ? `${name}: source corrected ("${cut(current.source, 80)}" → "${cut(source, 80)}"); value unchanged.` : `${name}: ${cut(current.value, 80)} → ${cut(value, 80)} (replaced; the old value stays in the history).`;
   }
   if (a.observation !== undefined) promoteObservation(a.observation, `fact:${id}`);
   return { ok: true, message: a.observation !== undefined ? `${message} Observation ${a.observation} promoted.` : message, id };

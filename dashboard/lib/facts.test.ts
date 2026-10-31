@@ -31,12 +31,22 @@ describe("fact_set", () => {
     expect(chain[1]!.superseded_by).toBe(chain[0]!.id);
   });
 
-  test("the same value is a no-op", () => {
+  test("the same value and source is a no-op", () => {
     set();
-    const r = set({ source: "another source" });
+    const r = set();
     expect(r.message).toContain("unchanged");
-    expect((f.factGet({ history: false, subject: "hub", key: "host" }).facts as unknown[]).length).toBe(1);
     expect((f.factGet({ subject: "hub", key: "host", history: true }).facts as unknown[]).length).toBe(1);
+  });
+
+  test("the same value with a new source corrects the source: a new row, the old one superseded", () => {
+    set();
+    const r = set({ source: "captain in chat 2026-10-21" });
+    expect(r.ok).toBe(true);
+    expect(r.message).toBe('hub.host: source corrected ("captain in chat 2026-10-20" → "captain in chat 2026-10-21"); value unchanged.');
+    const chain = f.factGet({ subject: "hub", key: "host", history: true }).facts as { value: string; source: string; superseded_by?: number; id: number }[];
+    expect(chain.map((x) => [x.value, x.source])).toEqual([["laptop", "captain in chat 2026-10-21"], ["laptop", "captain in chat 2026-10-20"]]);
+    expect(chain[1]!.superseded_by).toBe(chain[0]!.id);
+    expect((f.factGet({ subject: "hub", key: "host" }).facts as unknown[]).length).toBe(1);
   });
 
   test("names are normalised; bad names, long values, and a missing source are refused", () => {
@@ -95,6 +105,13 @@ describe("fact_set retire", () => {
     set();
     retire();
     expect(retire().ok).toBe(false);
+  });
+  test("setting the same value and source as a retired fact starts a fresh fact", () => {
+    set();
+    retire();
+    const r = set();
+    expect(r.message).toContain("new fact");
+    expect((f.factGet({ subject: "hub", key: "host" }).facts as unknown[]).length).toBe(1);
   });
   test("a later value starts a fresh current fact; the history keeps the retirement", () => {
     set();

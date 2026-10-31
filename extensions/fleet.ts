@@ -241,7 +241,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fact_set",
     label: "Record a fact",
-    description: "Record an exact value that changes: a host, a model, who owns what, a date. A new value supersedes the old one, which stays in the history; the same value changes nothing. retire=true closes a fact that is no longer true and has no new value (source is the reason). Always give the source (who said it or where you saw it, with the date). Not for preferences (remember) or passing notes (log_observation).",
+    description: "Record an exact value that changes: a host, a model, who owns what, a date. A new value supersedes the old one, which stays in the history; the same value and source change nothing, while a new source on the same value corrects it. retire=true closes a fact that is no longer true and has no new value (source is the reason). Always give the source (who said it or where you saw it, with the date). Not for preferences (remember) or passing notes (log_observation).",
     parameters: Type.Object({
       subject: Type.String({ description: "What it is about, a-z 0-9 _ . -, e.g. hub" }),
       key: Type.String({ description: "The attribute, e.g. host" }),
