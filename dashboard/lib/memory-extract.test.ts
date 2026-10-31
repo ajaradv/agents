@@ -50,6 +50,7 @@ describe("memory extraction", () => {
     chat("alice", [
       cap("2026-10-30T09:00:00Z", "yes"),
       cap("2026-10-30T09:01:00Z", "(From Claude Code, to Alice: please do this thing now)"),
+      cap("2026-10-30T09:01:30Z", "(Claude Code) The look tool is fixed. Please try it again."),
       cap("2026-10-30T09:02:00Z", "What is the hub status right now?"),
       cap("2026-10-30T09:03:00Z", "From now on keep replies to two sentences."),
       cap("2026-10-30T09:04:00Z", "The hub moved to host fleet-hub-new."),
