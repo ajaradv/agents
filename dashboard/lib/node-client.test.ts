@@ -1,9 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { nodeToken, tokenMatches } from "./node-auth.ts";
-import { parseSse } from "./node-client.ts";
+import { memoryAnswer, parseSse } from "./node-client.ts";
 
 describe("parseSse", () => {
   test("splits complete frames and keeps the unfinished rest", () => {
@@ -40,5 +40,24 @@ describe("node token", () => {
     expect(tokenMatches("abc", "abc")).toBe(true);
     expect(tokenMatches("abd", "abc")).toBe(false);
     expect(tokenMatches("", "abc")).toBe(false);
+  });
+});
+
+describe("memory answers go to the node", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  test("approve and dismiss post the id, action, and label to /v1/memory and return the node's reply", async () => {
+    const seen: { url: string; body: unknown }[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      seen.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return Response.json({ ok: true, message: "Sent to Alice." });
+    }) as unknown as typeof fetch;
+    expect(await memoryAnswer(7, "approve", "fact")).toEqual({ ok: true, message: "Sent to Alice." });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.url.endsWith("/v1/memory")).toBe(true);
+    expect(seen[0]!.body).toEqual({ id: 7, action: "approve", label: "fact" });
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { toolSpend } from "./agent-host.ts";
+import { assertMayHostAgents, toolSpend } from "./agent-host.ts";
 
 describe("tool spend", () => {
   test("sub-agent costs count toward the turn; ordinary tools cost nothing", () => {
@@ -35,5 +35,23 @@ describe("codemode tool names", () => {
     expect(codemodeTools("return 1 + 1;")).toEqual([]);
     expect(codemodeTools("const tools2 = 1; mytools.x(1)")).toEqual([]);
     expect(codemodeTools(undefined)).toEqual([]);
+  });
+});
+
+describe("a process that is not the node does not host agents", () => {
+  test("FLEET_NODE_SPAWN=0 refuses to start an agent; otherwise it is allowed", () => {
+    const saved = process.env.FLEET_NODE_SPAWN;
+    const err = console.error;
+    console.error = () => {};
+    try {
+      process.env.FLEET_NODE_SPAWN = "0";
+      expect(() => assertMayHostAgents("alice")).toThrow(/FLEET_NODE_SPAWN=0/);
+      delete process.env.FLEET_NODE_SPAWN;
+      expect(() => assertMayHostAgents("alice")).not.toThrow();
+    } finally {
+      console.error = err;
+      if (saved === undefined) delete process.env.FLEET_NODE_SPAWN;
+      else process.env.FLEET_NODE_SPAWN = saved;
+    }
   });
 });

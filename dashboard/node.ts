@@ -27,6 +27,7 @@ import { materializeAllShips } from "./lib/ship-config.ts";
 import { freeRegistryAge, refreshFreeModels } from "./lib/free-models.ts";
 import { readShips } from "./lib/fleet-layers.ts";
 import { SYNC_MS, syncRemoteMemory } from "./lib/memory-sync.ts";
+import { approveProposal, dismissProposal } from "./lib/memory-queue.ts";
 import { addQueueItem } from "./lib/decision-queue.ts";
 import { designReview, specSubmit } from "./lib/decisions.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos, needsChanged } from "./lib/fleet-api.ts";
@@ -623,6 +624,14 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   const agentId = String(b.agentId ?? "");
   if (path === "/v1/gate") {
     const r = await decideGate(String(b.id ?? ""), b.decision === "allow");
+    needsChanged();
+    return Response.json(r, { status: r.ok ? 200 : 409 });
+  }
+  if (path === "/v1/memory") {
+    // Here, not in the dashboard: approving posts a line to Alice, and only this process hosts her.
+    const id = Number(b.id);
+    const opts = typeof b.label === "string" ? { label: b.label } : {};
+    const r = b.action === "approve" ? await approveProposal(id, opts) : b.action === "dismiss" ? dismissProposal(id, opts) : { ok: false, message: "action must be approve or dismiss" };
     needsChanged();
     return Response.json(r, { status: r.ok ? 200 : 409 });
   }
