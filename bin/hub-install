@@ -17,7 +17,7 @@
 # vault plan fleet/plans/ops/exe-dev-hub-setup.md):
 #   the 1Password token (... | bin/fleet-op-token --stdin), GitHub sign-in,
 #   pi's provider logins, Tailscale's login, moving fleet/inbox/, the R2 keys
-#   for backups (bin/fleet-backup).
+#   for backups (bin/fleet-backup), the heartbeat URL (bin/fleet-heartbeat url).
 set -euo pipefail
 
 # Trust stores (2026-10-26, eMudhra intermediate CA compromise): Bun 1.4.4 and Node 24.22.1 ship
@@ -159,6 +159,15 @@ fi
 step "Litestream (hub backups to R2; bin/fleet-backup)"
 if [ "$WORKER" = 0 ]; then
   "$ROOT/bin/litestream-pin.sh"
+fi
+
+step "heartbeat (outside alert when the hub is down; bin/fleet-heartbeat)"
+if [ "$WORKER" = 0 ]; then
+  if [ -f "${FLEET_SECRETS_DIR:-${FLEET_CONFIG_DIR:-$HOME/.config/fleet}/secrets}/heartbeat.env" ]; then
+    "$ROOT/bin/fleet-heartbeat" install
+  else
+    echo "optional, not set up: create a healthchecks.io check, then bin/fleet-heartbeat url and install (docs/heartbeat.md)"
+  fi
 fi
 
 step "PATH for logins and services"

@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# fleet-heartbeat - a dead-man's switch for the hub. A systemd timer on the hub
+# pings a private healthchecks.io check every 5 minutes, but only while the node,
+# the dashboard, and Litestream answer. When the pings stop (hub dead, network
+# gone, node down) healthchecks.io alerts the captain's phone. Nothing is exposed:
+# the hub only calls out. It does not depend on fleet-node, so it still fires when
+# the node is the thing that died. Why and what it checks: docs/heartbeat.md.
+#
+# Usage:
+#   bin/fleet-heartbeat url        store the ping URL (hidden prompt, or one line on
+#                                  stdin: HEARTBEAT_URL=... or the bare URL). Never as
+#                                  an argument. Writes ~/.config/fleet/secrets/heartbeat.env
+#                                  (mode 0600). Prints only the host.
+#   bin/fleet-heartbeat run        one check: ping when healthy, POST the problems to
+#                                  <url>/fail when not. Exit 0 once a ping was sent.
+#   bin/fleet-heartbeat install    the fleet-heartbeat systemd service and 5-minute timer
+#                                  (Linux). Refuses until the env file exists. Safe to re-run.
+#   bin/fleet-heartbeat status     timer state, the last run, and whether the URL is stored
+#   bin/fleet-heartbeat uninstall  disable and remove the timer and service
+#
+# Setup:
+#   1. healthchecks.io: create a check with period 5 minutes and grace 10 minutes.
+#   2. Add the phone integration (the healthchecks app, ntfy, or email).
+#   3. Copy the check's ping URL (https://hc-ping.com/<uuid>).
+#   4. On the hub: bin/fleet-heartbeat url, then bin/fleet-heartbeat install.
+#      From the laptop: bin/hub fleet-heartbeat url (bin/hub allocates a tty).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INBOX="${FLEET_INBOX:-$ROOT/fleet/inbox}"
+CONF_DIR="${FLEET_CONFIG_DIR:-$HOME/.config/fleet}"
+SECRETS_DIR="${FLEET_SECRETS_DIR:-$CONF_DIR/secrets}"
+ENV_FILE="$SECRETS_DIR/heartbeat.env"
+UNIT=fleet-heartbeat
+SYSTEMD_DIR="${FLEET_SYSTEMD_DIR:-/etc/systemd/system}"
+NODE_URL="${FLEET_HEARTBEAT_NODE_URL:-http://127.0.0.1:${FLEET_NODE_PORT:-8786}}"
+DASH_URL="${FLEET_HEARTBEAT_DASH_URL:-http://127.0.0.1:${DASHBOARD_PORT:-8787}/}"
+TOKEN_FILE="$INBOX/.node/token"
+export PATH="$HOME/.local/bin:$PATH"
+
+die() { printf 'error: %s\n' "$1" >&2; exit "${2:-1}"; }
+usage() { sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; }
+sc() { sudo -n systemctl "$@"; }
+linux_only() { [ "$(uname)" = Linux ] || die "fleet-heartbeat $1 runs on the Linux hub (systemd)" 2; }
+
+# KEY from a KEY=VALUE file (never sourced: it is data, not a script).
+envval() {
+  [ -f "$ENV_FILE" ] || return 0
+  sed -n "s/^$1=//p" "$ENV_FILE" | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+}
+
+need_url() {
+  URL="$(envval HEARTBEAT_URL)"
+  URL="${URL%/}"
+  [ -n "$URL" ] && return 0
+  cat >&2 <<MSG
+The heartbeat is not set up: $ENV_FILE is missing or has no HEARTBEAT_URL.
+
+  1. healthchecks.io: create a check (period 5 minutes, grace 10 minutes) and a phone integration.
+  2. Store its ping URL (hidden prompt, or one line on stdin; never as an argument):
+       bin/fleet-heartbeat url
+  3. bin/fleet-heartbeat install
+MSG
+  exit 3
+}
+
+do_url() {
+  local line url
+  if [ -t 0 ]; then
+    read -rsp "Ping URL (hidden): " line
+    echo
+  else
+    IFS= read -r line || true
+  fi
+  url="${line#HEARTBEAT_URL=}"
+  url="${url%$'\r'}"
+  url="${url#\"}"; url="${url%\"}"
+  url="${url%/}"
+  unset line
+  [[ "$url" =~ ^https://([A-Za-z0-9.-]+)(:[0-9]+)?(/[A-Za-z0-9._~/-]+)?$ ]] \
+    || die "that does not look like an https ping URL (https://hc-ping.com/<uuid>)"
+  local host="${BASH_REMATCH[1]}"
+  if [ "$host" != hc-ping.com ]; then
+    echo "warning: host is $host, not hc-ping.com (fine for a self-hosted healthchecks)" >&2
+  fi
+  mkdir -p "$SECRETS_DIR"
+  chmod 0700 "$SECRETS_DIR"
+  (umask 077; printf 'HEARTBEAT_URL=%s\n' "$url" > "$ENV_FILE")
+  chmod 0600 "$ENV_FILE"
+  unset url
+  echo "stored the ping URL for $host in $ENV_FILE"
+}
+
+# Problem lines on stdout, none when the fleet is healthy.
+problems() {
+  local code
+  if [ ! -r "$TOKEN_FILE" ]; then
+    echo "node: no token file at $TOKEN_FILE"
+  elif ! curl -fsS -m 5 -o /dev/null -H "Authorization: Bearer $(cat "$TOKEN_FILE")" "$NODE_URL/v1/health" 2>/dev/null; then
+    echo "node: /v1/health did not answer"
+  fi
+  code="$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$DASH_URL" 2>/dev/null || true)"
+  [ "$code" = 200 ] || echo "dashboard: answered ${code:-nothing} (want 200)"
+  if [ "$(uname)" = Linux ] && systemctl cat fleet-litestream.service >/dev/null 2>&1; then
+    systemctl is-active --quiet fleet-litestream || echo "litestream: fleet-litestream is $(systemctl is-active fleet-litestream 2>/dev/null || true)"
+  fi
+}
+
+do_run() {
+  need_url
+  local out
+  out="$(problems)"
+  if [ -z "$out" ]; then
+    curl -fsS -m 10 --retry 3 -o /dev/null "$URL" || die "could not send the ping" 4
+    echo "ok: pinged"
+  else
+    printf '%s\n' "$out" | curl -fsS -m 10 --retry 3 -o /dev/null --data-binary @- "$URL/fail" || die "could not send the fail ping" 4
+    echo "problem: sent /fail"
+    printf '%s\n' "$out"
+  fi
+}
+
+render_service() {
+  cat <<UNIT
+[Unit]
+Description=Fleet heartbeat (healthchecks.io dead-man's switch)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=$ENV_FILE
+
+[Service]
+Type=oneshot
+User=$(id -un)
+WorkingDirectory=$ROOT
+EnvironmentFile=$ENV_FILE
+Environment=PATH=/usr/bin:/bin:$HOME/.local/bin
+ExecStart=$ROOT/bin/fleet-heartbeat run
+UNIT
+}
+
+render_timer() {
+  cat <<UNIT
+[Unit]
+Description=Fleet heartbeat every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+}
+
+install_file() {
+  local dest="$1" body
+  body="$(cat)"
+  if ! printf '%s\n' "$body" | cmp -s - "$dest" 2>/dev/null; then
+    printf '%s\n' "$body" | sudo tee "$dest" >/dev/null
+    echo "wrote $dest"
+  fi
+}
+
+do_install() {
+  linux_only install
+  need_url
+  mkdir -p "$SYSTEMD_DIR"
+  render_service | install_file "$SYSTEMD_DIR/$UNIT.service"
+  render_timer | install_file "$SYSTEMD_DIR/$UNIT.timer"
+  sc daemon-reload
+  sc enable --now "$UNIT.timer" >/dev/null 2>&1 || die "could not start $UNIT.timer (journalctl -u $UNIT)"
+  echo "$UNIT.timer: $(systemctl is-active "$UNIT.timer" 2>/dev/null || true)"
+  echo "== one check now"
+  do_run
+}
+
+do_status() {
+  linux_only status
+  if [ -f "$ENV_FILE" ] && [ -n "$(envval HEARTBEAT_URL)" ]; then echo "ping URL: stored in $ENV_FILE"; else echo "ping URL: not set (bin/fleet-heartbeat url)"; fi
+  echo "$UNIT.timer: $(systemctl is-active "$UNIT.timer" 2>/dev/null || true) ($(systemctl is-enabled "$UNIT.timer" 2>/dev/null || echo not installed))"
+  systemctl show "$UNIT.timer" -p NextElapseUSecRealtime 2>/dev/null || true
+  systemctl show "$UNIT.service" -p ActiveEnterTimestamp -p Result 2>/dev/null || true
+  sudo -n journalctl -u "$UNIT.service" -n 5 --no-pager -o cat 2>/dev/null || true
+}
+
+do_uninstall() {
+  linux_only uninstall
+  sc disable --now "$UNIT.timer" >/dev/null 2>&1 || true
+  sudo -n rm -f "$SYSTEMD_DIR/$UNIT.timer" "$SYSTEMD_DIR/$UNIT.service"
+  sc daemon-reload
+  echo "removed $UNIT.timer and $UNIT.service (the env file stays)"
+}
+
+case "${1:-}" in
+  url) do_url ;;
+  run) do_run ;;
+  install) do_install ;;
+  status) do_status ;;
+  uninstall) do_uninstall ;;
+  -h|--help|help|"") usage ;;
+  *) usage >&2; exit 2 ;;
+esac
