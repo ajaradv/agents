@@ -5,7 +5,7 @@
 #   title     what the captain sees on Health > Diagnostics
 #   every     "every 30m" | "every 6h" | "every 2d" | "daily 08:30" | "weekly mon 09:00" (local time)
 #   agent     an agent id: it gets `prompt` as a message and a turn, and reports with notify_captain
-#   job       or a built-in node job: vault-doctor, free-models, due-tasks, proactive, codegraph-sync, session-archive, exe-idle, golden-refresh, backups, helm-review (needs `ship`)
+#   job       or a built-in node job: vault-doctor, free-models, due-tasks, proactive, codegraph-sync, session-archive, exe-idle, golden-refresh, backups, backup-drill, helm-review (needs `ship`)
 #   enabled   false to keep a routine declared but off (default true)
 #   watch     what the routine reads: ships, ship:<id>, vault:<folder>; when none of it changed since
 #             the last run, the run is skipped (helm reviews watch their own ship by default)
@@ -65,6 +65,11 @@ routines:
     title: Hub database backups (Litestream to R2) kept in step with the databases on disk; a notice when replication stops
     every: every 15m
     job: backups
+  # The real check: restores every replicated database and compares with live.
+  - id: backup-drill
+    title: Weekly restore drill of the hub backups (a phone notice when a restore fails)
+    every: weekly sun 05:00
+    job: backup-drill
 
   # Agent routines.
   - id: weekly-fleet-report

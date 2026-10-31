@@ -106,6 +106,8 @@ does not surface as `SQLITE_BUSY`.
 - The `backups` node job says "not set up" until the env file exists (one reminder
   a week) and, once it does, notices a stopped service or a failed reconcile (once
   a day).
+- The `backup-drill` routine runs the drill every Sunday at 05:00 (hub local time)
+  and pushes a notice to the captain's phone when it fails.
 
 ## Restore
 

@@ -18,7 +18,7 @@ import { secretsDir } from "./secret-store.ts";
  * once a day, so a long outage is a notice, not a flood.
  */
 
-type Run = (cmd: string[]) => Promise<{ code: number; out: string }>;
+type Run = (cmd: string[], timeoutMs?: number) => Promise<{ code: number; out: string }>;
 type State = { notSetUpNotice?: string; downNotice?: string };
 export type BackupsDeps = {
   platform?: string;
@@ -32,8 +32,8 @@ export type BackupsDeps = {
 const DAY_MS = 86_400_000;
 const NOT_SET_UP = "not set up (see bin/fleet-backup)";
 
-const defaultRun: Run = async (cmd) => {
-  const r = await spawnTimed(cmd, { timeoutMs: 120_000 });
+const defaultRun: Run = async (cmd, timeoutMs = 120_000) => {
+  const r = await spawnTimed(cmd, { timeoutMs });
   return { code: r.timedOut ? 124 : r.exitCode, out: `${r.stdout}\n${r.stderr}`.trim() };
 };
 
@@ -79,5 +79,40 @@ export function backupsJob(deps: BackupsDeps = {}): () => Promise<string> {
     }
     const changed = rec.out.split("\n").filter((l) => /^wrote |^\s+(added|removed) /.test(l));
     return changed.length ? `config updated: ${changed.map((l) => l.trim()).join(", ")}` : "replicating; config current";
+  };
+}
+
+/**
+ * The node job `backup-drill` (routines.yaml, weekly): the real check that the
+ * backups restore. `bin/fleet-backup drill` restores every replicated database
+ * into a temp dir, runs integrity_check and compares row counts with the live
+ * ones. The `backups` job only sees that the service is active, which missed a
+ * wrong Litestream binary for 4.5 days (2026-10-31). A failed drill is a
+ * blocked notice (a phone push); one notice per run.
+ */
+const DRILL_TIMEOUT_MS = 10 * 60_000;
+const LAG_ROWS = 500;
+
+export function backupDrillJob(deps: BackupsDeps = {}): () => Promise<string> {
+  return async () => {
+    if ((deps.platform ?? process.platform) !== "linux") return "skipped: not the hub";
+    // The `backups` job already nags about a missing env file.
+    if (!(deps.envFileExists ?? (() => existsSync(litestreamEnvFile())))()) return NOT_SET_UP;
+    const notify = deps.notify ?? notifyCaptain;
+    const r = await (deps.run ?? defaultRun)([join(ROOT, "bin", "fleet-backup"), "drill"], DRILL_TIMEOUT_MS);
+    const lines = r.out.split("\n").map((l) => l.trimEnd()).filter(Boolean);
+    if (r.code !== 0) {
+      const fails = lines.filter((l) => l.startsWith("FAIL"));
+      const shown = fails.length ? fails : lines.slice(-10);
+      const why = r.code === 124 ? `The drill timed out after ${DRILL_TIMEOUT_MS / 60_000} minutes.\n` : "";
+      notify({ from: "backups", kind: "blocked", summary: "Hub backup drill failed", detail: `${why}${shown.join("\n")}\n\nRun bin/hub fleet-backup drill, then bin/fleet-backup status; docs/backups.md.`, ref: "docs/backups.md" });
+      return `drill failed (exit ${r.code}): ${shown.slice(0, 3).join("; ")}`;
+    }
+    const dbs = lines.filter((l) => l.startsWith("ok ")).length;
+    const total = lines.map((l) => /^total: (\d+)s/.exec(l)?.[1]).find(Boolean);
+    let out = `drill passed: ${dbs} database${dbs === 1 ? "" : "s"}${total ? ` in ${total}s` : ""}`;
+    const lag = Math.max(0, ...lines.map((l) => Number(/live ahead by (\d+)/.exec(l)?.[1] ?? 0)));
+    if (lag >= LAG_ROWS) out += `; warning: live is ${lag} rows ahead of the restore (replication may be lagging)`;
+    return out;
   };
 }
