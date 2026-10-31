@@ -7,6 +7,8 @@
 #   bin/hub-deploy            pull main on the hub, wait for idle agents, restart, check health
 #   bin/hub-deploy --check    only show what would change and who is busy
 #   bin/hub-deploy --restart  restart even when there is nothing new to pull
+#   bin/hub-deploy --reinstall
+#                             reinstall the services (bin/fleet-services install) even when settings and units are unchanged
 #   bin/hub-deploy --force    do not wait for busy agents (their turn is cut off)
 #   bin/hub-deploy --new-session alice[,fleet-lead]
 #                             after the restart, start fresh sessions for these agents, so a
@@ -16,7 +18,12 @@
 # git pull --ff-only; bun install when package.json or bun.lock changed; wait
 # (up to FLEET_DEPLOY_WAIT seconds, default 300) until no agent is thinking or
 # waiting on a gate; restart fleet-node and fleet-dashboard; wait for both to
-# answer. Agents stop with the node; sessions resume on the next message unless
+# answer. When ~/.config/fleet/services.env or bin/fleet-services changed since the
+# last install (or --reinstall), the restart is a login-shell `fleet-services install`
+# instead, so new settings and unit changes reach the systemd units. When the
+# fleet-litestream unit exists, the Litestream binary is held to the version pinned in
+# bin/litestream-pin.sh (a v0.3 binary against the v0.5 config shows "active" and backs
+# up nothing); --check only reports a mismatch. Agents stop with the node; sessions resume on the next message unless
 # --new-session names them.
 #
 # FLEET_HUB names the ssh host (default fleet-hub-k1s7.exe.xyz).
@@ -28,14 +35,15 @@ if [ "$(uname)" != Linux ]; then
   exec ssh "$HUB" "bash -s -- $*" <"$0"
 fi
 
-CHECK=0 RESTART=0 FORCE=0 FRESH=""
+CHECK=0 RESTART=0 REINSTALL=0 FORCE=0 FRESH=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --check) CHECK=1 ;;
     --restart) RESTART=1 ;;
+    --reinstall) REINSTALL=1 ;;
     --force) FORCE=1 ;;
     --new-session) FRESH="${2:?--new-session takes agent ids, comma separated}"; shift ;;
-    *) echo "usage: bin/hub-deploy [--check] [--restart] [--force] [--new-session a,b]" >&2; exit 2 ;;
+    *) echo "usage: bin/hub-deploy [--check] [--restart] [--reinstall] [--force] [--new-session a,b]" >&2; exit 2 ;;
   esac
   shift
 done
@@ -51,6 +59,15 @@ TOKEN_FILE="$ROOT/fleet/inbox/.node/token"
 node_get() { curl -fsS --max-time 5 -H "Authorization: Bearer $(cat "$TOKEN_FILE")" "$NODE_URL$1"; }
 # Agents that are mid-turn or held at a gate, one per line ("alice thinking").
 busy() { node_get /v1/state 2>/dev/null | jq -r '.agents | to_entries[] | select(.value.thinking or .value.waiting) | "\(.key) \(if .value.thinking then "thinking" else "waiting on a gate" end)"' || true; }
+
+# Why the services need a reinstall rather than a restart (empty when they do not).
+reinstall_reason() {
+  if [ "$REINSTALL" = 1 ]; then echo "--reinstall"; else bin/fleet-services drift; fi
+}
+# Litestream: the pinned version, and the one installed (empty when none runs).
+ls_pinned() { sed -n 's/^LITESTREAM_VERSION=//p' bin/litestream-pin.sh; }
+ls_installed() { "$HOME/.local/bin/litestream" version 2>/dev/null | head -1 || true; }
+ls_unit() { systemctl cat fleet-litestream >/dev/null 2>&1; }
 
 branch="$(git branch --show-current)"
 [ "$branch" = main ] || { echo "error: the hub is on $branch, not main; switch it by hand" >&2; exit 1; }
@@ -72,7 +89,17 @@ fi
 now_busy="$(busy)"
 [ -n "$now_busy" ] && { echo "== busy now"; echo "$now_busy"; }
 
-if [ "$CHECK" = 1 ]; then exit 0; fi
+if [ "$CHECK" = 1 ]; then
+  reason="$(reinstall_reason)"
+  if git diff --name-only HEAD origin/main -- bin/fleet-services | grep -q .; then reason="${reason:-bin/fleet-services changes on main}"; fi
+  if [ -n "$reason" ]; then echo "== would reinstall services ($reason)"; else echo "== would restart services (settings and units unchanged)"; fi
+  if ls_unit; then
+    pinned="$(ls_pinned)"; have="$(ls_installed)"
+    if [ "$have" != "$pinned" ]; then echo "== litestream ${have:-missing} but pinned $pinned (a deploy would fix it)"; fi
+    systemctl is-active --quiet fleet-litestream || echo "warning: fleet-litestream is not active"
+  fi
+  exit 0
+fi
 if [ -z "$incoming" ] && [ "$RESTART" = 0 ] && [ -z "$FRESH" ]; then echo "nothing to deploy (--restart to restart anyway)"; exit 0; fi
 
 deploy() {
@@ -103,8 +130,15 @@ deploy() {
   fi
 
   old_pid="$(node_get /v1/health 2>/dev/null | jq -r .pid || true)"
-  echo "== restarting fleet-node and fleet-dashboard"
-  sudo systemctl restart fleet-node.service fleet-dashboard.service
+  reason="$(reinstall_reason)"
+  if [ -n "$reason" ]; then
+    # Login shell: install captures its PATH into the units (a plain ssh shell's is too short for pi and node).
+    echo "== settings or units changed: reinstalling services ($reason)"
+    bash -lc 'bin/fleet-services install' </dev/null
+  else
+    echo "== restarting fleet-node and fleet-dashboard"
+    sudo systemctl restart fleet-node.service fleet-dashboard.service
+  fi
 
   for _ in $(seq 1 30); do
     h="$(node_get /v1/health 2>/dev/null || true)"
@@ -130,6 +164,16 @@ deploy() {
     exit 1
   fi
   echo "pi: $v on the node's PATH"
+
+  if ls_unit; then
+    pinned="$(ls_pinned)"; have="$(ls_installed)"
+    if [ "$have" != "$pinned" ]; then
+      bin/litestream-pin.sh
+      sudo systemctl restart fleet-litestream
+      echo "== litestream ${have:-missing} -> $(ls_installed) (pinned); restarted fleet-litestream"
+    fi
+    systemctl is-active --quiet fleet-litestream || echo "warning: fleet-litestream is not active; check bin/fleet-backup drill"
+  fi
 }
 if [ -n "$incoming" ] || [ "$RESTART" = 1 ]; then deploy; fi
 
