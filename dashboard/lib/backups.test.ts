@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { backupsJob, type BackupsDeps } from "./backups.ts";
+import { backupDrillJob, backupsJob, type BackupsDeps } from "./backups.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "backups-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -90,5 +90,67 @@ describe("backups job", () => {
     const h = harness({ envFileExists: () => false });
     await h.job();
     expect(readFileSync(join(dir, `state-${n - 1}.json`), "utf8")).toContain("notSetUpNotice");
+  });
+});
+
+describe("backup-drill job", () => {
+  const PASS = "ok    /i/a.db: restored and checked in 2s\n        t   4 rows\nok    /i/b.db: restored and checked in 3s\n\ntotal: 15s\ndrill passed";
+  function drill(out: string, code: number, over: Partial<BackupsDeps> = {}) {
+    const notices: { kind: string; summary: string; detail: string }[] = [];
+    const calls: string[][] = [];
+    const job = backupDrillJob({
+      platform: "linux",
+      envFileExists: () => true,
+      notify: ((x: { kind: string; summary: string; detail: string }) => void notices.push(x)) as never,
+      run: async (cmd) => (calls.push(cmd), { code, out }),
+      ...over,
+    });
+    return { job, notices, calls };
+  }
+
+  test("skips off the hub", async () => {
+    const h = drill(PASS, 0, { platform: "darwin" });
+    expect(await h.job()).toBe("skipped: not the hub");
+    expect(h.calls).toEqual([]);
+  });
+
+  test("not set up: says so without a notice", async () => {
+    const h = drill(PASS, 0, { envFileExists: () => false });
+    expect(await h.job()).toBe("not set up (see bin/fleet-backup)");
+    expect(h.calls).toEqual([]);
+    expect(h.notices).toEqual([]);
+  });
+
+  test("pass: counts databases and seconds, quiet", async () => {
+    const h = drill(PASS, 0);
+    expect(await h.job()).toBe("drill passed: 2 databases in 15s");
+    expect(h.calls[0]?.slice(-1)).toEqual(["drill"]);
+    expect(h.notices).toEqual([]);
+  });
+
+  test("fail: one blocked notice with the FAIL lines", async () => {
+    const h = drill("FAIL  /i/a.db: restore failed (boom)\nok    /i/b.db: restored and checked in 3s\n\ntotal: 4s\ndrill FAILED", 1);
+    expect(await h.job()).toContain("drill failed (exit 1)");
+    expect(h.notices.length).toBe(1);
+    expect(h.notices[0]?.kind).toBe("blocked");
+    expect(h.notices[0]?.summary).toBe("Hub backup drill failed");
+    expect(h.notices[0]?.detail).toContain("FAIL  /i/a.db: restore failed (boom)");
+    expect(h.notices[0]?.detail).not.toContain("ok    /i/b.db");
+    expect(h.notices[0]?.detail).toContain("bin/hub fleet-backup drill");
+  });
+
+  test("a timeout is a failure too, with the tail of the output", async () => {
+    const h = drill("still restoring", 124);
+    expect(await h.job()).toContain("exit 124");
+    expect(h.notices[0]?.detail).toContain("timed out");
+    expect(h.notices[0]?.detail).toContain("still restoring");
+  });
+
+  test("lag of 500 rows or more is a warning, not a notice", async () => {
+    const h = drill(`${PASS}\n        t   restored 1, live 900 (live ahead by 899)`, 0);
+    expect(await h.job()).toContain("replication may be lagging");
+    const small = drill(`${PASS}\n        t   restored 1, live 10 (live ahead by 9)`, 0);
+    expect(await small.job()).toBe("drill passed: 2 databases in 15s");
+    expect(h.notices).toEqual([]);
   });
 });

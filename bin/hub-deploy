@@ -8,7 +8,7 @@
 #   bin/hub-deploy --check    only show what would change and who is busy
 #   bin/hub-deploy --restart  restart even when there is nothing new to pull
 #   bin/hub-deploy --reinstall
-#                             reinstall the services (bin/fleet-services install) even when settings and units are unchanged
+#                             reinstall the services (bin/fleet-services install) even when settings and units are unchanged (implies --restart)
 #   bin/hub-deploy --force    do not wait for busy agents (their turn is cut off)
 #   bin/hub-deploy --new-session alice[,fleet-lead]
 #                             after the restart, start fresh sessions for these agents, so a
@@ -40,7 +40,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --check) CHECK=1 ;;
     --restart) RESTART=1 ;;
-    --reinstall) REINSTALL=1 ;;
+    --reinstall) REINSTALL=1 RESTART=1 ;;
     --force) FORCE=1 ;;
     --new-session) FRESH="${2:?--new-session takes agent ids, comma separated}"; shift ;;
     *) echo "usage: bin/hub-deploy [--check] [--restart] [--reinstall] [--force] [--new-session a,b]" >&2; exit 2 ;;

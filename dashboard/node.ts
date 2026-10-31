@@ -21,7 +21,7 @@ import { architectGitRead, gitRead } from "./lib/git-read.ts";
 import { planCheck } from "./lib/plan-check.ts";
 import { hasHelmsman, helmDigest, helmPropose } from "./lib/helm.ts";
 import { handleIngest } from "./lib/ingest.ts";
-import { backupsJob } from "./lib/backups.ts";
+import { backupDrillJob, backupsJob } from "./lib/backups.ts";
 import { exeIdleJob, refreshGoldens } from "./lib/exe-pool.ts";
 import { startRoutines, type Routine } from "./lib/routines.ts";
 import { budgetRefusal, findShip } from "./lib/shipyard.ts";
@@ -251,7 +251,7 @@ function startRuntime(): void {
   const exeIdle = exeIdleJob();
   const goldenRefresh = () => refreshGoldens();
   startRoutines({
-    jobs: { backups: backupsJob(), "exe-idle": exeIdle, "golden-refresh": goldenRefresh, "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, proactive: () => runSweep(acceptCrewLine), "helm-review": helmReview, "codegraph-sync": codegraphSync, "session-archive": sessionArchive },
+    jobs: { backups: backupsJob(), "backup-drill": backupDrillJob(), "exe-idle": exeIdle, "golden-refresh": goldenRefresh, "vault-doctor": vaultCheck, "free-models": freeRefresh, "due-tasks": dueCheck, proactive: () => runSweep(acceptCrewLine), "helm-review": helmReview, "codegraph-sync": codegraphSync, "session-archive": sessionArchive },
     runAgent: async (agentId, text) => void (await acceptCrewLine(agentId, "routine", text)),
     agentExists: (agentId) => allChatTargetIds().includes(agentId),
     budgetRefusal: (ship, agentId) => budgetRefusal(ship, agentId),
