@@ -12,7 +12,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { encode } from "@toon-format/toon";
-import { parseExecution, profileLabel, resolveExecution, type DispatchConfig } from "../dashboard/lib/plan-execution.ts";
+import { checkExecution } from "../dashboard/lib/plan-check.ts";
+import { parseExecution, type DispatchConfig } from "../dashboard/lib/plan-execution.ts";
 import { aliceVault, ROOT } from "../dashboard/lib/paths.ts";
 
 const HELP = `command: plan-execution
@@ -106,20 +107,8 @@ try {
   fail(`cannot read the dispatch rules: ${e instanceof Error ? e.message : String(e)}`, "pass --config <crew-dispatch.json>", 2);
 }
 
-const parsed = parseExecution(markdown);
-const { resolved, errors } = resolveExecution(parsed.tasks, config);
-const allErrors = [...parsed.errors, ...errors];
+const result = checkExecution(markdown, config, { suggestion: "send the plan back to the Architect with these errors; do not guess a rule" });
 
-if (json) {
-  console.log(JSON.stringify({ plan: planPath, tasks: resolved, errors: allErrors }, null, 2));
-} else if (parsed.tasks.length === 0 && allErrors.length === 0) {
-  console.log(encode({ execution: "none: the plan has no execution block; dispatch each task by Jev or judgment" }));
-} else {
-  console.log(
-    encode({
-      ...(resolved.length ? { tasks: resolved.map((t) => ({ task: t.task, rule: t.rule, effort: t.effort ?? null, profiles: t.profiles.map(profileLabel).join(" | ") })) } : {}),
-      ...(allErrors.length ? { errors: allErrors, suggestion: "send the plan back to the Architect with these errors; do not guess a rule" } : {}),
-    }),
-  );
-}
-process.exit(allErrors.length ? 1 : 0);
+if (json) console.log(JSON.stringify({ plan: planPath, tasks: result.resolved, errors: result.errors }, null, 2));
+else console.log(result.message);
+process.exit(result.ok ? 0 : 1);

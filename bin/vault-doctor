@@ -9,7 +9,7 @@
 //   bin/vault-doctor --vault <path>  another vault (default: ALICE_VAULT or ~/Workspace/brain)
 import { encode } from "@toon-format/toon";
 import { aliceVault } from "../dashboard/lib/paths.ts";
-import { examineVault, fixVault } from "../dashboard/lib/vault-doctor.ts";
+import { doctorReport } from "../dashboard/lib/vault-doctor.ts";
 
 const HELP = `command: vault-doctor
 summary: Check vault notes (frontmatter, Task fields, links, blocked_by, the task index); read-only unless --fix
@@ -45,27 +45,26 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-let fixed: string[] = [];
-try {
-  if (fix) fixed = fixVault(vault);
-  const r = examineVault(vault);
-  if (json) {
-    console.log(JSON.stringify({ vault, ...r, fixed }, null, 2));
-    process.exit(0);
-  }
-  const out: Record<string, unknown> = {
-    vault: vault.replace(process.env.HOME ?? "\u0000", "~"),
-    result: r.problems.length ? `${r.problems.length} problem(s) in ${r.notes} notes (${r.links} links checked)` : `0 problems in ${r.notes} notes (${r.links} links checked)`,
-  };
-  if (fixed.length) out.fixed = fixed;
-  // Always the list, even empty, so the count reads the same way every time (docs/tool-standards.md).
-  out.problems = r.problems.map((p) => ({ check: p.check, note: p.note, detail: p.detail, fixable: Boolean(p.fixable) }));
-  const help: string[] = [];
-  if (!fix && r.problems.some((p) => p.fixable)) help.push("bin/vault-doctor --fix");
-  help.push(r.problems.length ? "bin/vault-doctor --json" : "bin/vault-doctor --help");
-  out.help = help;
-  console.log(encode(out));
-} catch (e) {
-  console.log(encode({ error: `could not read the vault at ${vault}: ${e instanceof Error ? e.message : String(e)}`, suggestion: "pass --vault <path> to the vault folder" }));
+const r = doctorReport(fix, vault);
+if (!r.ok) {
+  console.log(encode({ error: `could not read the vault at ${vault}: ${r.message.replace(/^Could not read the vault: /, "")}`, suggestion: "pass --vault <path> to the vault folder" }));
   process.exit(1);
 }
+const problems = r.problems as { check: string; note: string; detail: string; fixable: boolean }[];
+const fixed = (r.fixed ?? []) as string[];
+if (json) {
+  console.log(JSON.stringify({ vault, notes: r.notes, links: r.links, problems, fixed }, null, 2));
+  process.exit(0);
+}
+const out: Record<string, unknown> = {
+  vault: vault.replace(process.env.HOME ?? "\u0000", "~"),
+  result: `${problems.length} problem(s) in ${r.notes} notes (${r.links} links checked)`,
+};
+if (fixed.length) out.fixed = fixed;
+// Always the list, even empty, so the count reads the same way every time (docs/tool-standards.md).
+out.problems = problems;
+const help: string[] = [];
+if (!fix && problems.some((p) => p.fixable)) help.push("bin/vault-doctor --fix");
+help.push(problems.length ? "bin/vault-doctor --json" : "bin/vault-doctor --help");
+out.help = help;
+console.log(encode(out));

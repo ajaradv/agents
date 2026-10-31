@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { gitRead, gitReadAllowed, gitReadArgv } from "./git-read.ts";
+import { architectGitRead, gitRead, gitReadAllowed, gitReadArgv } from "./git-read.ts";
 import type { ShipHost } from "./ship-host.ts";
 
 const argv = (a: Parameters<typeof gitReadArgv>[0]) => {
@@ -85,6 +85,18 @@ describe("gitRead", () => {
     const long = await gitRead("kin", "kin-lead", { op: "diff" }, { host: fakeHost({ stdout: "x".repeat(20_000) }).host, cwd: "/w" });
     expect(long.ok && long.message.length).toBeLessThan(16_300);
     expect(long.message).toContain("more characters cut");
+  });
+});
+
+describe("architectGitRead", () => {
+  test("only the architect, with a ship; runs in that ship's repo", async () => {
+    const { host, calls } = fakeHost({ stdout: "abc1234 a commit\n" });
+    expect((await architectGitRead("kin-lead", { ship: "kin", op: "log" }, { host, cwd: "/r" })).ok).toBe(false);
+    expect((await architectGitRead("architect", { op: "log" }, { host, cwd: "/r" })).message).toContain("ship is required");
+    expect((await architectGitRead("architect", { ship: "kin", op: "diff", ref: "--output=x" }, { host, cwd: "/r" })).ok).toBe(false);
+    expect(calls).toEqual([]);
+    expect(await architectGitRead("architect", { ship: "kin", op: "log", n: 3 }, { host, cwd: "/r" })).toEqual({ ok: true, message: "abc1234 a commit" });
+    expect(calls).toEqual([{ cmd: ["git", "--no-pager", "--no-optional-locks", "log", "--oneline", "--decorate", "-n", "3"], cwd: "/r" }]);
   });
 });
 

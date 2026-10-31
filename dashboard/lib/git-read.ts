@@ -60,6 +60,17 @@ export function gitReadArgv(a: GitReadArgs): { ok: true; argv: string[] } | { ok
   return { ok: true, argv: [...base, op, "--no-ext-diff", "--no-textconv", ...rest] };
 }
 
+/** Run one validated git argv on a host, in a directory; the output cut to fit an agent's context. */
+async function runGit(argv: string[], cwd: string, host: ShipHost): Promise<{ ok: boolean; message: string }> {
+  const r = await host.exec(argv, { timeoutMs: TIMEOUT_MS, cwd });
+  if (r.timedOut) return { ok: false, message: "git did not answer in time." };
+  if (r.unreachable) return { ok: false, message: "The ship's host did not answer." };
+  const out = r.stdout.trim();
+  if (r.exitCode !== 0) return { ok: false, message: (r.stderr.trim() || out || `git exited ${r.exitCode}`).slice(0, 2000) };
+  if (!out) return { ok: true, message: "(no output)" };
+  return { ok: true, message: out.length <= OUTPUT_MAX ? out : `${out.slice(0, OUTPUT_MAX)}\n[… ${out.length - OUTPUT_MAX} more characters cut; narrow it with paths or a smaller n …]` };
+}
+
 /** Run one read-only git operation for a crewmate, on the voyage's host, in its worktree (else the ship's repo). */
 export async function gitRead(shipId: string, from: string, args: GitReadArgs, deps: { host?: ShipHost; cwd?: string } = {}): Promise<{ ok: boolean; message: string }> {
   if (!gitReadAllowed(shipId, from)) return { ok: false, message: "git_read is for the ship's lead and helmsman." };
@@ -72,12 +83,20 @@ export async function gitRead(shipId: string, from: string, args: GitReadArgs, d
     cwd = ship.path;
   }
   // The same host as run_check: a VM voyage's worktree exists only on its VM.
-  const host = deps.host ?? voyageHost(shipId) ?? localHost;
-  const r = await host.exec(cmd.argv, { timeoutMs: TIMEOUT_MS, cwd });
-  if (r.timedOut) return { ok: false, message: "git did not answer in time." };
-  if (r.unreachable) return { ok: false, message: "The ship's host did not answer." };
-  const out = r.stdout.trim();
-  if (r.exitCode !== 0) return { ok: false, message: (r.stderr.trim() || out || `git exited ${r.exitCode}`).slice(0, 2000) };
-  if (!out) return { ok: true, message: "(no output)" };
-  return { ok: true, message: out.length <= OUTPUT_MAX ? out : `${out.slice(0, OUTPUT_MAX)}\n[… ${out.length - OUTPUT_MAX} more characters cut; narrow it with paths or a smaller n …]` };
+  return runGit(cmd.argv, cwd, deps.host ?? voyageHost(shipId) ?? localHost);
+}
+
+/** The Architect's git_read (extensions/decisions.ts): any registered ship's repo, not a voyage worktree. */
+export async function architectGitRead(from: string, args: GitReadArgs & { ship?: unknown }, deps: { host?: ShipHost; cwd?: string } = {}): Promise<{ ok: boolean; message: string }> {
+  if (from !== "architect") return { ok: false, message: "git_read here is the architect's." };
+  if (typeof args.ship !== "string" || !args.ship) return { ok: false, message: "ship is required (a ship id; fleet is this repo)." };
+  const cmd = gitReadArgv(args);
+  if (!cmd.ok) return cmd;
+  let cwd = deps.cwd;
+  if (!cwd) {
+    const ship = (await readShips()).find((s) => s.id === args.ship);
+    if (!ship) return { ok: false, message: `No ship ${args.ship}.` };
+    cwd = ship.path;
+  }
+  return runGit(cmd.argv, cwd, deps.host ?? localHost);
 }

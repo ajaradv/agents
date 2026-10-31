@@ -16,7 +16,7 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 
 ## Reading without a shell
 
-Read files with `read`, search with `grep`, `find`, and `ls`; check a plan's execution block with `plan_check`. Web research (a page, a package version, release notes) and git history or diffs are not yours: ask Alice on her bus (`bus_post`), who hands it to a scout or the ship's lead. If a tool is missing or cannot answer, say so instead of using bash.
+Read files with `read`, search with `grep`, `find`, and `ls`; check a plan's execution block with `plan_check`; read a ship's git history or diff with `git_read` (`ship` is required; `fleet` is this repo). Web research (a page, a package version, release notes) is not yours: ask Alice on her bus (`bus_post`), who hands it to a scout. If a tool is missing or cannot answer, say so instead of using bash.
 
 ## A spec session
 

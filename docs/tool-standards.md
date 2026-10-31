@@ -69,7 +69,22 @@ evidence (failures, oversized outputs) against it and propose fixes.
 | chrome-devtools-axi | 0.1.29 | designers in a VM (`cdt`) | 8 pass | drives the VM's Chromium; its MCP server pinned to chrome-devtools-mcp 1.7.0 (1.10+ needs a pageId 0.1.29 does not send) |
 | cargo-axi | — | — | — | not on npm; skipped |
 
-`bin/fleet-axi` is the fleet's own: the fleet from any shell (ships, what waits on the captain, voyages, logs, vault tasks, Jev spend, gate decisions), read-only, with `bin/fleet-axi next` listing the open Done-when steps of the active vault tasks, `query` (spend, tool_failures, jev, gate, voyages: the `fleet_query` tool), `note` and `search` (the `vault_note` and `vault_search` tools), and an opt-in Claude Code SessionStart hook (`bin/fleet-axi setup hooks`). Each is a shared library function in `dashboard/lib/` that the pi tool (through the node) and the CLI both call, so exact questions need no `sqlite3` or `grep`. `vault_patch` and `vault_doctor` are tools only; `vault_patch` is lazy (RARE) and refuses `career/` and `profile/`.
+`bin/fleet-axi` is the fleet's own: the fleet from any shell (ships, what waits on the captain, voyages, logs, vault tasks, Jev spend, gate decisions), read-only, with `bin/fleet-axi next` listing the open Done-when steps of the active vault tasks, `query` (spend, tool_failures, jev, gate, voyages: the `fleet_query` tool), `note` and `search` (the `vault_note` and `vault_search` tools), and an opt-in Claude Code SessionStart hook (`bin/fleet-axi setup hooks`). Each is a shared library function in `dashboard/lib/` that the pi tool (through the node) and the CLI both call, so exact questions need no `sqlite3` or `grep`. `vault_patch` and `vault_doctor` are tools only (`bin/vault-doctor` calls the same `doctorReport`); `vault_patch` is lazy (RARE) and refuses `career/` and `profile/`.
+
+Tools added since 2026-10-29, each answering through a view (or, for writes, a one-line result):
+
+- `fleet_query`: exact numbers (spend, tool_failures, jev, gate, voyages) over a day window; `bin/fleet-axi query`.
+- `vault_note`: one vault note (frontmatter, headings, one section, or the body); `bin/fleet-axi note`.
+- `vault_search`: notes by words and frontmatter filters; `bin/fleet-axi search`.
+- `vault_patch`: set frontmatter fields or tick checklist items in a note; refuses `career/` and `profile/`.
+- `vault_doctor`: the vault's formatting problems, `fix=true` repairs the safe ones; `bin/vault-doctor`.
+- `fact_get`: facts by subject and key, their history, or the open observations; `bin/fleet-axi facts`.
+- `fact_set`: record or retire a value that changes, always with a source (naming: `docs/memory.md`).
+- `remember`: add or replace one line in the captain profile, `fleet/captain.md`.
+- `log_observation`: a passing note that expires on its own (14 days by default).
+- `proactive_report`: Alice's proposals for the node's daily sweep, shown as cards with Go, Snooze, Done.
+- `git_read`: read-only git (`status`, `log`, `diff`, `show`, `branch`) for the lead and helmsman in the voyage's worktree, and for the Architect in any ship's repo (`ship` required).
+- `plan_check`: the Architect's check of a plan's `execution:` block; the same code as `bin/plan-execution.ts`.
 
 ## Known gaps (2026-10-18)
 

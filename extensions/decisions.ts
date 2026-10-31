@@ -5,6 +5,7 @@
  * - spec_submit (architect): hand a drafted spec to the captain's review.
  * - plan_check (architect): a plan's execution block bound to the crew-dispatch
  *   rules (what `bun bin/plan-execution.ts <plan>` printed), for the Architect without bash.
+ * - git_read (architect): read-only git in any ship's repo (dashboard/lib/git-read.ts).
  * - design_review (designer): a voyage's screenshots against the approved
  *   design; only a difference reaches the queue.
  */
@@ -20,7 +21,7 @@ function text(t: string) {
   return { content: [{ type: "text" as const, text: t }], details: {} };
 }
 
-async function call(what: "spec" | "design-review" | "plan-check", body: Record<string, unknown>): Promise<string> {
+async function call(what: "spec" | "design-review" | "plan-check" | "git", body: Record<string, unknown>): Promise<string> {
   if (!base || !token) return "Decision tools work only in a live dashboard session. Tell the captain in chat instead.";
   try {
     const res = await fetch(`${base}/api/decisions/${what}`, {
@@ -58,6 +59,22 @@ export default function (pi: ExtensionAPI) {
       parameters: Type.Object({ path: Type.String({ description: "The plan's vault path" }) }),
       async execute(_id, p) {
         return text(await call("plan-check", { path: p.path }));
+      },
+    });
+    pi.registerTool({
+      name: "git_read",
+      label: "Read a ship's git",
+      description:
+        "Architect: read-only git in a ship's repo (ship is required; fleet is this repo). op: status (short, with the branch), log (n commits, default 10, max 50), diff (working tree, or against ref; paths narrows it), show (a commit, default HEAD; paths narrows it), branch (the current branch name). ref is a branch, tag, sha, or range like main..HEAD; paths are relative to the repo. Long output is cut.",
+      parameters: Type.Object({
+        ship: Type.String({ description: "The ship whose repo to read, e.g. kinwork; fleet is the agents repo" }),
+        op: StringEnum(["status", "log", "diff", "show", "branch"] as const),
+        n: Type.Optional(Type.Number({ description: "log: how many commits" })),
+        ref: Type.Optional(Type.String({ description: "diff or show: the ref or range" })),
+        paths: Type.Optional(Type.Array(Type.String(), { description: "diff or show: only these paths, relative to the repo" })),
+      }),
+      async execute(_id, p) {
+        return text(await call("git", { ship: p.ship, op: p.op, n: p.n, ref: p.ref, paths: p.paths }));
       },
     });
   }

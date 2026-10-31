@@ -141,7 +141,7 @@ export function fixVault(root: string): string[] {
   return changed;
 }
 
-/** The doctor's report as the vault_doctor tool shows it; `fix` does only what bin/vault-doctor --fix does. */
+/** The doctor's report as the vault_doctor tool and bin/vault-doctor show it; `fix` does only what bin/vault-doctor --fix does. */
 export function doctorReport(fix = false, vault = aliceVault()): { ok: boolean; message: string; [k: string]: unknown } {
   try {
     const fixed = fix ? fixVault(vault) : [];
@@ -149,6 +149,8 @@ export function doctorReport(fix = false, vault = aliceVault()): { ok: boolean; 
     return {
       ok: true,
       message: `${r.problems.length} problem(s) in ${r.notes} notes (${r.links} links checked)${fix ? `; fixed ${fixed.length} note(s)` : ""}`,
+      notes: r.notes,
+      links: r.links,
       ...(fixed.length ? { fixed } : {}),
       problems: r.problems.map((p) => ({ check: p.check, note: p.note, detail: p.detail, fixable: Boolean(p.fixable) })),
     };

@@ -39,6 +39,12 @@ export const ORDER_TOOLS: Record<string, { params: string[]; required: string[];
   agent_chat_read: { params: ["agent", "n"], required: ["agent"], read: true },
   recall: { params: ["query", "limit"], required: ["query"], read: true },
   vault_tasks: { params: ["filter", "id"], required: [], read: true },
+  // M1/M2 reads (extensions/fleet.ts). vault_doctor takes no fix here: a repair is a write.
+  fleet_query: { params: ["query", "days", "since", "until", "by", "limit", "full"], required: ["query"], read: true },
+  vault_note: { params: ["path", "section", "full"], required: ["path"], read: true },
+  vault_search: { params: ["query", "type", "status", "ship", "path", "limit", "full"], required: [], read: true },
+  vault_doctor: { params: ["full"], required: [], read: true },
+  fact_get: { params: ["subject", "key", "history", "observations", "limit", "full"], required: [], read: true },
   fleet_chat: { params: ["to", "text"], required: ["to", "text"], read: false },
 };
 
