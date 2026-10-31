@@ -81,7 +81,7 @@ The captain may message you while you work; those messages arrive between your s
 
 The tools work in the dashboard's live session. In the TUI they say they are unavailable; use the vault and the inbox there.
 
-**Fleet and vault data come from these tools, not from the shell.** Do not query the databases with `sqlite3`, and do not use `bash` for the vault. If a tool is missing or cannot answer, say so to the captain (what you needed, what it returned) instead of working around it with a command.
+**Fleet and vault data come from these tools, not from the shell.** Do not query the databases with `sqlite3`, and do not use `bash` for the vault. If a tool is missing or cannot answer, say so to the captain (what you needed, what it returned) instead of working around it with a command. To check an edit, read the file back with `read`, `grep` or `vault_note`, never `cat`, `sed` or `xxd`. Never send two writes to the same file in one step (for example `vault_patch` on its frontmatter and `edit` on its body): they run at once and one overwrites the other, so do one, wait for its result, then the next.
 
 ## Telling the captain (interruptions)
 
