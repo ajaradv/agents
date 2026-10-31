@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# hub - run a command from this repo on the hub, from the laptop: the hub's
+# databases (journal.db, metrics.db) are the live ones; the laptop's copies are stale.
+#
+# Usage:
+#   bin/hub fleet-axi extract --unlabelled    a bin/ script by name
+#   bin/hub fleet-axi intents label 3 alice
+#   bin/hub just test                         any other command, run in the hub's checkout
+#
+# A non-interactive ssh does not load the hub's login PATH, so bun and pi would
+# not be found; this sets it, cds into ~/Workspace/agents, and quotes each
+# argument. On the hub itself it runs the command in place.
+#
+# FLEET_HUB names the ssh host (default fleet-hub-k1s7.exe.xyz).
+set -euo pipefail
+
+HUB="${FLEET_HUB:-fleet-hub-k1s7.exe.xyz}"
+[ $# -gt 0 ] || { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+# A bare name that is one of our scripts means that script.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -x "$ROOT/bin/$1" ]; then set -- "bin/$1" "${@:2}"; fi
+
+if [ "$(uname)" = Linux ]; then
+  cd "$ROOT"
+  exec "$@"
+fi
+# -t when there is a terminal, so long output pages and Ctrl-C reaches the command.
+tty=()
+[ -t 0 ] && [ -t 1 ] && tty=(-t)
+exec ssh "${tty[@]}" -q "$HUB" "export PATH=\$HOME/.local/bin:\$HOME/.local/node/bin:\$PATH; cd ~/Workspace/agents && $(printf '%q ' "$@")"
