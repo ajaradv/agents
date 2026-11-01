@@ -85,3 +85,7 @@ Never in any procedure: print or copy the heartbeat URL, `.env` files, the servi
 | 2026-11-01 | Backup drill (harbormaster acceptance) | ok: 7 databases, 15 s |
 | 2026-11-01 | Services drift (harbormaster acceptance) | ok: no output |
 | 2026-11-01 | Deploy check, Units (harbormaster, first run by name) | ok: hub at origin/main (b913c78), six units active; dashboard.log 2.9 MB, no rotation (fixed in the next deploy) |
+| 2026-11-01 | Deploy (b913c78 -> 8e17bfa, #106; services reinstalled) | ok: node pid 3258426, dashboard up, pi 1.4.0 on PATH, deploys.log line 18:22:19Z |
+| 2026-11-01 | Units (after deploy) | ok: six active |
+| 2026-11-01 | Logrotate dry run (`sudo logrotate -d /etc/logrotate.d/fleet`) | ok: config present, rc 0, no errors, no rotation due |
+| 2026-11-01 | Deploy check (after deploy) | ok: hub at origin/main (8e17bfa), "would do nothing" |
