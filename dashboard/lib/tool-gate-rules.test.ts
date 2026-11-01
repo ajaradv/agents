@@ -157,6 +157,11 @@ describe("tool gate: Alice's file writes", () => {
     expect(write(join(vault, "career/cv.md"))).toBe("ask");
     expect(write(join(vault, "profile/me.md"), alice, "edit")).toBe("ask");
   });
+  test("the career/profile ask is a captain hold; other asks are not", () => {
+    expect(localVerdict("write", { path: join(vault, "career/cv.md") }, alice).captain).toBe(true);
+    expect(localVerdict("edit", { path: join(vault, "profile/me.md") }, alice).captain).toBe(true);
+    expect(localVerdict("bash", { command: "brew install jq" }, alice).captain).toBeUndefined();
+  });
   test("reads and other agents are unchanged", () => {
     expect(localVerdict("read", { path: "/tmp/x.md" }, alice).decision).toBe("allow");
     expect(write("/tmp/x.md", { ...alice, agent: "architect", aliceFolders: undefined })).toBe("allow");
@@ -185,6 +190,11 @@ describe("tool gate: the Architect's vault writes", () => {
     expect(write(join(vault, "workspace/pochteca.md"))).toBe("ask");
     expect(write(join(vault, "ships/fleet/notes.md"))).toBe("ask");
     expect(localVerdict("write", { path: join(vault, "workspace/pochteca.md") }, architect).reason).toContain("plans, specs, reviews and roadmaps");
+  });
+  test("the ask on other vault notes is a captain hold; allowed and stopped writes are not", () => {
+    expect(localVerdict("write", { path: join(vault, "workspace/pochteca.md") }, architect).captain).toBe(true);
+    expect(localVerdict("write", { path: join(vault, "fleet/plans/feature/p.md") }, architect).captain).toBeUndefined();
+    expect(localVerdict("write", { path: join(vault, "career/x.md") }, architect).captain).toBeUndefined();
   });
   test(".git, .obsidian, career and profile stop", () => {
     expect(write(join(vault, "career/x.md"))).toBe("stop");

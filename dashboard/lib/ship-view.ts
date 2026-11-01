@@ -701,7 +701,10 @@ function reviewHtml(i: QueueItem, api: string): string {
     if (!i.record) return `<p class="muted">Waiting for the architect's draft${i.note ? `; your changes: ${escapeHtml(i.note.slice(0, 200))}` : ""}.</p>`;
     const spec = parseSpec(i.record);
     const path = i.record.replace(/^.*\/fleet\/specs\//, "fleet/specs/");
-    return `<details class="spec-preview"><summary>Spec <code>${escapeHtml(path)}</code> · ${spec?.criteria.length ?? 0} acceptance criteria${spec?.prototype ? ` · from <code>${escapeHtml(spec.prototype)}</code>` : ""}</summary><ol>${(spec?.criteria ?? []).map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ol></details>${answer("Approve", "Ask for changes", "What to change")}`;
+    const rv = i.review;
+    const sev = rv ? Object.entries(rv.counts).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k.toLowerCase()}${n === 1 ? "" : "s"}`).join(", ") : "";
+    const review = !rv ? "" : rv.unavailable ? `<p class="muted">not reviewed: ${escapeHtml(rv.unavailable)}</p>` : !rv.rel ? `<p class="muted">Review skipped (small change).</p>` : `<p class="muted">Reviewed (${escapeHtml(rv.depth)}): ${escapeHtml(sev || "no findings")} · <a href="/vault/${encodeURI(rv.rel)}">the review</a></p>${rv.escalations.length ? `<ul>${rv.escalations.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>` : ""}`;
+    return `<details class="spec-preview"><summary>Spec <code>${escapeHtml(path)}</code> · ${spec?.criteria.length ?? 0} acceptance criteria${spec?.prototype ? ` · from <code>${escapeHtml(spec.prototype)}</code>` : ""}</summary><ol>${(spec?.criteria ?? []).map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ol></details>${review}${answer("Approve", "Ask for changes", "What to change")}`;
   }
   if (i.kind === "design-review") return answer("Accept as built", "Send to the lead", "Anything to add (optional)");
   return "";

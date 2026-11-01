@@ -608,7 +608,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     const b = await body(req);
     const input = b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
     const writable = Array.isArray(b.writable) ? b.writable.map(String).slice(0, 8) : [];
-    const r = await judgeCall({ agent: from, tool: String(b.tool ?? ""), input, cwd: String(b.cwd ?? ""), why: String(b.why ?? "").slice(0, 200), writable }, undefined, { observe: b.mode === "observe" });
+    const r = await judgeCall({ agent: from, tool: String(b.tool ?? ""), input, cwd: String(b.cwd ?? ""), why: String(b.why ?? "").slice(0, 200), writable }, undefined, { observe: b.mode === "observe" && b.captain !== true, captain: b.captain === true });
     if (r.decision === "hold") needsChanged();
     return Response.json(r);
   }

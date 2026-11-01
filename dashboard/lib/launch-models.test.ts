@@ -103,6 +103,16 @@ out["old"] = m.pick_model(${ARCH}, "architect")`);
     expect(r.old).toBe("cursor/grok-4.7@256k");
   });
 
+  test("two models failed today: the third is picked", () => {
+    models("on");
+    const r = run(root, `reset()
+d = root / "inbox" / "architect"; d.mkdir(parents=True)
+day = datetime.now().date().isoformat()
+(d / "model-fallback.json").write_text(json.dumps({"models": ["cursor/grok-4.7@256k", "openrouter/openai/gpt-6.1-sol"], "day": day, "reason": "auth"}))
+out["third"] = m.pick_model(${ARCH}, "architect")`);
+    expect(r.third).toBe("openrouter/deepseek/deepseek-v4-pro");
+  });
+
   test("legacy model and fallback_model still work", () => {
     models("on");
     const r = run(root, `reset()

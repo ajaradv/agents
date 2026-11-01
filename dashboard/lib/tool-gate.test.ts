@@ -38,6 +38,25 @@ describe("tool gate: the node's layer", () => {
     expect((await judgeCall(call("rm -rf /opt/thing"), down)).decision).toBe("hold");
     expect((await decideGate(other.id!, true)).ok).toBe(false);
   });
+  test("a captain call holds without asking Jev, in observe mode too, and an Allow lets it through once", async () => {
+    let asked = 0;
+    const counting = async () => {
+      asked++;
+      return { choice: "safe" as const, confidence: 0.99 };
+    };
+    const note = { agent: "architect", tool: "write", input: { path: "/vault/workspace/x.md", content: "y" }, cwd: "/vault", why: "other vault notes need the captain" };
+    const held = await judgeCall(note, counting, { captain: true });
+    expect(held).toMatchObject({ decision: "hold", source: "rule" });
+    expect(asked).toBe(0);
+    expect(pendingGateHolds().map((h) => h.id)).toContain(held.id!);
+    // Observe mode does not let a captain call through.
+    expect((await judgeCall(note, counting, { captain: true, observe: true })).decision).toBe("hold");
+    expect(asked).toBe(0);
+    expect((await decideGate(held.id!, true)).ok).toBe(true);
+    expect(await judgeCall(note, counting, { captain: true })).toMatchObject({ decision: "allow", source: "allowance" });
+    expect((await judgeCall(note, counting, { captain: true })).decision).toBe("hold");
+    expect(asked).toBe(0);
+  });
   test("secrets are redacted from what is sent and shown", () => {
     expect(redact("OPENAI_API_KEY=sk-proj-1234567890abcdefgh run")).toBe("OPENAI_API_KEY=[REDACTED] run");
     expect(redact("token ghp_abcdefghijklmnopqrstuvwxyz12")).toBe("token [REDACTED]");

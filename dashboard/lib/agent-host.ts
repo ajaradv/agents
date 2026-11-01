@@ -71,24 +71,33 @@ const AUTH_ERROR = /\b401\b|unauthori[sz]ed|invalid (api )?key|authentication fa
  * so bin/launch starts the next session on fallback_model until midnight.
  */
 /**
- * Mark today's primary model as failed for this agent, so bin/launch starts it
- * on fallback_model until tomorrow. True only for the first failure today (the
- * caller continues the work once; a second failure means the backup failed too).
+ * Mark a model as failed for this agent today, so bin/launch starts it on the next
+ * model in its list until tomorrow. The marker keeps every model that failed today
+ * (`models`), so a backup that fails too does not bring the first back. True only
+ * the first time this model fails today (the caller continues the work once).
  */
 async function recordModelFailure(agentId: string, reason: string): Promise<boolean> {
   const model = chatTarget(agentId)?.model;
-  if (!model) return false;
+  return model ? markModelFailed(agentId, model, reason) : false;
+}
+
+export async function markModelFailed(agentId: string, model: string, reason: string): Promise<boolean> {
   const day = new Date().toLocaleDateString("sv"); // YYYY-MM-DD, local, like Python's date.today()
   const path = join(fleetInboxRoot(), agentId, "model-fallback.json");
+  let earlier: string[] = [];
   try {
-    const prev = JSON.parse(await readFile(path, "utf8")) as { day?: string; model?: string };
-    if (prev.day === day && prev.model === model) return false;
+    const prev = JSON.parse(await readFile(path, "utf8")) as { day?: string; model?: string; models?: string[] };
+    if (prev.day === day) {
+      // An old marker names one model.
+      earlier = Array.isArray(prev.models) ? prev.models.map(String) : prev.model ? [prev.model] : [];
+      if (earlier.includes(model)) return false;
+    }
   } catch {
     /* no marker yet */
   }
   try {
     await mkdir(join(fleetInboxRoot(), agentId), { recursive: true });
-    await writeFile(path, JSON.stringify({ day, model, reason: reason.slice(0, 300) }) + "\n", "utf8");
+    await writeFile(path, JSON.stringify({ day, models: [...earlier, model], reason: reason.slice(0, 300) }) + "\n", "utf8");
     return true;
   } catch {
     return false; /* the launcher just tries the primary again */

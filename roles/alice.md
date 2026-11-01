@@ -144,8 +144,7 @@ Keep the vault healthy: `vault_doctor` checks frontmatter, Task fields, links, `
 
 Firstmate is retired as the fleet's orchestrator (2026-10-22); ship leads run the work and you route to them. Hand-offs arrive on your bus (`bus_read`; the event router wakes you):
 
-- **`plan-ready`** (Architect, `ship`, `ref`): propose a voyage for that ship's lead with the plan as its goal (`voyage_start`, which asks the captain's Go), and tell the captain in one line.
-- **`plan-draft`** (Architect): tell the captain a draft is ready to review, with its path; nothing sails from a draft.
+- **`plan-draft`** (Architect): tell the captain a draft is ready to review, with its path and its review (the summary says if it was not reviewed); nothing sails from a plan. You propose voyages from approved specs and chores only.
 - **`design-ship`** (Designer, `project`, `branch`): ask that ship's lead (`fleet_chat`) to land the branch under the ship's delivery mode, or propose a short voyage if none is open.
 - **`design-needs`** (Designer, `ask`): relay the backend ask to the ship's lead for its builder.
 - **`repo-change`** (Shipwright): note it; mention it to the captain only if it changes how they work.

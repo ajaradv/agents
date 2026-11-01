@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { postBus } from "./bus-post.ts";
 import { fleetInboxRoot } from "./paths.ts";
+import { reviewReady } from "./survey.ts";
 
 /**
  * The agents' buses over the node (S3b, vault s3-fleet-state-api): bus_post
@@ -21,8 +22,19 @@ export async function busPost(from: string, b: Record<string, unknown>, known: (
   if (to === from) return { ok: false, message: "That is your own bus; post to the agent the hand-off is for." };
   const kind = String(b.kind ?? "");
   if (!KIND.test(kind)) return { ok: false, message: "A kind: a short lowercase slug, e.g. plan-ready, design-request, handoff." };
-  const summary = String(b.summary ?? "").replace(/\s+/g, " ").trim();
+  let summary = String(b.summary ?? "").replace(/\s+/g, " ").trim();
   if (summary.length < 5) return { ok: false, message: "A one-line summary of the hand-off." };
+  if (from === "architect") {
+    if (kind === "plan-ready") return { ok: false, message: "Plans don't sail; approved specs do. Write a spec, or put the slice on the roadmap." };
+    if (kind === "plan-draft") {
+      const ref = typeof b.ref === "string" ? b.ref : "";
+      if (!ref) return { ok: false, message: "A plan-draft needs ref: the plan's vault path." };
+      const ready = reviewReady(ref);
+      if (!ready.ok) return ready;
+      if (ready.unavailable) summary = `${summary} (not reviewed: ${ready.unavailable})`;
+      else if (ready.review) summary = `${summary} (review: /vault/${ready.review.rel})`;
+    }
+  }
   const extra: Record<string, string> = {};
   for (const k of EXTRA) if (typeof b[k] === "string" && b[k]) extra[k] = (b[k] as string).slice(0, 300);
   await postBus(to, { from, kind, summary: summary.slice(0, 600), ...extra });
