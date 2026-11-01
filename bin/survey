@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# survey - fresh reviewers on other models check a vault plan or spec (or flesh out a raw idea),
+# from the laptop. Pushes the vault, has the hub pull it, then runs the review on the hub (the hub
+# holds the journal, the node and the reviewers' keys) and waits for the review file.
+#
+# Usage:
+#   bin/survey <vault path> --writer <model> [--mode review|brainstorm] [--depth skip|light|full] [--lenses +comprehension] [--ship S]
+#
+# Example: bin/survey fleet/plans/feature/x.md --writer anthropic/claude-opus-5.5
+#
+# The review lands in the vault at fleet/reviews/<slug>/review-<n>.md on the hub; run
+# bin/vault-sync here to pull it. Resolve it under "## Resolution", as the Architect does.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+[ $# -gt 0 ] || { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+"$ROOT/bin/vault-sync"
+"$ROOT/bin/hub" vault-sync
+"$ROOT/bin/hub" fleet-axi review "$@"

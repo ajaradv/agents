@@ -22,7 +22,7 @@ import { nodeStateDir } from "./paths.ts";
  * pattern; Pi Durable can replace or extend it once it is released.
  */
 
-export type WorkflowKind = "order" | "go" | "maneuver" | "delegation" | "gate";
+export type WorkflowKind = "order" | "go" | "maneuver" | "delegation" | "gate" | "survey" | "survey-lens";
 export type WorkflowStatus = "waiting" | "running" | "done" | "failed" | "cancelled";
 export type Workflow<T = Record<string, unknown>> = { id: string; kind: WorkflowKind; status: WorkflowStatus; trace: string; data: T; created: string; updated: string };
 export type Step = { workflow: string; key: string; status: "started" | "done" | "failed"; result: unknown; started: string; ended: string | null };

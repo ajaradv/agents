@@ -221,6 +221,13 @@ export async function decideGo(id: string, go: boolean): Promise<{ ok: boolean; 
   return (await r.json().catch(() => ({ ok: false, message: "bad reply from the fleet node" }))) as { ok: boolean; message: string };
 }
 
+/** The captain's request for a survey (bin/survey, via fleet-axi review): the node token proves it is the captain, so the depth is theirs. */
+export async function requestSurvey(body: { mode: string; path: string; writer: string; ship?: string; depth?: string; lenses?: string }): Promise<{ ok: boolean; message: string; id?: string; depth?: string }> {
+  const r = await call("/v1/survey", body);
+  if (!r) return { ok: false, message: OFFLINE };
+  return (await r.json().catch(() => ({ ok: false, message: "bad reply from the fleet node" }))) as { ok: boolean; message: string; id?: string; depth?: string };
+}
+
 /** The vault reader's search, run by the node (it owns the index). Null when the node cannot be reached; this never starts one. */
 export async function vaultSearch(query: string): Promise<VaultSearchReply | null> {
   const r = await post("/v1/vault-search", { query, limit: 25 }, 8000);

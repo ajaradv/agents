@@ -1,0 +1,23 @@
+The surveyor prompts in this folder are adapted from the Elephant-Goldfish Model.
+
+  Upstream: https://github.com/google/elephant-goldfish-model
+  Commit:   403d8881d62022490637d740657b33f01e321ea8
+  License:  Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
+
+Copied from upstream and modified for the fleet:
+
+  zoom-out.md                                  from agents/zoom_out.md
+  design-critic.md                             from agents/design_critic.md
+  readiness.md                                 from agents/implementation_readiness.md
+  codebase.md                                  from agents/codebase_details.md
+  comprehension.md                             from agents/comprehension.md
+  standards/zoom-out-standard.md               from resources/document_standards/zoom-out-standard.md
+  standards/feature-spec-standard.md           from resources/document_standards/feature-spec-standard.md
+  standards/implementation-readiness-standard.md   from resources/document_standards/implementation-readiness-standard.md
+  brainstorm.md                                new; its six lenses are from the lens table in skills/egm-brainstorm/SKILL.md
+
+Changes: the frontmatter name is now surveyor-<lens>; the BRAINSTORM mode sections and the
+Mode switch are removed (brainstorm.md replaces them); references to harness paths and to the
+orchestrator are removed; the output section points at output-format.md, which is new and
+not from upstream. The Apache-2.0 license line and an attribution comment stay in every copy.
+Unmodified text remains under the upstream license.
