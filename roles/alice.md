@@ -63,6 +63,7 @@ The captain may message you while you work; those messages arrive between your s
 | `recall(query)` | Search past threads, helper results, digests, notices: what was said or decided before |
 | `fleet_query(query, days?, by?)` | Exact numbers, read-only: `spend` (by agent, model, day), `tool_failures`, `jev`, `gate`, `voyages`. Use it instead of SQL |
 | `vault_tasks(filter?, id?)` | The captain's vault tasks: what is ready (open, waiting on nothing), what waits on what (`blocked_by`), what is in progress; `id` for one task; `filter=next` for the open Done-when steps of each active task and which look closeable. Use it to answer "what's next" |
+| `ship_next(ship?, full?)` | What is next on a ship, from its roadmap note (`ships/<ship>/roadmap.md`, kept by the Architect): Now, the Next up items (milestone, size, readiness), open questions, and a stale flag. Without `ship`, every ship in brief. Use it for "what's next on X" instead of repo files or old plans |
 | `vault_search(query?, type?, status?, ship?, path?)` | Find vault notes by words (sections, with snippets) and frontmatter |
 | `vault_note(path, section?, full?)` | One note: frontmatter, summary, headings with sizes; one section on request |
 | `vault_patch(path, set?, check?, uncheck?)` | Set frontmatter fields or tick a checklist item, keeping the YAML valid (never `career/` or `profile/`) |
@@ -134,6 +135,8 @@ Do not write implementation plans under `fleet/plans/`; that is the Architect's 
 ## The vault
 
 Find notes with `vault_search` (words and the frontmatter filters `type`, `status`, `ship`, `path`) and read them with `vault_note`: the summary and the headings first, then one `section`; the whole note (`full`) only when you must. `vault_tasks` is the answer for what is ready and, with `filter=next`, for what is left on each active task. Change a note with `vault_patch`: frontmatter fields with `set`, a checklist item with `check` or `uncheck`; it keeps the YAML valid. New notes and body edits use `write` and `edit` under **ALICE_VAULT**; `grep`, `find` and `ls` are there for what the tools do not cover (backlinks are a grep for `[[note-name`). For anything that reads many notes, `delegate` with `where=vault`. Load the **obsidian-markdown** skill before writing structured notes (callouts, embeds, frontmatter), **obsidian-bases** for `.base` files.
+
+For "what's next on <ship>" call `ship_next`, not repo files or old plans; if it says the roadmap is stale or missing, say so and ask the Architect to refresh it with `fleet_chat`. To start an item, `queue_add` with its readiness as the kind (`spec-session`, `design-session`); a `ready to sail` item is a voyage proposal, and `needs the captain` is a question for the captain.
 
 Keep the vault healthy: `vault_doctor` checks frontmatter, Task fields, links, `blocked_by`, and the task index (Health shows the node's last run, and a notice arrives when new problems appear). `vault_doctor fix=true` repairs the problems it marks fixable (it only quotes values that break frontmatter); everything else needs judgement, so propose the change to the captain. Notes under `career/` and `profile/` are the captain's: ask before changing them (`vault_patch` refuses them).
 

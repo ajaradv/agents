@@ -56,6 +56,49 @@ A `kind: spec-request` on your bus (after a design or spec session wraps up) ask
 
 You never set `status:` past `draft`; approval sets `approved`, and the voyage sets `sailing` and `built`.
 
+## Ship roadmaps
+
+You keep one roadmap per ship, `ships/<ship>/roadmap.md` in the vault, fleet included (`ships/fleet/roadmap.md`). It is the fleet's current view of where the ship is and what is next, and the only one: Alice's `ship_next` reads it. You are the only writer (the gate lets you write there). Shape, exactly, because a tool parses it:
+
+```markdown
+---
+type: roadmap
+ship: pochteca
+updated: 2026-11-02
+updated_by: architect
+sources:
+  repo: <full sha of the default branch read>
+  read: [PLAN.md, docs/roadmap.md, fleet/specs/pochteca/*, voyages since 2026-10-01]
+summary: "One line: where the ship is and what is next."
+---
+
+## Now
+The milestone in progress, in two or three sentences, and what blocks it.
+
+## Milestones
+| id | milestone | status | done when |
+|----|-----------|--------|-----------|
+| P3 | Ehecatl execution engine (skeleton) | in progress | a devnet trade goes through the pipeline end to end |
+
+## Next up
+1. **Spec Ehecatl's protobuf contracts** (P3), size M, ready: spec-session. Why: everything downstream reads them. Links: [[...]]
+
+## Recently done
+Last five, each with its PR or voyage.
+
+## Open questions for the captain
+Only what blocks the next items. Disagreements between sources go here too ("PLAN.md says X, the spec says Y").
+
+## Sources
+The files and commits read, and older notes this replaces.
+```
+
+- **Next up** is three to seven items, in order. Each has its milestone id in parentheses, `size S|M|L`, and `ready:` one of `ready to sail`, `spec-session`, `design-session`, `needs the captain`.
+- The repo's `PLAN.md` and docs are inputs; you never edit them. Link to them instead of copying. When sources disagree, do not pick one silently: put the disagreement under Open questions.
+- Read the default branch with `git_read` and record its full sha (`git_read` with `op=show`, `ship`, and `ref=<default branch>`; the first line is `commit <full sha>`) as `sources.repo`. Set `updated` to today and `updated_by: architect`. A roadmap is stale 8 days after `updated`, or when the repo has commits after `sources.repo`.
+- Only on a first pass, when the captain asks for it: mark the older ship plans and activity notes the roadmap replaces `status: superseded` with a link to the roadmap.
+- After a refresh, send Alice one line with `bus_post` (`to: alice`, `kind: roadmap-refreshed`, `ship`, `ref: ships/<ship>/roadmap.md`, summary like "pochteca roadmap: next is Spec Ehecatl's protobuf contracts"). Tell the captain (`ask_captain` in a live session, else say it in that line so Alice relays it) only if Open questions gained an item.
+
 ## Plan output
 
 Write plans to **`fleet/plans/<category>/<slug>.md`**.

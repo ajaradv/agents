@@ -11,6 +11,7 @@
 //   bin/fleet-axi ship <id> [--log N] [--full]  a ship's voyage tasks and its latest log lines
 //   bin/fleet-axi vault [filter] [--id <task>] [--full]   vault tasks (ready, open, in-progress, blocked, done, all)
 //   bin/fleet-axi next [--id <task>]   what is left on the active vault tasks (their Done-when checklists)
+//   bin/fleet-axi next --ship <ship|all> [--full]   a ship's roadmap: Now, Next up, open questions (what the ship_next tool answers)
 //   bin/fleet-axi jev [--days N]       Jev calls and spend per use, and the compaction advisor
 //   bin/fleet-axi gate [--days N]      tool gate decisions
 //   bin/fleet-axi query <name> [--days N] [--since D] [--until D] [--by X] [--limit N] [--full]   spend, tool_failures, jev, gate, voyages (what the fleet_query tool answers)
@@ -36,6 +37,7 @@ import { computeFindings, gatherInput, giveFeedback, judge, proactiveMode, propo
 import { ROOT } from "../dashboard/lib/paths.ts";
 import { toolText, VIEWS } from "../dashboard/lib/tool-out.ts";
 import { linkName, VAULT_FILTERS, vaultNextSteps, vaultTasksReport, type VaultFilter } from "../dashboard/lib/vault-tasks.ts";
+import { shipNext } from "../dashboard/lib/roadmap.ts";
 import { searchVault } from "../dashboard/lib/vault-index.ts";
 import { vaultNote } from "../dashboard/lib/vault-note.ts";
 
@@ -44,7 +46,7 @@ const FLAGS: Record<string, string[]> = {
   status: ["--detail", "--full"],
   ship: ["--log", "--full"],
   vault: ["--id", "--full"],
-  next: ["--id"],
+  next: ["--id", "--ship", "--full"],
   jev: ["--days"],
   gate: ["--days", "--limit", "--full"],
   query: ["--days", "--since", "--until", "--by", "--limit", "--full"],
@@ -69,7 +71,7 @@ commands[15]{command,what}:
   status,"ships, voyages, crews, spend today (--detail for crewmates and officers)"
   ship,"a ship's voyage tasks and log (bin/fleet-axi ship <id> [--log N])"
   vault,"vault tasks by filter: ready (default), open, in-progress, blocked, done, all; --id for one"
-  next,"what is left on the active vault tasks: open Done-when steps, progress, closeable ones (--id for one)"
+  next,"what is left on the active vault tasks: open Done-when steps, progress, closeable ones (--id for one); --ship <ship|all> for a ship's roadmap"
   jev,"Jev calls and spend per use, and the compaction advisor (--days N)"
   gate,tool gate decisions (--days N)
   query,"exact numbers from the fleet's records: spend (--by agent|model|day), tool_failures, jev, gate, voyages (--days N, or --since/--until YYYY-MM-DD)"
@@ -90,7 +92,7 @@ examples[3]:
   status: "command: fleet-axi status\nusage: bin/fleet-axi status [--detail] [--full]\nflags[3]{flag,description}:\n  --detail,add crewmates' activity and officers\n  --full,long text uncut and every row\n  --help,show this help\nexamples[2]:\n  bin/fleet-axi status\n  bin/fleet-axi status --detail",
   ship: "command: fleet-axi ship\nusage: bin/fleet-axi ship <id> [--log N] [--full]\nflags[3]{flag,default,description}:\n  --log,15,how many log lines\n  --full,,long text uncut and every row\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi ship pochteca\n  bin/fleet-axi ship kinwork --log 40",
   vault: `command: fleet-axi vault\nusage: bin/fleet-axi vault [${VAULT_FILTERS.join("|")}] [--id <task>] [--full]\nflags[3]{flag,description}:\n  --id,one task's detail (what it waits on and blocks)\n  --full,long text uncut and every row\n  --help,show this help\nexamples[3]:\n  bin/fleet-axi vault\n  bin/fleet-axi vault in-progress\n  bin/fleet-axi vault --id fleet-observe-reviews`,
-  next: "command: fleet-axi next\nusage: bin/fleet-axi next [--id <task>]\nsummary: Open Done-when steps of each open or in-progress vault task, so a task note need not be read whole\nflags[2]{flag,description}:\n  --id,only that task\n  --help,show this help\nexamples[2]:\n  bin/fleet-axi next\n  bin/fleet-axi next --id fleet-observe-reviews",
+  next: "command: fleet-axi next\nusage: bin/fleet-axi next [--id <task>] | next --ship <ship|all> [--full]\nsummary: Open Done-when steps of each open or in-progress vault task, so a task note need not be read whole; with --ship, a ship's roadmap (Now, Next up, open questions, stale flag)\nflags[4]{flag,description}:\n  --id,only that task\n  --ship,a ship id, or all: its roadmap from ships/<ship>/roadmap.md\n  --full,with --ship: add milestones and recently done\n  --help,show this help\nexamples[3]:\n  bin/fleet-axi next\n  bin/fleet-axi next --id fleet-observe-reviews\n  bin/fleet-axi next --ship pochteca",
   jev: "command: fleet-axi jev\nusage: bin/fleet-axi jev [--days N]\nflags[2]{flag,default,description}:\n  --days,7,how far back\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi jev\n  bin/fleet-axi jev --days 30",
   gate: "command: fleet-axi gate\nusage: bin/fleet-axi gate [--days N]\nflags[2]{flag,default,description}:\n  --days,1,how far back\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi gate\n  bin/fleet-axi gate --days 7",
   query: `command: fleet-axi query\nusage: bin/fleet-axi query <${FLEET_QUERIES.join("|")}> [--days N] [--since D] [--until D] [--by ${SPEND_BY.join("|")}] [--limit N] [--full]\nsummary: Named read-only queries over the fleet's records; no SQL\nflags[7]{flag,default,description}:\n  --days,7,how far back from now (or from --until)\n  --since,,first day YYYY-MM-DD (UTC, inclusive) or ISO time; ignores --days\n  --until,,last day YYYY-MM-DD (UTC, inclusive) or ISO time\n  --by,agent,spend only: group by agent / model / day\n  --limit,,rows per cut list (1..200); default 15 gate notable, 8 latest failures, 20 agent+tool pairs\n  --full,,long text uncut and cut lists up to 200 rows\n  --help,,show this help\nexamples[4]:\n  bin/fleet-axi query spend --days 7 --by agent\n  bin/fleet-axi query spend --since 2026-10-18 --until 2026-10-25 --by agent\n  bin/fleet-axi query tool_failures --days 7\n  bin/fleet-axi query voyages`,
@@ -173,6 +175,13 @@ async function main(): Promise<void> {
     const filter = rest.find((a) => !a.startsWith("--") && a !== id) ?? "ready";
     if (!(VAULT_FILTERS as string[]).includes(filter)) fail(`unknown filter ${filter}`, `filters: ${VAULT_FILTERS.join(", ")}`);
     return void console.log(toolText(vaultTasksReport(filter as VaultFilter, id), VIEWS.vault_tasks, { full }));
+  }
+  if (key === "next" && flag("--ship") !== undefined) {
+    const ship = flag("--ship") ?? "";
+    if (!ship || ship.startsWith("--")) fail("--ship needs a ship id or all", "bin/fleet-axi next --ship pochteca (bin/fleet-axi status lists the ships)");
+    const r = await shipNext(ship, full);
+    if (!r.ok) fail(r.message, "bin/fleet-axi status lists the ships");
+    return void console.log(toolText(r, VIEWS.ship_next!, { full }));
   }
   if (key === "next") {
     const id = linkName(flag("--id") ?? "");

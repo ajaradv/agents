@@ -161,6 +161,8 @@ describe("tool gate: Alice's file writes", () => {
     expect(localVerdict("read", { path: "/tmp/x.md" }, alice).decision).toBe("allow");
     expect(write("/tmp/x.md", { ...alice, agent: "architect", aliceFolders: undefined })).toBe("allow");
     expect(write(join(vault, "career/cv.md"), { ...alice, agent: "architect", aliceFolders: undefined })).toBe("allow");
+    // Ship roadmaps (docs/roadmaps.md): the Architect writes ships/<ship>/roadmap.md; the vault is open to it, so no extra rule.
+    expect(write(join(vault, "ships/pochteca/roadmap.md"), { ...alice, agent: "architect", aliceFolders: undefined })).toBe("allow");
   });
 });
 

@@ -166,6 +166,16 @@ export const VIEWS: Record<string, View> = {
     empty: { tasks: "0 active tasks" },
     help: () => ["vault_tasks id=<task> for one task's detail; vault_note path=tasks/<task>.md for its note"],
   },
+  ship_next: {
+    rows: {
+      ships: ["ship", "updated", "stale", "next", "questions"],
+      next_up: ["n", "title", "milestone", "size", "ready", "why"],
+      milestones: ["id", "milestone", "status", "doneWhen"],
+    },
+    cut: { now: 450, title: 120, open_questions: 400, recently_done: 200, stale: 200, next: 160 },
+    empty: { next_up: "0 items", open_questions: "0 open questions", ships: "0 ships with a roadmap" },
+    help: (r) => (r.ships ? ["ship_next ship=<ship> for Now, the Next up items and open questions"] : r.next_up ? ["spec-session and design-session items: queue_add with that kind; ready to sail: voyage_start; full=true adds milestones and recently done"] : []),
+  },
   fleet_query: {
     rows: {
       by_agent: ["agent", "turns", "cost", "failed", "tokens"],
