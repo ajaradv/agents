@@ -11,7 +11,8 @@
 # not be found; this sets it, cds into ~/Workspace/agents, and quotes each
 # argument. On the hub itself it runs the command in place.
 #
-# FLEET_HUB names the ssh host (default fleet-hub-k1s7.exe.xyz).
+# FLEET_HUB names the ssh host (default fleet-hub-k1s7.exe.xyz). FLEET_HUB_SSH_OPTS adds
+# ssh options, word-split (the engineer brief sets a short ConnectTimeout and BatchMode).
 set -euo pipefail
 
 HUB="${FLEET_HUB:-fleet-hub-k1s7.exe.xyz}"
@@ -28,4 +29,5 @@ fi
 # -t when there is a terminal, so long output pages and Ctrl-C reaches the command.
 tty=()
 [ -t 0 ] && [ -t 1 ] && tty=(-t)
-exec ssh "${tty[@]}" -q "$HUB" "export PATH=\$HOME/.local/bin:\$HOME/.local/node/bin:\$PATH; cd ~/Workspace/agents && $(printf '%q ' "$@")"
+# shellcheck disable=SC2086
+exec ssh "${tty[@]}" -q ${FLEET_HUB_SSH_OPTS:-} "$HUB" "export PATH=\$HOME/.local/bin:\$HOME/.local/node/bin:\$PATH; cd ~/Workspace/agents && $(printf '%q ' "$@")"

@@ -43,28 +43,44 @@ export function buildBrief(today: string, vault = aliceVault()): string {
     ["Closeable (all Done-when items checked)", closeable.length ? [`- ${closeable.join(", ")}`] : []],
     ["Active tasks, next steps", activeLines],
   ];
-  // Add lines while they fit, leaving room for the line that says how many were left out.
+  return `${fitSections(head, sections, BRIEF_CAP, ": vault_tasks").text}\n`;
+}
+
+/**
+ * `head`, then each `## title` section with as many whole lines as fit under `cap` bytes, leaving
+ * room for the line that says how many were left out ("- (+N more<moreHint>)"). Empty sections are
+ * skipped. Stops at the first section whose title no longer fits; `cut` names it and the rest.
+ */
+export function fitSections(head: string, sections: [string, string[]][], cap: number, moreHint = ""): { text: string; cut: string[] } {
   const out = [head];
   let size = Buffer.byteLength(head);
+  const cut: string[] = [];
   for (const [title, lines] of sections) {
     if (!lines.length) continue;
+    if (cut.length) {
+      cut.push(title);
+      continue;
+    }
     const t = `\n## ${title}`;
-    if (size + Buffer.byteLength(t) + 60 > BRIEF_CAP) break;
+    if (size + Buffer.byteLength(t) + 60 > cap) {
+      cut.push(title);
+      continue;
+    }
     out.push(t);
     size += Buffer.byteLength(t) + 1;
     let shown = 0;
     for (const l of lines) {
-      if (size + Buffer.byteLength(l) + 60 > BRIEF_CAP) break;
+      if (size + Buffer.byteLength(l) + 60 > cap) break;
       out.push(l);
       size += Buffer.byteLength(l) + 1;
       shown++;
     }
     if (shown < lines.length) {
-      out.push(`- (+${lines.length - shown} more: vault_tasks)`);
+      out.push(`- (+${lines.length - shown} more${moreHint})`);
       size += 40;
     }
   }
-  return `${out.join("\n")}\n`;
+  return { text: out.join("\n"), cut };
 }
 
 export const briefPath = (agent = "alice") => join(fleetInboxRoot(), agent, "brief.md");

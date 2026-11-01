@@ -1,5 +1,7 @@
 # agents (the fleet)
 
+@roles/engineer.md
+
 - **Fleet orders**: when the next move is a short, exact sequence of fleet
   actions rather than code work, queue an order for Alice instead of
   describing it: `bin/order format` for the body and the tools, `bin/order check`
@@ -9,6 +11,6 @@
 - **Deploying to the hub**: after a merge to main, `bin/hub-deploy` (from the laptop) pulls on the
   hub, waits for idle agents, restarts fleet-node and fleet-dashboard, and checks both answer;
   `--check` for a dry run, `--new-session alice` when a role, tools, or the session brief changed;
-  `--rollback` to undo the last deploy (push a fix to main before the next deploy).
+  `--rollback` to undo the last deploy (push a fix to main before the next deploy). Procedures and hub facts: `docs/hub.md`.
 - **Commands against the live fleet**: the hub's databases are the live ones; run read and label
   commands there with `bin/hub <script> ...` (e.g. `bin/hub fleet-axi extract --unlabelled`).

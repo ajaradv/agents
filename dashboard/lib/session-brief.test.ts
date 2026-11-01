@@ -53,6 +53,22 @@ describe("session brief", () => {
     expect(out).toMatch(/\(\+\d+ more: vault_tasks\)/);
   });
 
+  test("the whole brief is byte-identical to the one the loop in buildBrief wrote before fitSections", () => {
+    expect(text).toBe(
+      "# Session brief 2026-10-29 (built by the node from the vault tasks; vault_tasks filter=next is live)\n\n## Due within 7 days or overdue\n- overdue: overdue since 2026-10-25\n- soon: due 2026-11-04\n\n## Closeable (all Done-when items checked)\n- sealed\n\n## Active tasks, next steps\n- working [in-progress, high] 1/4: second step / third step\n- ready [open, low] 0/1: ready step\n",
+    );
+  });
+
+  test("fitSections skips empty sections, adds the more line with its hint, and names the sections it cut", () => {
+    const lines = Array.from({ length: 10 }, (_, i) => `- line ${i} ${"x".repeat(40)}`);
+    const r = b.fitSections("# head", [["A", lines], ["Empty", []], ["B", ["- b"]]], 300, " in the tool");
+    expect(r.text).toMatch(/^# head\n\n## A\n- line 0/);
+    expect(r.text).toMatch(/\n- \(\+\d+ more in the tool\)$/);
+    expect(r.text).not.toContain("Empty");
+    expect(r.cut).toEqual(["B"]);
+    expect(b.fitSections("# head", [["A", ["- a"]]], 300).cut).toEqual([]);
+  });
+
   test("an empty vault still gives a header and nothing else", () => {
     expect(b.buildBrief("2026-10-29", mkdtempSync(join(tmpdir(), "empty-")))).toMatch(/^# Session brief 2026-10-29[^\n]*\n$/);
   });
