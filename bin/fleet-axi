@@ -23,6 +23,8 @@
 //   bin/fleet-axi intents label <id> <owner>   the captain's label: who should have owned that message
 //   bin/fleet-axi proactive            the proactive sweep's findings now, and which would be raised to Alice and why
 //   bin/fleet-axi proactive snooze <fingerprint|key> <days>   hold a finding; proactive done <key> ends it until the thing changes
+//   bin/fleet-axi --brief --engineer   the engineer's session brief (repo, PRs, hub, plans, roadmap, handoff); always exits 0
+//   bin/fleet-axi --brief --hub-part   the Hub and Fleet sections of that brief, computed here (the laptop asks the hub for them)
 //   bin/fleet-axi setup hooks          opt in: show the summary at the start of Claude Code sessions in this repo
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -37,6 +39,7 @@ import { computeFindings, gatherInput, giveFeedback, judge, proactiveMode, propo
 import { ROOT } from "../dashboard/lib/paths.ts";
 import { toolText, VIEWS } from "../dashboard/lib/tool-out.ts";
 import { linkName, VAULT_FILTERS, vaultNextSteps, vaultTasksReport, type VaultFilter } from "../dashboard/lib/vault-tasks.ts";
+import { engineerBrief, hubPart } from "../dashboard/lib/engineer-brief.ts";
 import { shipNext } from "../dashboard/lib/roadmap.ts";
 import { searchVault } from "../dashboard/lib/vault-index.ts";
 import { vaultNote } from "../dashboard/lib/vault-note.ts";
@@ -58,10 +61,10 @@ const FLAGS: Record<string, string[]> = {
   extract: ["--days", "--unlabelled", "--limit", "--agent", "--since", "--dry-run", "--target"],
   proactive: [],
   setup: [],
-  "": ["--brief"],
+  "": ["--brief", "--engineer", "--hub-part"],
 };
 /** Flags that take no value. */
-const SWITCHES = ["--detail", "--brief", "--full", "--history", "--unlabelled", "--dry-run"];
+const SWITCHES = ["--detail", "--brief", "--engineer", "--hub-part", "--full", "--history", "--unlabelled", "--dry-run"];
 
 const HELP: Record<string, string> = {
   "": `command: fleet-axi
@@ -103,7 +106,7 @@ examples[3]:
   intents: "command: fleet-axi intents\nusage: bin/fleet-axi intents [--days N] [--unlabelled] [--limit N]\n       bin/fleet-axi intents label <id> <owner>\nsummary: Jev's observe-mode verdicts on who should own each captain message to Alice (nothing is rerouted); label a verdict with the right owner to measure accuracy per confidence bucket\nflags[4]{flag,default,description}:\n  --days,7,how far back\n  --unlabelled,,only verdicts without a label\n  --limit,30,rows shown\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi intents --unlabelled\n  bin/fleet-axi intents label 12 architect",
   extract: `command: fleet-axi extract\nusage: bin/fleet-axi extract [--days N] [--unlabelled] [--limit N]\n       bin/fleet-axi extract run [--agent A] [--since DATE] [--dry-run]\n       bin/fleet-axi extract label <id> <label> [--target T]\nsummary: Jev's observe-mode proposals from the captain's own chat messages (nothing is written to captain.md or the facts; the strong recent ones queue in Needs you, and Remember / Not this there are the label, counted as accepted / dismissed here); run classifies the messages not yet seen, label sets the right class (${LABELS.join("|")}) to measure accuracy per confidence bucket\nflags[6]{flag,default,description}:\n  --days,7,how far back\n  --unlabelled,,only proposals without a label\n  --limit,30,rows shown\n  --agent,,run: one agent's chat only\n  --since,,run: only messages from this date or time\n  --dry-run,,run: list the candidates and the call count without calling Jev\nexamples[3]:\n  bin/fleet-axi extract run --dry-run\n  bin/fleet-axi extract --unlabelled\n  bin/fleet-axi extract label 12 preference`,
   proactive: `command: fleet-axi proactive\nusage: bin/fleet-axi proactive\n       bin/fleet-axi proactive snooze <fingerprint|key> <days>\n       bin/fleet-axi proactive done <key>\nsummary: What the node's sweep finds now (due within 2 days or overdue, closeable, stale task, stale fact, expiring observation) and whether Alice would be told, with the reason. snooze holds a finding for N days; done ends it until the thing itself changes (a new due date, another checked item). Proposals_30d counts what Alice reported, and the captain's Go, Snooze and Done on them, with the go rate per kind (the measure of whether this is wanted). A task untouched for FLEET_PROACTIVE_STALE_DAYS (21) is stale unless it waits on something. Mode is FLEET_PROACTIVE (observe by default; on gives Alice a turn).\nexamples[3]:\n  bin/fleet-axi proactive\n  bin/fleet-axi proactive snooze fleet-memory-m4 3\n  bin/fleet-axi proactive done fleet-memory-m4`,
-  setup: "command: fleet-axi setup\nusage: bin/fleet-axi setup hooks\nsummary: Add a SessionStart hook to .claude/settings.local.json (gitignored) that prints bin/fleet-axi --brief; running it again changes nothing\nflags[1]{flag,description}:\n  --help,show this help\nexamples[1]:\n  bin/fleet-axi setup hooks",
+  setup: "command: fleet-axi setup\nusage: bin/fleet-axi setup hooks\nsummary: Add a SessionStart hook to .claude/settings.local.json (gitignored) that prints bin/fleet-axi --brief; running it again changes nothing, and so does a fleet-axi hook already in .claude/settings.json (the engineer's brief)\nflags[1]{flag,description}:\n  --help,show this help\nexamples[1]:\n  bin/fleet-axi setup hooks",
 };
 
 const [cmd = "", ...rest] = process.argv.slice(2);
@@ -130,6 +133,18 @@ async function home(brief: boolean): Promise<void> {
     help: brief ? ["bin/fleet-axi --help"] : ["bin/fleet-axi status --detail", "bin/fleet-axi ship <id>", "bin/fleet-axi vault in-progress", "bin/fleet-axi next", "bin/fleet-axi jev", "bin/fleet-axi query spend --by agent", "bin/fleet-axi search <words>"],
   };
   console.log(encode(out));
+}
+
+type Settings = { hooks?: { SessionStart?: { hooks?: { type: string; command: string }[] }[] } };
+
+/** True when the Claude Code settings file at `path` has a fleet-axi SessionStart hook; false when it is missing or unreadable. */
+function hasFleetAxiHook(path: string): boolean {
+  try {
+    const cfg = JSON.parse(readFileSync(path, "utf8")) as Settings;
+    return !!cfg.hooks?.SessionStart?.some((s) => s.hooks?.some((h) => h.command.includes("bin/fleet-axi")));
+  } catch {
+    return false;
+  }
 }
 
 /** Arguments that are not flags or flag values. */
@@ -159,7 +174,12 @@ async function main(): Promise<void> {
     if (!SWITCHES.includes(a)) i++;
   }
 
-  if (!key) return home(args.includes("--brief"));
+  if (!key) {
+    if (args.includes("--brief") && args.includes("--hub-part")) return void console.log(await hubPart());
+    // A hook runs this at every session start: whatever goes wrong, say so and exit 0.
+    if (args.includes("--brief") && args.includes("--engineer")) return void console.log(await engineerBrief().catch((e) => `- unavailable: ${e instanceof Error ? e.message : e}\n`));
+    return home(args.includes("--brief"));
+  }
   const full = rest.includes("--full");
   if (key === "status") return void console.log(toolText(await fleetStatus(rest.includes("--detail")), VIEWS.fleet_status, { full }));
   if (key === "ship") {
@@ -268,8 +288,11 @@ async function main(): Promise<void> {
   if (key === "setup") {
     if (rest[0] !== "hooks") fail("setup takes hooks", "bin/fleet-axi setup hooks");
     const path = join(ROOT, ".claude", "settings.local.json");
+    // The committed settings.json carries the engineer's hook; a second one would print the brief twice.
+    const shared = join(ROOT, ".claude", "settings.json");
+    if (hasFleetAxiHook(shared)) return void console.log(encode({ ok: "already set up (no change)", file: shared }));
     const command = `${join(ROOT, "bin", "fleet-axi")} --brief`;
-    let cfg: { hooks?: { SessionStart?: { hooks?: { type: string; command: string }[] }[] } } = {};
+    let cfg: Settings = {};
     if (existsSync(path)) {
       try {
         cfg = JSON.parse(readFileSync(path, "utf8"));
