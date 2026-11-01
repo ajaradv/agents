@@ -237,6 +237,7 @@ p { margin: 0.35rem 0; }
 }
 
 .tab:hover { background: #efe6d4; }
+a.tab, a.dock-btn { text-decoration: none; }
 
 .tab.is-open {
   background: var(--ink);
@@ -745,7 +746,7 @@ body.chat-open { overflow: hidden; }
   .between { flex-wrap: wrap; }
   .dock {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     position: fixed;
     z-index: 40;
     left: 0;

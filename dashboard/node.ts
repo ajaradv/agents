@@ -680,6 +680,8 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     await kickOrders();
     return Response.json({ ok: true });
   }
+  // The dashboard's vault reader search: the node owns the index (startVaultIndexer), so the dashboard asks it.
+  if (path === "/v1/vault-search") return Response.json(searchVault({ query: String(b.query ?? ""), limit: Number(b.limit) || undefined }));
   if (path === "/v1/refresh-targets") {
     await refreshAgentTargets();
     return Response.json({ ok: true });

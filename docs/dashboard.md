@@ -116,6 +116,28 @@ Stack: htmx 4 and Alpine.js. Health, Fleet, and Agents are leaves; chat is the r
   (`/health/usage`), Metrics (`/health/metrics`), Diagnostics
   (`/health/diagnostics`).
 
+## Ships and Vault
+
+Two read-only pages over the vault, for reviewing on the laptop or the phone
+(Obsidian stays the place to edit). Both sit behind the dashboard's usual
+request guard; there is no separate login.
+
+- **Ships** (`/ships`): one card per ship in `fleet/ships/*.yaml`, from the
+  ship's roadmap note `ships/<ship>/roadmap.md`: summary, Now, the first three
+  Next up items, Open questions, and an "updated N days ago" badge (amber past
+  8 days; "no roadmap yet" when the note is missing). A card links to the full
+  note. `/ships/<id>` is still the harbor's ship view.
+- **Vault** (`/vault/`, `/vault/<folder>/`, `/vault/<note>.md`): folders list
+  notes with title and summary; a note shows its frontmatter header and its body
+  through `Bun.markdown`. `[[wiki links]]` and `[[link|alias]]` resolve by name
+  across the vault, nearest folder first, as Obsidian does; a name that matches
+  nothing shows as plain text. Images in the vault display; the search box
+  (`/vault/?q=words`) asks the fleet node, which owns the index behind `vault_search`, and shows snippets; with the node down it says search is unavailable.
+- `career/`, `profile/`, `templates/`, dot folders, paths with `..` and symlinks
+  that leave the vault answer 404. A note's own raw html cannot run scripts (CSP).
+
+Code: `lib/vault-reader.ts` (guard, wiki links, pages), `lib/ships-page.ts` (cards).
+
 ## Usage metrics
 
 **`quota-axi --json --max-age 15m`** runs once at dashboard boot, then every **10 minutes** (20s timeout). **Subscription usage** cards list subscribed providers only. **Configured API lanes** poll vendor endpoints with keys from `fleet/home/.env`: DeepSeek `GET /user/balance`, OpenRouter `GET /api/v1/key` (month spend + remaining). Hugging Face stays key presence only (no personal remaining-credits API). API-lane cards still render when quota-axi is empty. Providers quota knows about but you have not signed into appear under a collapsed “without an account” section. Quota refresh pauses 30s when you click **Start TUI**.
