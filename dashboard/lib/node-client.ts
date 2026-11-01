@@ -35,6 +35,8 @@ export type NodeHandlers = {
 };
 
 const BASE = `http://127.0.0.1:${NODE_PORT}`;
+export type VaultSearchReply = { ok: boolean; message: string; hits?: { path: string; title: string; status: string | null; summary: string | null; section?: string; snippet?: string }[] };
+
 const OFFLINE = "The fleet node is not running, so agents cannot take messages. The dashboard is restarting it; send again in a few seconds.";
 
 let state: NodeState | null = null;
@@ -217,6 +219,13 @@ export async function decideGo(id: string, go: boolean): Promise<{ ok: boolean; 
   const r = await call("/v1/go", { id, decision: go ? "go" : "no" });
   if (!r) return { ok: false, message: OFFLINE };
   return (await r.json().catch(() => ({ ok: false, message: "bad reply from the fleet node" }))) as { ok: boolean; message: string };
+}
+
+/** The vault reader's search, run by the node (it owns the index). Null when the node cannot be reached; this never starts one. */
+export async function vaultSearch(query: string): Promise<VaultSearchReply | null> {
+  const r = await post("/v1/vault-search", { query, limit: 25 }, 8000);
+  if (!r) return null;
+  return (await r.json().catch(() => null)) as VaultSearchReply | null;
 }
 
 /** After a Go, retry, or cancel, so the watcher acts now instead of at its next poll. */

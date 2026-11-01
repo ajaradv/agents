@@ -54,6 +54,8 @@ import { setLaptopVoyages } from "./lib/laptop-host.ts";
 import { voyageWorktree } from "./lib/voyage-worktree.ts";
 import { applyProposal, dismissProposal, hasHelmsman, helmDigest } from "./lib/helm.ts";
 import { ledgerMarkdown, voyageId, voyageLedger } from "./lib/metrics.ts";
+import { shipsPageResponse } from "./lib/ships-page.ts";
+import { vaultResponse } from "./lib/vault-reader.ts";
 import { canvasFileResponse, canvasSignature, canvasViewResponse, listCanvas, withFrameChecks } from "./lib/canvas.ts";
 import { scheduleQuotaLoop, usagePartialHtml } from "./lib/quota.ts";
 import type { HostEvent } from "./lib/agent-host.ts";
@@ -1083,6 +1085,10 @@ async function handleFetch(req: Request, server: ReturnType<typeof Bun.serve>): 
       const lines = await readCaptainChat(agentId);
       return Response.json({ lines });
     }
+
+    // Read-only pages over the vault (lib/vault-reader.ts, lib/ships-page.ts); `/ships/<id>` stays the harbor's.
+    if ((path === "/ships" || path === "/ships/") && req.method === "GET") return shipsPageResponse();
+    if ((path === "/vault" || path.startsWith("/vault/")) && req.method === "GET") return await vaultResponse(path, url.searchParams);
 
     // Section routes (/needs, /health, /fleet, /agents) are the same page; app.js reads the path.
     if (path === "/" || path === "/index.html" || /^\/(harbor|health|fleet|agents|needs)\/?$/.test(path) || /^\/health\/(status|usage|metrics|diagnostics)\/?$/.test(path) || /^\/ships\/[a-z][a-z0-9_-]{0,63}\/?$/.test(path)) {

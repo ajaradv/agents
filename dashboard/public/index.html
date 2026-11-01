@@ -46,6 +46,8 @@
     <button type="button" class="tab" role="tab" id="tab-agents" aria-controls="leaf-agents"
             :aria-selected="leaf === 'agents'" :class="{ 'is-open': leaf === 'agents', 'is-ring': anyWaiting() }"
             @click="openLeaf('agents')"><span class="punch" aria-hidden="true"></span>Agents</button>
+    <a class="tab" href="/ships"><span class="punch" aria-hidden="true"></span>Ships</a>
+    <a class="tab" href="/vault/"><span class="punch" aria-hidden="true"></span>Vault</a>
   </nav>
 
   <main>
@@ -342,6 +344,10 @@
       <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M4 4h6v6H4zm8 0h6v6h-6zM4 12h6v6H4zm8 0h6v6h-6z"/></svg>
       Agents
     </button>
+    <a class="dock-btn" href="/ships">
+      <svg viewBox="0 0 22 22" aria-hidden="true"><path fill="currentColor" d="M3 3h16v2H3zm0 5h16v2H3zm0 5h10v2H3zm0 5h16v2H3z"/></svg>
+      Ships
+    </a>
     <button type="button" class="dock-btn" :class="{ 'is-open': chatOpen }" aria-label="Open chat" @click="toggleChat()">
       <img class="dock-face" :src="current().art || '/art/captain.png'" width="22" height="22" alt="" />
       Chat
