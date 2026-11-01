@@ -56,7 +56,11 @@ async function quotaFromLaptop(): Promise<QuotaCache | null> {
   const { laptopCan, laptopFetch } = await import("./laptop.ts");
   if (!process.env.FLEET_LAPTOP_URL) return null;
   const stale = (why: string): QuotaCache => ({ at: cache.at || new Date().toISOString(), ok: cache.ok, raw: cache.raw, parsed: cache.parsed, error: cache.ok ? `${why}; showing the last reading` : why, loading: false, stale: true });
-  if (!(await laptopCan("quota"))) return stale("quota comes from the laptop, which is asleep or offline");
+  if (!(await laptopCan("quota"))) {
+    const { laptopStatus } = await import("./laptop.ts");
+    // Up but without the capability: quota-axi is missing from the worker's PATH (2026-10-26: a Node upgrade removed it).
+    return stale((await laptopStatus()).up ? "the laptop is up but its worker has no quota-axi (npm install -g quota-axi@0.1.64, then bin/laptop-worker --install)" : "quota comes from the laptop, which is asleep or offline");
+  }
   try {
     const r = await laptopFetch("/host/quota", { signal: AbortSignal.timeout(30_000) });
     const j = (await r.json()) as { ok?: boolean; raw?: string; error?: string };
