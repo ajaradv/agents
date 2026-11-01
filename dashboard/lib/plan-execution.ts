@@ -1,4 +1,5 @@
 import { frontmatter } from "./fleet-layers.ts";
+import { cursorOn } from "./models-config.ts";
 
 /**
  * One entry of a plan's frontmatter `execution:` list, written by the Architect.
@@ -67,10 +68,13 @@ function profilesOf(rule: DispatchRule): DispatchProfile[] {
 /**
  * Bind each task to its rule's profiles. An effort hint replaces the effort on
  * profiles that already carry one; Cursor-style profiles never gain the field.
+ * While Cursor is off (fleet/config/models.json) `harness: cursor` profiles are
+ * dropped, as crews will not get them; a rule with nothing left is an error.
  */
 export function resolveExecution(
   tasks: ExecutionTask[],
   config: DispatchConfig,
+  cursor: boolean = cursorOn(),
 ): { resolved: ResolvedTask[]; errors: string[] } {
   const byId = new Map((config.rules ?? []).filter((r) => r.id).map((r) => [r.id!, r]));
   const resolved: ResolvedTask[] = [];
@@ -81,9 +85,13 @@ export function resolveExecution(
       errors.push(`unknown rule "${t.rule}" for task "${t.task}" (known: ${[...byId.keys()].join(", ")})`);
       continue;
     }
-    const profiles = profilesOf(rule).map((p) =>
-      t.effort && p.effort !== undefined && EFFORT_HARNESSES.has(p.harness) ? { ...p, effort: t.effort } : { ...p },
-    );
+    const profiles = profilesOf(rule)
+      .filter((p) => cursor || p.harness !== "cursor")
+      .map((p) => (t.effort && p.effort !== undefined && EFFORT_HARNESSES.has(p.harness) ? { ...p, effort: t.effort } : { ...p }));
+    if (!profiles.length) {
+      errors.push(`rule "${t.rule}" has nothing left for task "${t.task}": Cursor is off`);
+      continue;
+    }
     resolved.push({ ...t, profiles });
   }
   return { resolved, errors };

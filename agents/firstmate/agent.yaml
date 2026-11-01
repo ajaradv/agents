@@ -4,9 +4,8 @@ role: firstmate
 harness: pi
 # DeepSeek V4 Pro through OpenRouter (it holds the DeepSeek key), whose prompt
 # caching keeps Firstmate's many wakes cheap (Cursor replays the session
-# uncached). Backup: Composer on the Cursor key when OpenRouter fails that day.
-model: openrouter/deepseek/deepseek-v4-pro
-fallback_model: cursor/composer-2.5
+# uncached). Backups: Composer on the Cursor key while Cursor is on, then Luna.
+models: [deepseek-v4-pro, composer-2.5, luna]
 extensions:
   # Compact between tasks once context passes 65%, after running /stow
   # (extensions/context-guard.ts), instead of at the edge of the window.

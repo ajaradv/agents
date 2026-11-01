@@ -6,9 +6,9 @@ harness: pi
 # DeepSeek V4 Pro through OpenRouter (it holds the DeepSeek key): a long-running
 # session needs prefix caching, which DeepSeek applies automatically (Cursor
 # replays the whole session uncached every turn).
-# Backup on another provider: Composer on Cursor's included usage.
-model: openrouter/deepseek/deepseek-v4-pro
-fallback_model: cursor/composer-2.5
+# Backups, in order: Composer on Cursor's included usage while Cursor is on, then Luna
+# (fleet/config/models.json holds the aliases and the Cursor switch).
+models: [deepseek-v4-pro, composer-2.5, luna]
 # A live Pi session in the fleet node: streaming, steer mid-turn, ask_captain
 # that waits. Dashboard turns and the TUI share one session.
 runtime: rpc
