@@ -29,6 +29,8 @@ export type GateContext = {
   aliceFolders?: { vault: string; inbox: string };
   /** The Architect's vault (ALICE_VAULT); its writes there are limited to plans, specs, reviews and roadmaps. */
   architectVault?: string;
+  /** The vault (ALICE_VAULT) for the surveyor and the `<officer>-helper` agents; they may not read career/ or profile/ in it. */
+  helperVault?: string;
   /** Resolves symlinks (fs.realpathSync); without it paths are judged as written. */
   realpath?: (p: string) => string;
   /** Test seam: is this pid the live fleet node or dashboard? */
@@ -73,6 +75,8 @@ const SAFE_TOOLS = new Set([
   "queue_add", "queue_request",
   // The flagship officers' decisions (dashboard/lib/decisions.ts): a spec to review, a design difference.
   "spec_submit", "design_review",
+  // The Architect's surveyors (dashboard/lib/survey.ts): fresh reviewers on a draft; the node holds the limits and the budget.
+  "survey",
   // Officers without bash (plan alice-memory-and-tools, M5): git_read runs a fixed read-only git argv in the worktree; plan_check reads a vault plan.
   "git_read", "plan_check",
 ]);
@@ -311,6 +315,22 @@ function architectWrite(tool: string, raw: string, p: string, ctx: GateContext):
   return { decision: "ask", reason: `${tool} of ${raw}: the Architect writes plans, specs, reviews and roadmaps in the vault; other vault notes need the captain` };
 }
 
+/** Helpers and surveyors read the vault but never the captain's career/ and profile/ folders (prompts alone were all that stopped them). */
+function helperRead(tool: string, raw: string, p: string, ctx: GateContext): Verdict | null {
+  if (!ctx.helperVault) return null;
+  const lexical = normalize(ctx.helperVault);
+  const resolved = real(lexical, ctx);
+  const target = real(p, ctx);
+  for (const first of ["career", "profile"]) {
+    if (inside(p, `${lexical}/${first}`) || inside(target, `${resolved}/${first}`)) return { decision: "stop", reason: `${tool} inside the vault's ${first} folder (${raw}); helpers never read it` };
+  }
+  // A search from the vault root (or above it) would walk career/ and profile/ too: search a folder in it instead.
+  if ((tool === "grep" || tool === "find") && (inside(lexical, p) || inside(resolved, target))) {
+    return { decision: "stop", reason: `${tool} from ${raw} would search the vault's career/ and profile/ folders; search a folder inside the vault (for example fleet/) instead` };
+  }
+  return null;
+}
+
 /** Decide a tool call locally, or say it needs a closer look. */
 export function localVerdict(tool: string, input: Record<string, unknown>, ctx: GateContext): Verdict {
   if (BUILTIN.has(tool)) {
@@ -321,6 +341,10 @@ export function localVerdict(tool: string, input: Record<string, unknown>, ctx: 
     const p = resolve(raw, ctx.cwd, ctx.home);
     const what = secretPath(p, ctx.home);
     if (what) return { decision: "stop", reason: `${tool} of ${what} (${raw})` };
+    if (tool !== "write" && tool !== "edit" && ctx.helperVault) {
+      const v = helperRead(tool, raw, p, ctx);
+      if (v) return v;
+    }
     if ((tool === "write" || tool === "edit") && ctx.agent === "alice") {
       const v = aliceWrite(tool, raw, p, ctx);
       if (v) return v;

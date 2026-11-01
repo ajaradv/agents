@@ -23,6 +23,7 @@
 //   bin/fleet-axi intents label <id> <owner>   the captain's label: who should have owned that message
 //   bin/fleet-axi proactive            the proactive sweep's findings now, and which would be raised to Alice and why
 //   bin/fleet-axi proactive snooze <fingerprint|key> <days>   hold a finding; proactive done <key> ends it until the thing changes
+//   bin/fleet-axi review <vault path> --writer <model> [--mode review|brainstorm] [--depth skip|light|full] [--lenses +comprehension] [--ship S]   fresh reviewers on other models; waits and prints the review file (bin/survey runs it on the hub)
 //   bin/fleet-axi --brief --engineer   the engineer's session brief (repo, PRs, hub, plans, roadmap, handoff); always exits 0
 //   bin/fleet-axi --brief --hub-part   the Hub and Fleet sections of that brief, computed here (the laptop asks the hub for them)
 //   bin/fleet-axi setup hooks          opt in: show the summary at the start of Claude Code sessions in this repo
@@ -40,11 +41,13 @@ import { ROOT } from "../dashboard/lib/paths.ts";
 import { toolText, VIEWS } from "../dashboard/lib/tool-out.ts";
 import { linkName, VAULT_FILTERS, vaultNextSteps, vaultTasksReport, type VaultFilter } from "../dashboard/lib/vault-tasks.ts";
 import { engineerBrief, hubPart } from "../dashboard/lib/engineer-brief.ts";
+import { getWorkflow } from "../dashboard/lib/journal.ts";
+import { requestSurvey } from "../dashboard/lib/node-client.ts";
 import { shipNext } from "../dashboard/lib/roadmap.ts";
 import { searchVault } from "../dashboard/lib/vault-index.ts";
 import { vaultNote } from "../dashboard/lib/vault-note.ts";
 
-const COMMANDS = ["status", "ship", "vault", "next", "jev", "gate", "query", "bash-use", "note", "search", "facts", "intents", "extract", "proactive", "setup"] as const;
+const COMMANDS = ["status", "ship", "vault", "next", "jev", "gate", "query", "bash-use", "note", "search", "facts", "intents", "extract", "proactive", "review", "setup"] as const;
 const FLAGS: Record<string, string[]> = {
   status: ["--detail", "--full"],
   ship: ["--log", "--full"],
@@ -60,6 +63,7 @@ const FLAGS: Record<string, string[]> = {
   intents: ["--days", "--unlabelled", "--limit"],
   extract: ["--days", "--unlabelled", "--limit", "--agent", "--since", "--dry-run", "--target"],
   proactive: [],
+  review: ["--mode", "--depth", "--lenses", "--writer", "--ship"],
   setup: [],
   "": ["--brief", "--engineer", "--hub-part"],
 };
@@ -69,8 +73,8 @@ const SWITCHES = ["--detail", "--brief", "--engineer", "--hub-part", "--full", "
 const HELP: Record<string, string> = {
   "": `command: fleet-axi
 summary: The fleet from any shell (read-only): ships, voyages, logs, vault tasks, Jev spend, tool gate, vault notes
-usage: bin/fleet-axi [status|ship|vault|next|jev|gate|query|bash-use|note|search|facts|intents|extract|proactive|setup] ...
-commands[15]{command,what}:
+usage: bin/fleet-axi [status|ship|vault|next|jev|gate|query|bash-use|note|search|facts|intents|extract|proactive|review|setup] ...
+commands[16]{command,what}:
   status,"ships, voyages, crews, spend today (--detail for crewmates and officers)"
   ship,"a ship's voyage tasks and log (bin/fleet-axi ship <id> [--log N])"
   vault,"vault tasks by filter: ready (default), open, in-progress, blocked, done, all; --id for one"
@@ -85,6 +89,7 @@ commands[15]{command,what}:
   intents,"who Jev would route the captain's messages to (observe mode): verdicts, counts, accuracy per confidence bucket; intents label <id> <owner>"
   extract,"what Jev would remember from the captain's messages (observe mode): preference, fact, decision, correction; extract run to backfill, extract label <id> <label>"
   proactive,"the proactive sweep: due, closeable and stale findings, which Alice would be told about (FLEET_PROACTIVE), and what came of her proposals (go rate per kind); snooze <fingerprint|key> <days>, done <key>"
+  review,"fresh reviewers on other models check a vault plan or spec (or flesh out an idea); waits and prints the review file. The hub runs it: bin/survey <path> --writer <model>"
   setup,"setup hooks: opt in to the summary at the start of Claude Code sessions in this repo"
 flags[1]{flag,description}:
   --help,"show this help (also after a command)"
@@ -106,6 +111,7 @@ examples[3]:
   intents: "command: fleet-axi intents\nusage: bin/fleet-axi intents [--days N] [--unlabelled] [--limit N]\n       bin/fleet-axi intents label <id> <owner>\nsummary: Jev's observe-mode verdicts on who should own each captain message to Alice (nothing is rerouted); label a verdict with the right owner to measure accuracy per confidence bucket\nflags[4]{flag,default,description}:\n  --days,7,how far back\n  --unlabelled,,only verdicts without a label\n  --limit,30,rows shown\n  --help,,show this help\nexamples[2]:\n  bin/fleet-axi intents --unlabelled\n  bin/fleet-axi intents label 12 architect",
   extract: `command: fleet-axi extract\nusage: bin/fleet-axi extract [--days N] [--unlabelled] [--limit N]\n       bin/fleet-axi extract run [--agent A] [--since DATE] [--dry-run]\n       bin/fleet-axi extract label <id> <label> [--target T]\nsummary: Jev's observe-mode proposals from the captain's own chat messages (nothing is written to captain.md or the facts; the strong recent ones queue in Needs you, and Remember / Not this there are the label, counted as accepted / dismissed here); run classifies the messages not yet seen, label sets the right class (${LABELS.join("|")}) to measure accuracy per confidence bucket\nflags[6]{flag,default,description}:\n  --days,7,how far back\n  --unlabelled,,only proposals without a label\n  --limit,30,rows shown\n  --agent,,run: one agent's chat only\n  --since,,run: only messages from this date or time\n  --dry-run,,run: list the candidates and the call count without calling Jev\nexamples[3]:\n  bin/fleet-axi extract run --dry-run\n  bin/fleet-axi extract --unlabelled\n  bin/fleet-axi extract label 12 preference`,
   proactive: `command: fleet-axi proactive\nusage: bin/fleet-axi proactive\n       bin/fleet-axi proactive snooze <fingerprint|key> <days>\n       bin/fleet-axi proactive done <key>\nsummary: What the node's sweep finds now (due within 2 days or overdue, closeable, stale task, stale fact, expiring observation) and whether Alice would be told, with the reason. snooze holds a finding for N days; done ends it until the thing itself changes (a new due date, another checked item). Proposals_30d counts what Alice reported, and the captain's Go, Snooze and Done on them, with the go rate per kind (the measure of whether this is wanted). A task untouched for FLEET_PROACTIVE_STALE_DAYS (21) is stale unless it waits on something. Mode is FLEET_PROACTIVE (observe by default; on gives Alice a turn).\nexamples[3]:\n  bin/fleet-axi proactive\n  bin/fleet-axi proactive snooze fleet-memory-m4 3\n  bin/fleet-axi proactive done fleet-memory-m4`,
+  review: "command: fleet-axi review\nusage: bin/fleet-axi review <vault path> --writer <model> [--mode review|brainstorm] [--depth skip|light|full] [--lenses +comprehension] [--ship S]\nsummary: Asks the node for a survey of a vault note (fresh reviewers, each on its own model, never the writer's), waits for it, and prints the review file's path. Run it on the hub (bin/survey does, after syncing the vault). Without --depth, Jev decides; --depth is yours, skip included.\nflags[6]{flag,default,description}:\n  --writer,,the model that wrote the note, required; no reviewer shares it\n  --mode,review,review checks a draft; brainstorm fleshes out a raw idea or request\n  --depth,,skip, light or full (Jev decides when omitted)\n  --lenses,,+comprehension adds the naive-reader lens (review only)\n  --ship,,the ship whose code the draft is about (default: the note's ship: frontmatter)\n  --help,,show this help\nexamples[2]:\n  bin/survey fleet/plans/feature/x.md --writer anthropic/claude-opus-5.5\n  bin/fleet-axi review fleet/plans/feature/x.md --writer sol --depth full",
   setup: "command: fleet-axi setup\nusage: bin/fleet-axi setup hooks\nsummary: Add a SessionStart hook to .claude/settings.local.json (gitignored) that prints bin/fleet-axi --brief; running it again changes nothing, and so does a fleet-axi hook already in .claude/settings.json (the engineer's brief)\nflags[1]{flag,description}:\n  --help,show this help\nexamples[1]:\n  bin/fleet-axi setup hooks",
 };
 
@@ -284,6 +290,27 @@ async function main(): Promise<void> {
     if (sub) fail(`unknown proactive command ${sub}`, "bin/fleet-axi proactive [snooze <fingerprint|key> <days> | done <key>]");
     const verdicts = judge(computeFindings(gatherInput()), new Date());
     return void console.log(encode({ mode: proactiveMode(), repeat_days: repeatDays(), stale_task_days: staleTaskDays(), proposals_30d: proposalReport(30), findings: verdicts.length, would_raise: verdicts.filter((v) => v.raise).length, list: verdicts.map((v) => ({ kind: v.finding.kind, key: v.finding.key, summary: v.finding.summary, raise: v.raise, why: v.why, fingerprint: v.finding.fingerprint })) }));
+  }
+  if (key === "review") {
+    const path = positional()[0];
+    const writer = flag("--writer");
+    if (!path) fail("review needs a vault path", "bin/fleet-axi review <vault path> --writer <model> (bin/survey runs it on the hub)");
+    if (!writer || writer.startsWith("--")) fail("review needs --writer", "pass the model that wrote the note, e.g. --writer anthropic/claude-opus-5.5, so no reviewer shares it");
+    const r = await requestSurvey({ mode: flag("--mode") ?? "review", path, writer, ship: flag("--ship"), depth: flag("--depth"), lenses: flag("--lenses") });
+    if (!r.ok) fail(r.message, "bin/fleet-axi review --help");
+    if (!r.id) return void console.log(encode({ result: r.message }));
+    console.error(r.message);
+    // The node does the work; the journal is shared, so the parent workflow says when it ends (at most FLEET_SURVEY_WAIT_MIN, default 60).
+    const until = Date.now() + (Number(process.env.FLEET_SURVEY_WAIT_MIN) || 60) * 60_000;
+    for (;;) {
+      const w = getWorkflow<{ review?: string; cost?: number; counts?: Record<string, number>; error?: string }>(r.id);
+      if (w && w.status !== "running" && w.status !== "waiting") {
+        if (w.data.review) return void console.log(encode({ result: w.status === "done" ? "review written" : `review written, but ${w.data.error ?? "it failed"}`, review: w.data.review, cost_usd: w.data.cost, findings: w.data.counts, next: "resolve each finding under '## Resolution' (F<n>: fix|contest|escalate|decline — why)" }));
+        fail(`the review ${w.status}: ${w.data.error ?? "no reason recorded"}`, `bin/fleet-axi review --help; workflow ${r.id}`, 1);
+      }
+      if (Date.now() > until) fail(`the review ${r.id} is still running after the wait limit`, "it keeps running on the node; look for fleet/reviews/<slug>/ in the vault later", 1);
+      await Bun.sleep(3000);
+    }
   }
   if (key === "setup") {
     if (rest[0] !== "hooks") fail("setup takes hooks", "bin/fleet-axi setup hooks");

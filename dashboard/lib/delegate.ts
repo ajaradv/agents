@@ -114,6 +114,85 @@ export function parseHelperOutput(jsonl: string): { text: string; cost: number; 
 
 const watching = new Set<string>();
 
+/** Spawns the helper process; injectable so tests start no real pi. */
+export type HelperSpawn = (cmd: string[], opts: { cwd: string; env: Record<string, string | undefined>; out: number }) => { pid: number; exited: Promise<unknown> };
+
+const realSpawn: HelperSpawn = (cmd, o) => {
+  const proc = Bun.spawn(cmd, { cwd: o.cwd, stdin: "ignore", stdout: o.out, stderr: o.out, detached: true, env: o.env });
+  return { pid: proc.pid, exited: proc.exited };
+};
+
+export type HelperStart = {
+  /** Names the helper's folder entry and its journal workflow (the caller records the workflow). */
+  id: string;
+  /** Where out.jsonl goes; created if missing. */
+  dir: string;
+  /** FLEET_AGENT_ID of the process: spend and the tool gate know the helper by it. */
+  agentId: string;
+  kind: string;
+  task: string;
+  cwd: string;
+  model: string;
+  /** System prompt files to append. */
+  prompts: string[];
+  /** Extension files to load (-e). */
+  extensions: string[];
+  minutes: number;
+  /** Called with (kind, id) when the process ends or is found gone. */
+  onFinish: (kind: string, id: string) => void | Promise<void>;
+  /** Added to the process environment after the model's keys. */
+  env?: Record<string, string>;
+  spawn?: HelperSpawn;
+};
+
+/**
+ * Start a read-only `pi -p` helper detached, with only the keys its model needs, and watch it:
+ * killed after `minutes`, and onFinish called once it has ended (by exit or by the watcher).
+ */
+export async function startHelper(o: HelperStart): Promise<{ pid: number }> {
+  mkdirSync(o.dir, { recursive: true });
+  const out = openSync(join(o.dir, "out.jsonl"), "a");
+  let pid = 0;
+  try {
+    const cmd = ["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--model", o.model, "--tools", "read,grep,find,ls", ...o.prompts.flatMap((p) => ["--append-system-prompt", p]), ...o.extensions.flatMap((e) => ["-e", e]), o.task];
+    const env = { ...withoutSecrets(process.env), ...keysForModels(await agentKeyEnv(), [o.model]), ...o.env, FLEET_AGENT_ID: o.agentId };
+    const proc = (o.spawn ?? realSpawn)(cmd, { cwd: o.cwd, env, out });
+    pid = proc.pid;
+    void proc.exited.then(() => o.onFinish(o.kind, o.id));
+  } finally {
+    closeSync(out);
+  }
+  watchHelper(o.kind, o.id, pid, o.minutes * 60_000, o.onFinish);
+  return { pid };
+}
+
+/** Watch a helper process: finish it when it is gone, kill it when it runs past its time. */
+export function watchHelper(kind: string, id: string, pid: number, limitMs: number, onFinish: HelperStart["onFinish"]): void {
+  if (watching.has(id)) return;
+  watching.add(id);
+  const started = Date.now();
+  const timer = setInterval(() => {
+    if (!pidAlive(pid)) {
+      clearInterval(timer);
+      watching.delete(id);
+      void onFinish(kind, id);
+      return;
+    }
+    if (Date.now() - started > limitMs) {
+      try {
+        process.kill(-pid, "SIGTERM"); // its whole process group
+      } catch {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {
+          /* gone */
+        }
+      }
+    }
+  }, 5000);
+  timer.unref(); // the node's server keeps the process alive; a script or a test is not held up by a watcher
+}
+
 /** Start a helper on a task; returns at once (the officer is woken when it ends). */
 export async function startDelegation(from: string, task: string, where = "vault"): Promise<Res> {
   const t = task.trim();
@@ -127,50 +206,24 @@ export async function startDelegation(from: string, task: string, where = "vault
   const dir = join(fleetInboxRoot(), from, "delegations", id);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "task.md"), `${t}\n`, "utf8");
-  const out = openSync(join(dir, "out.jsonl"), "a");
   const { model, why } = await helperModel(t);
-  let pid = 0;
-  try {
-    const proc = Bun.spawn(
-      ["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--model", model, "--tools", "read,grep,find,ls", "--append-system-prompt", HELPER_PROMPT, ...(where === "vault" || !where ? ["--append-system-prompt", LIBRARIAN_PROMPT] : []), "-e", join(ROOT, "extensions", "cache-watch.ts"), t],
-      { cwd, stdin: "ignore", stdout: out, stderr: out, detached: true, env: { ...withoutSecrets(process.env), ...keysForModels(await agentKeyEnv(), [model]), FLEET_AGENT_ID: `${from}-helper` } },
-    );
-    pid = proc.pid;
-    void proc.exited.then(() => finishDelegation(id));
-  } finally {
-    closeSync(out);
-  }
+  const { pid } = await startHelper({
+    id,
+    dir,
+    agentId: `${from}-helper`,
+    kind: "delegation",
+    task: t,
+    cwd,
+    model,
+    prompts: [HELPER_PROMPT, ...(where === "vault" || !where ? [LIBRARIAN_PROMPT] : [])],
+    extensions: [join(ROOT, "extensions", "cache-watch.ts")],
+    minutes: TIMEOUT_MS / 60_000,
+    onFinish: (_kind, hid) => finishDelegation(hid),
+  });
   upsertWorkflow("delegation", id, { from, task: t.slice(0, 2000), where, cwd, model, dir, pid, started: new Date().toISOString() } satisfies Data, { trace: `delegation-${id}` });
-  watch(id, pid);
   logShipEvent(OFFICER_SHIP, from, "delegation", `Helper ${id} started: ${t.slice(0, 160)}`, { id, where, model, why, trace: `delegation-${id}` });
   await dashLog("delegate", `${from} → ${id} (${where})`);
   return { ok: true, message: `Helper ${id} is working on it (${model}, ${why}, read-only, in ${where}). You will be woken with its summary; the full result will be at ${join(dir, "result.md")}. Carry on with other work or end your turn.`, id };
-}
-
-/** Kill a helper that runs past its time; the exit handler (or the watcher) finishes it. */
-function watch(id: string, pid: number): void {
-  if (watching.has(id)) return;
-  watching.add(id);
-  const started = Date.now();
-  const timer = setInterval(() => {
-    if (!pidAlive(pid)) {
-      clearInterval(timer);
-      watching.delete(id);
-      void finishDelegation(id);
-      return;
-    }
-    if (Date.now() - started > TIMEOUT_MS) {
-      try {
-        process.kill(-pid, "SIGTERM"); // its whole process group
-      } catch {
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          /* gone */
-        }
-      }
-    }
-  }, 5000);
 }
 
 /** Record a finished helper and wake its officer with the summary (at most once). */
@@ -199,7 +252,7 @@ export async function finishDelegation(id: string): Promise<void> {
 /** After a node restart: re-attach helpers still running, finish the ones that ended. */
 export async function recoverDelegations(): Promise<void> {
   for (const w of listWorkflows<Data>("delegation", "running")) {
-    if (w.data.pid && pidAlive(w.data.pid)) watch(w.id, w.data.pid);
+    if (w.data.pid && pidAlive(w.data.pid)) watchHelper("delegation", w.id, w.data.pid, TIMEOUT_MS, (_k, id) => finishDelegation(id));
     else await finishDelegation(w.id);
   }
 }

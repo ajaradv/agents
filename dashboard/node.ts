@@ -36,6 +36,7 @@ import { designReview, specSubmit } from "./lib/decisions.ts";
 import { agentChatRead, decideGo, fleetCallerAllowed, fleetChat, fleetStatus, onFleetChange, requestGo, runFleetAction, shipLog, shipManeuvers, shipTasks, recoverGos, needsChanged } from "./lib/fleet-api.ts";
 import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
+import { recoverSurveys, startReview } from "./lib/survey.ts";
 import { askPublic } from "./lib/public-helper.ts";
 import { toolText, VIEWS } from "./lib/tool-out.ts";
 import { shipNext } from "./lib/roadmap.ts";
@@ -83,6 +84,7 @@ import { OFFICER_SHIP } from "./lib/ship-events.ts";
  *   GET  /v1/state           NodeState (who is running, waiting, alive)
  *   GET  /v1/events          SSE: line, host, state, turn, ship, rail
  *   GET  /v1/ship-events     SSE: every ship's log, resumable (Last-Event-ID); docs/state-api.md
+ *   POST /v1/survey         { mode, path, writer, ship?, depth?, lenses? }  a review the captain asks for (bin/survey)
  *   POST /v1/captain-line    { agentId, line }   a saved captain or crew line to run
  *   POST /v1/answer          { agentId, dialogId, value?, confirmed?, cancelled? }
  *   POST /v1/abort|stop|new-session  { agentId }
@@ -173,6 +175,7 @@ function startRuntime(): void {
   void recoverGos().catch((e) => console.error("[node] go recovery:", e));
   void recoverManeuvers().catch((e) => console.error("[node] maneuver recovery:", e));
   void recoverDelegations().catch((e) => console.error("[node] delegation recovery:", e));
+  void recoverSurveys().catch((e) => console.error("[node] survey recovery:", e));
   // Captain notices: interruptions go to Needs you at once; the rest waits for the morning digest.
   onNoticesChange(() => emit("go", {}));
   startDigestClock();
@@ -619,14 +622,18 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     if (bus[1] === "read" && req.method === "GET") return Response.json(await busRead(from, url.searchParams.get("since") ?? "", Number(url.searchParams.get("limit")) || 30));
   }
 
-  // The flagship officers' decisions (lib/decisions.ts, extensions/decisions.ts): spec_submit, design_review.
-  const decision = path.match(/^\/api\/decisions\/(spec|design-review|plan-check|git)$/);
+  // The flagship officers' decisions (lib/decisions.ts, extensions/decisions.ts): spec_submit, design_review, survey.
+  const decision = path.match(/^\/api\/decisions\/(spec|design-review|plan-check|git|survey)$/);
   if (decision && req.method === "POST") {
     const from = crewCaller(req.headers.get("x-fleet-crew-token") ?? "");
     if (!from) return Response.json({ ok: false, message: "Decision calls come from a live agent session." }, { status: 403 });
     const b = await body(req);
     if (decision[1] === "plan-check") return Response.json(from === "architect" ? planCheck(String(b.path ?? "")) : { ok: false, message: "plan_check is the architect's." });
     if (decision[1] === "git") return Response.json(await architectGitRead(from, b));
+    if (decision[1] === "survey") {
+      if (from !== "architect") return Response.json({ ok: false, message: "survey is the architect's." });
+      return Response.json(await startReview("architect", { mode: String(b.mode ?? ""), path: String(b.path ?? ""), ship: b.ship ? String(b.ship) : undefined, depth: b.depth ? String(b.depth) : undefined, lenses: b.lenses ? String(b.lenses) : undefined }));
+    }
     const r = decision[1] === "spec" ? specSubmit(from, b) : designReview(from, b);
     if (r.ok) emit("ship", OFFICER_SHIP);
     return Response.json(r);
@@ -675,6 +682,11 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
   if (path === "/v1/go") {
     const r = await decideGo(String(b.id ?? ""), b.decision === "go");
     return Response.json(r, { status: r.ok ? 200 : 409 });
+  }
+  // A review the captain asks for from a shell (bin/survey): the node token proves it is the captain, so the depth is theirs.
+  if (path === "/v1/survey") {
+    const r = await startReview("captain", { mode: String(b.mode ?? ""), path: String(b.path ?? ""), ship: b.ship ? String(b.ship) : undefined, writer: String(b.writer ?? ""), depth: b.depth ? String(b.depth) : undefined, lenses: b.lenses ? String(b.lenses) : undefined });
+    return Response.json(r, { status: r.ok ? 200 : 400 });
   }
   if (path === "/v1/orders/kick") {
     await kickOrders();

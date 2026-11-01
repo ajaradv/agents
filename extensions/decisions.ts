@@ -6,6 +6,8 @@
  * - plan_check (architect): a plan's execution block bound to the crew-dispatch
  *   rules (what `bun bin/plan-execution.ts <plan>` printed), for the Architect without bash.
  * - git_read (architect): read-only git in any ship's repo (dashboard/lib/git-read.ts).
+ * - survey (architect): fresh reviewers on other models flesh out a request or check a draft
+ *   (dashboard/lib/survey.ts); the review file comes back on the bus as `survey-done`.
  * - design_review (designer): a voyage's screenshots against the approved
  *   design; only a difference reaches the queue.
  */
@@ -21,7 +23,7 @@ function text(t: string) {
   return { content: [{ type: "text" as const, text: t }], details: {} };
 }
 
-async function call(what: "spec" | "design-review" | "plan-check" | "git", body: Record<string, unknown>): Promise<string> {
+async function call(what: "spec" | "design-review" | "plan-check" | "git" | "survey", body: Record<string, unknown>): Promise<string> {
   if (!base || !token) return "Decision tools work only in a live dashboard session. Tell the captain in chat instead.";
   try {
     const res = await fetch(`${base}/api/decisions/${what}`, {
@@ -75,6 +77,24 @@ export default function (pi: ExtensionAPI) {
       }),
       async execute(_id, p) {
         return text(await call("git", { ship: p.ship, op: p.op, n: p.n, ref: p.ref, paths: p.paths }));
+      },
+    });
+  }
+  if (agent === "architect") {
+    pi.registerTool({
+      name: "survey",
+      label: "Have fresh reviewers survey a note",
+      description:
+        "Architect: send a vault note to fresh reviewers on other models. mode brainstorm: flesh out a raw idea or request (a kind: plan note or a spec-request) before you draft; mode review: check your draft before it goes to the captain. Jev decides the depth (skip, light or full); you may ask for more with depth, never less. lenses: \"+comprehension\" adds the naive-reader lens (review only). It returns at once; you are woken with `survey-done` and the path of the review file, fleet/reviews/<slug>/review-<n>.md (brainstorm-<n>.md). Depth skip runs nothing and records why in fleet/reviews/<slug>/triage.md.",
+      parameters: Type.Object({
+        path: Type.String({ description: "The note's vault path, e.g. fleet/plans/feature/x.md" }),
+        mode: StringEnum(["brainstorm", "review"] as const),
+        ship: Type.Optional(Type.String({ description: "review: the ship whose code the draft is about (default: the note's ship: frontmatter, else fleet)" })),
+        depth: Type.Optional(StringEnum(["skip", "light", "full"] as const)),
+        lenses: Type.Optional(Type.String({ description: '"+comprehension" to add the naive-reader lens' })),
+      }),
+      async execute(_id, p) {
+        return text(await call("survey", { path: p.path, mode: p.mode, ship: p.ship, depth: p.depth, lenses: p.lenses }));
       },
     });
   }

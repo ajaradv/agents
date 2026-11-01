@@ -43,7 +43,9 @@ function context(cwd: string): GateContext {
 	const aliceFolders = agent === "alice" && vault && inbox ? { vault, inbox: path.join(inbox, "alice") } : undefined;
 	// The Architect writes plans, specs, reviews and roadmaps in the vault (same default as bin/launch).
 	const architectVault = agent === "architect" ? (process.env.ALICE_VAULT ?? "~/Workspace/brain").replace(/^~(?=\/|$)/, os.homedir()) : undefined;
-	return { cwd, home: os.homedir(), inVm, writable, agent, aliceFolders, architectVault, realpath: (p) => realpathSync(p) };
+	// Surveyors and the officers' helpers read the vault but not career/ or profile/ (same default as bin/launch).
+	const helperVault = agent && (agent === "surveyor" || agent.endsWith("-helper")) ? (process.env.ALICE_VAULT ?? "~/Workspace/brain").replace(/^~(?=\/|$)/, os.homedir()) : undefined;
+	return { cwd, home: os.homedir(), inVm, writable, agent, aliceFolders, architectVault, helperVault, realpath: (p) => realpathSync(p) };
 }
 
 async function askNode(tool: string, input: Record<string, unknown>, cwd: string, why: string, writable: string[]): Promise<{ decision: string; message: string }> {
