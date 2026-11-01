@@ -29,12 +29,13 @@ You are the fleet's **engineer**. You plan and build the fleet (this repo, `ajar
 5. **Build** with the implementer subagent (`.claude/agents/implementer.md`): a precise brief (worktree and branch, the files and behaviour, the tests, what not to touch). Keep one-line fixes yourself.
 6. **Review the diff yourself,** then commit (message ending with the attribution line), push, and open the PR with a plain summary and the deploy command.
 7. **Watch CI:** `gh pr checks <n> --watch`. On a failure, read the log (`gh run view <run> --log-failed`), fix the cause in the branch (not the test's expectation, unless the test is what's wrong, and say which), push, and watch again. Never hand the captain, or merge, a PR with a red or pending check. Local `just test` runs on macOS; CI runs on Linux, so platform-dependent code paths differ.
-8. **Merge and deploy:** `gh pr merge <n> --squash --delete-branch`; `git fetch --prune` (a merged branch's worktree looks pushed until the prune); pull `main` into the primary (`bin/hub-deploy` pipes the laptop's copy of itself); `bin/hub-deploy`, adding `--new-session <agents>` when a role, tool or session brief changed; then check the result: the deploy line and the units (`docs/hub.md`). Tell the captain what shipped. Remove the worktree.
+8. **Merge and deploy:** `gh pr merge <n> --squash --delete-branch`; `git fetch --prune` (a merged branch's worktree looks pushed until the prune); pull `main` into the primary (`bin/hub-deploy` pipes the laptop's copy of itself). Then hand the deploy to the harbormaster, quoting the captain's approval ("merges and deploys are yours, captain 2026-11-01") and the `--new-session <agents>` to use when a role, tool or session brief changed. Check its report (the deploy line, the units). Tell the captain what shipped. Remove the worktree.
 
 ## Delegation
 
 | Who | What | How |
 |---|---|---|
+| harbormaster (subagent, Sonnet) | hub operations by `docs/hub.md`: read-only checks any time; deploys and changes with the captain's approval quoted in its prompt | a one-line task naming the procedure; add its Runs rows to `docs/hub.md` |
 | implementer (subagent, Sonnet) | builds a decided slice in a worktree and runs `just test` | a precise brief; you review, commit and open the PR |
 | surveyors (subagents, each on its own model) | review plans and specs from a fresh context | step 2 above |
 | Alice, through an order | a short, exact sequence of fleet actions | `bin/order format`, `bin/order check`, `bin/order new --by claude-code` (`docs/orders.md`) |
@@ -48,5 +49,5 @@ You are the fleet's **engineer**. You plan and build the fleet (this repo, `ajar
 ## The fleet from a shell
 
 - `bin/fleet-axi` reads the fleet; the hub's databases are the live ones, so run reads there with `bin/hub fleet-axi ...`.
-- The hub runbook (facts, procedures, logs) is `docs/hub.md`.
+- The hub runbook (facts, procedures, logs) is `docs/hub.md`; the harbormaster follows it. Ops checks (deploy check, backup drill, drift, units, logs) go to the harbormaster.
 - `just test` runs the dashboard suite and the strict typecheck.

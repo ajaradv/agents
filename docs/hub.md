@@ -1,6 +1,6 @@
 # The hub
 
-The hub runs the live fleet: the fleet node, the dashboard, the browser service, the backups and the timers. This is its runbook. E1 has the facts; the procedures come in E2 (plan `fleet/plans/feature/fleet-engineer.md` in the vault).
+The hub runs the live fleet: the fleet node, the dashboard, the browser service, the backups and the timers. This is its runbook: the facts, then the procedures the harbormaster (`.claude/agents/harbormaster.md`) follows. Plan: `fleet/plans/feature/fleet-engineer.md` in the vault.
 
 ## Facts
 
@@ -31,3 +31,56 @@ The hub runs the live fleet: the fleet node, the dashboard, the browser service,
 - `fleet/inbox/.node/node.log` and `dashboard.log` on the hub.
 - `sudo journalctl -u fleet-node --since -1h` (or any unit above).
 - `fleet/inbox/.node/deploys.log` for deploys.
+
+## Procedures
+
+Each procedure has a class:
+- **Run**: read-only. The harbormaster runs it whenever asked.
+- **Dry run**: shown with `--check` freely. Done for real only when the task prompt quotes the captain's approval (the engineer's merge-and-deploy approval of 2026-11-01 counts for deploys of merged, approved work).
+- **Document only**: changes the hub. Done only when the task prompt quotes the captain's approval for that procedure.
+
+Never in any procedure: print or copy the heartbeat URL, `.env` files, the service env, `~/.config/fleet/secrets/*`, `~/.pi/agent/models.json`, or 1Password values; `pgrep -fl`, `ps -E` or `ps eww` on agent processes (use `pgrep -f <name>` for PIDs).
+
+### Run
+
+| Procedure | Command | Expected | When it differs | Last run |
+|---|---|---|---|---|
+| Deploy check | `bin/hub-deploy --check` | `== the hub is at origin/main (<sha>)`, or the commits it would pull and who is busy; `pi model overrides: current` | Commits on main not deployed: report them (deploying is a Dry run). A tracked local change on the hub: report the file, don't touch it. | 2026-11-01 ok |
+| Services drift | `bin/hub fleet-services drift` | No output | Prints why the units are out of date: report it. The fix is a deploy with `--reinstall` (Dry run). | 2026-11-01 ok |
+| Backup drill | `bin/hub fleet-backup drill` | `ok <db>: restored and checked` per database (7), `drill passed`, about 20 s | Any `fail` or a missing database: report the lines and `bin/hub fleet-backup status`. Don't restore. | 2026-11-01 ok (18 s) |
+| Heartbeat | `bin/hub fleet-heartbeat status` | `ping URL: stored in …`, the timer `active (enabled)`, recent `ok: pinged` lines | `problem: sent /fail` lines: report what they list. `not set`: needs the captain. | 2026-11-01 ok |
+| Units | `bin/hub bash -c 'systemctl is-active fleet-node fleet-dashboard fleet-browser fleet-litestream vault-sync.timer fleet-heartbeat.timer'` | `active` six times | A unit not active: `sudo journalctl -u <unit> -n 50 --no-pager` on the hub, and report. Don't restart it. | 2026-11-01 ok |
+| Logs | `bin/hub bash -c 'tail -50 ~/Workspace/agents/fleet/inbox/.node/node.log'` (or `dashboard.log`) | No repeated errors in the last hour | Report the repeated lines and their first time. | 2026-11-01 ok |
+| Deploy history | `bin/hub bash -c 'tail -5 ~/Workspace/agents/fleet/inbox/.node/deploys.log'` | `<time> <from> <to> deploy`, the last `to` equal to the hub's HEAD | A `rollback` line, or HEAD different from the last `to`: report. | 2026-11-01 ok |
+| Vault sync | `bin/hub vault-sync --status` and `bin/vault-sync --status` | `"result":"ok"` within the last few minutes on both | `conflict`: report the detail (see Vault-sync conflict below). | 2026-11-01 ok |
+| Laptop worker | `bin/laptop-worker --status` | `service: running`, a tailnet address, `health: {"ok":true,…}` | Not running: report (relaunching it is Document only). | 2026-11-01 ok |
+| quota-axi | `command -v quota-axi` on the laptop | A path | Missing: report; Cursor quota checks fail without it. | 2026-11-01 ok |
+| Clock | `date -u` on the laptop and `bin/hub date -u` | Within a few seconds | More than a minute apart: report (Clock resync is Document only). | 2026-11-01 ok |
+
+### Dry run
+
+| Procedure | Check | For real | After |
+|---|---|---|---|
+| Deploy | `bin/hub-deploy --check` | Pull `main` on the laptop first (the script pipes the laptop's copy), then `bin/hub-deploy` | Deploy history shows the new line; Units all active; the output ends `done.` |
+| Deploy with new sessions | `bin/hub-deploy --check` | `bin/hub-deploy --new-session <a,b>` when a role, tool or session brief changed | As Deploy, plus `new session <agent>: …` per agent |
+
+### Document only
+
+| Procedure | Command | Notes |
+|---|---|---|
+| Rollback | `bin/hub-deploy --check --rollback` to see the plan, then `bin/hub-deploy --rollback [sha]` | Resets the hub's main to the commit before the last deploy. The hub is then behind origin/main: push a fix to main before the next deploy. |
+| Reinstall services | `bin/hub-deploy --reinstall` | When Services drift reports a change. Restarts the fleet. |
+| Litestream | `bin/hub hub-install --litestream`, then `bin/hub fleet-backup install` and a Backup drill | Installs the pinned version (`bin/litestream-pin.sh`). Never trust `fleet-litestream` being active: drill. |
+| Clock resync | `bin/hub sudo systemctl restart systemd-timesyncd`, then Clock | After resuming a paused VM, before starting services. |
+| Vault-sync conflict | On the machine that reports it: `git -C ~/Workspace/brain status`, resolve the rebase by hand, then `bin/vault-sync` | Never force-push the vault. Ask before touching `career/` or `profile/`. |
+| Laptop worker relaunch | `bin/laptop-worker --install` (macOS) | Safe to re-run; then Laptop worker. |
+| Restore a database | `bin/hub fleet-backup restore [--timestamp T] [db]` | Stops the fleet. Only for lost or corrupt data. Details: `docs/backups.md`. |
+
+## Runs
+
+| Date | Procedure | Outcome |
+|---|---|---|
+| 2026-11-01 | All Run procedures (engineer, while writing them) | All as expected. Drill 18 s, 7 databases. Notes: `dashboard.log` is 2.9 MB and has no rotation; `--check` says "would restart services" even with nothing to pull. |
+| 2026-11-01 | Deploy check (harbormaster acceptance) | ok: hub at origin/main (fa6e758), pi model overrides current |
+| 2026-11-01 | Backup drill (harbormaster acceptance) | ok: 7 databases, 15 s |
+| 2026-11-01 | Services drift (harbormaster acceptance) | ok: no output |
