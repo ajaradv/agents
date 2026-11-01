@@ -27,6 +27,8 @@ export type GateContext = {
   agent?: string;
   /** Alice's vault and her own inbox folder (ALICE_VAULT, FLEET_INBOX/alice). */
   aliceFolders?: { vault: string; inbox: string };
+  /** The Architect's vault (ALICE_VAULT); its writes there are limited to plans, specs, reviews and roadmaps. */
+  architectVault?: string;
   /** Resolves symlinks (fs.realpathSync); without it paths are judged as written. */
   realpath?: (p: string) => string;
   /** Test seam: is this pid the live fleet node or dashboard? */
@@ -291,6 +293,24 @@ function aliceWrite(tool: string, raw: string, p: string, ctx: GateContext): Ver
   return null;
 }
 
+/**
+ * The Architect writes plans, specs, reviews and roadmaps in the vault; the git and Obsidian folders and the
+ * captain's career/ and profile/ stop, and any other note waits for the captain. Outside the vault: no opinion.
+ */
+function architectWrite(tool: string, raw: string, p: string, ctx: GateContext): Verdict | null {
+  if (!ctx.architectVault) return null;
+  const lexical = normalize(ctx.architectVault);
+  const resolved = real(lexical, ctx);
+  const target = real(p, ctx);
+  if (!inside(p, lexical) && !inside(target, resolved)) return null;
+  if (!inside(target, resolved)) return { decision: "stop", reason: `${tool} of ${raw} leaves the vault through a link` };
+  const rel = target.slice(resolved.length).replace(/^\//, "");
+  const first = rel.split("/")[0] ?? "";
+  if (first === ".git" || first === ".obsidian" || first === "career" || first === "profile") return { decision: "stop", reason: `${tool} inside the vault's ${first} folder (${raw})` };
+  if (/^fleet\/(plans|specs|reviews)\/./.test(rel) || /^ships\/[^/]+\/roadmap\.md$/.test(rel)) return { decision: "allow", reason: "the Architect's plans, specs, reviews and roadmaps" };
+  return { decision: "ask", reason: `${tool} of ${raw}: the Architect writes plans, specs, reviews and roadmaps in the vault; other vault notes need the captain` };
+}
+
 /** Decide a tool call locally, or say it needs a closer look. */
 export function localVerdict(tool: string, input: Record<string, unknown>, ctx: GateContext): Verdict {
   if (BUILTIN.has(tool)) {
@@ -303,6 +323,10 @@ export function localVerdict(tool: string, input: Record<string, unknown>, ctx: 
     if (what) return { decision: "stop", reason: `${tool} of ${what} (${raw})` };
     if ((tool === "write" || tool === "edit") && ctx.agent === "alice") {
       const v = aliceWrite(tool, raw, p, ctx);
+      if (v) return v;
+    }
+    if ((tool === "write" || tool === "edit") && ctx.agent === "architect") {
+      const v = architectWrite(tool, raw, p, ctx);
       if (v) return v;
     }
     if (tool === "write" || tool === "edit") {

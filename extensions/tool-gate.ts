@@ -41,7 +41,9 @@ function context(cwd: string): GateContext {
 	const inbox = process.env.FLEET_INBOX && path.resolve(cwd, process.env.FLEET_INBOX.replace(/^~(?=\/|$)/, os.homedir()));
 	// Alice's writes are confined to her vault and her inbox folder; without both set there is nothing to confine to.
 	const aliceFolders = agent === "alice" && vault && inbox ? { vault, inbox: path.join(inbox, "alice") } : undefined;
-	return { cwd, home: os.homedir(), inVm, writable, agent, aliceFolders, realpath: (p) => realpathSync(p) };
+	// The Architect writes plans, specs, reviews and roadmaps in the vault (same default as bin/launch).
+	const architectVault = agent === "architect" ? (process.env.ALICE_VAULT ?? "~/Workspace/brain").replace(/^~(?=\/|$)/, os.homedir()) : undefined;
+	return { cwd, home: os.homedir(), inVm, writable, agent, aliceFolders, architectVault, realpath: (p) => realpathSync(p) };
 }
 
 async function askNode(tool: string, input: Record<string, unknown>, cwd: string, why: string, writable: string[]): Promise<{ decision: string; message: string }> {

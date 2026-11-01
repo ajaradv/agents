@@ -166,3 +166,40 @@ describe("tool gate: Alice's file writes", () => {
   });
 });
 
+
+describe("tool gate: the Architect's vault writes", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "architect-gate-")));
+  const vault = join(root, "brain");
+  const guest = join(root, "guest-worktree");
+  for (const d of [vault, join(vault, "ships/fleet"), guest]) mkdirSync(d, { recursive: true });
+  const architect: GateContext = { cwd: guest, home: "/Users/x", inVm: false, writable: [vault, guest, "/tmp"], agent: "architect", architectVault: vault, realpath: realpathSync };
+  const write = (path: string, c = architect, tool = "write") => localVerdict(tool, { path }, c).decision;
+
+  test("plans, specs, reviews and ship roadmaps pass", () => {
+    expect(write(join(vault, "ships/fleet/roadmap.md"))).toBe("allow");
+    expect(write(join(vault, "fleet/specs/kinwork/x.md"))).toBe("allow");
+    expect(write(join(vault, "fleet/reviews/a/review-1.md"))).toBe("allow");
+    expect(write(join(vault, "fleet/plans/feature/p.md"))).toBe("allow");
+  });
+  test("other notes ask, and say why", () => {
+    expect(write(join(vault, "workspace/pochteca.md"))).toBe("ask");
+    expect(write(join(vault, "ships/fleet/notes.md"))).toBe("ask");
+    expect(localVerdict("write", { path: join(vault, "workspace/pochteca.md") }, architect).reason).toContain("plans, specs, reviews and roadmaps");
+  });
+  test(".git, .obsidian, career and profile stop", () => {
+    expect(write(join(vault, "career/x.md"))).toBe("stop");
+    expect(write(join(vault, ".obsidian/a.json"))).toBe("stop");
+    expect(write(join(vault, ".git/config"))).toBe("stop");
+    expect(write(join(vault, "profile/me.md"))).toBe("stop");
+  });
+  test("edit behaves like write", () => {
+    expect(write(join(vault, "ships/fleet/roadmap.md"), architect, "edit")).toBe("allow");
+    expect(write(join(vault, "workspace/pochteca.md"), architect, "edit")).toBe("ask");
+    expect(write(join(vault, "career/x.md"), architect, "edit")).toBe("stop");
+  });
+  test("outside the vault is unchanged, and other agents are not affected", () => {
+    expect(write(join(guest, "src/a.ts"))).toBe("allow");
+    expect(write(join(vault, "workspace/pochteca.md"), { ...architect, agent: "builder", architectVault: undefined })).toBe("allow");
+    expect(write(join(vault, "career/x.md"), { ...architect, agent: "builder", architectVault: undefined })).toBe("allow");
+  });
+});
