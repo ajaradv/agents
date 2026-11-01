@@ -16,7 +16,7 @@ Readiness is one of `ready to sail`, `spec-session`, `design-session`, `needs th
 
 ## Who writes it
 
-The Architect only. The repo's own `PLAN.md` is an input, never edited; disagreements between sources go to Open questions. The tool gate does not restrict the Architect's vault writes, so no rule is needed for `ships/*/roadmap.md`. After a refresh the Architect posts one line to Alice (`bus_post`, kind `roadmap-refreshed`).
+The Architect only. The repo's own `PLAN.md` is an input, never edited; disagreements between sources go to Open questions. The tool gate lets the Architect write `ships/*/roadmap.md` (with `fleet/plans/`, `fleet/specs/` and `fleet/reviews/`); its other vault writes hold for the captain in every gate mode (`architectWrite` in `extensions/tool-gate/rules.ts`; goldfish-review Decision 5). After a refresh the Architect posts one line to Alice (`bus_post`, kind `roadmap-refreshed`).
 
 Refresh triggers (after a dock, a Monday routine) are a later phase; today the Architect refreshes on request.
 
