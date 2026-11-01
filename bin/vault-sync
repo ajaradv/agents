@@ -47,6 +47,16 @@ sync_once() {
   fi
 }
 
+# bootout returns before launchd has unloaded the job, and a bootstrap then fails with
+# "5: Input/output error" (2026-10-31): wait for the unload, then bootstrap with retries
+# (the same as bin/fleet-services' stop_job/start_job).
+relaunch() { # label plist
+  launchctl bootout "gui/$(id -u)/$1" 2>/dev/null || true
+  for _ in $(seq 1 40); do launchctl print "gui/$(id -u)/$1" >/dev/null 2>&1 || break; sleep 0.25; done
+  for _ in 1 2 3 4; do launchctl bootstrap "gui/$(id -u)" "$2" 2>/dev/null && return 0; sleep 1; done
+  launchctl bootstrap "gui/$(id -u)" "$2"
+}
+
 case "${1:-}" in
   "") sync_once ;;
   --status) cat "$STATUS" 2>/dev/null || echo "no sync yet" ;;
@@ -70,7 +80,7 @@ case "${1:-}" in
   <key>StandardErrorPath</key><string>${STATUS%.json}.log</string>
 </dict></plist>
 EOF
-      launchctl bootout "gui/$(id -u)/com.fleet.vault-sync" 2>/dev/null; launchctl bootstrap "gui/$(id -u)" "$p" && echo "installed com.fleet.vault-sync"
+      relaunch com.fleet.vault-sync "$p" && echo "installed com.fleet.vault-sync"
     fi ;;
   --uninstall)
     if [ "$(uname)" = Linux ]; then sudo systemctl disable --now vault-sync.timer 2>/dev/null; sudo rm -f /etc/systemd/system/vault-sync.{service,timer}; sudo systemctl daemon-reload

@@ -26,6 +26,16 @@ TS="$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Ta
 token() { security find-generic-password -a fleet -s laptop-worker-token -w 2>/dev/null || true; }
 ts_name() { "$TS" status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null; }
 
+# bootout returns before launchd has unloaded the job, and a bootstrap then fails with
+# "5: Input/output error" (2026-10-31): wait for the unload, then bootstrap with retries
+# (the same as bin/fleet-services' stop_job/start_job).
+relaunch() { # label plist
+  launchctl bootout "gui/$(id -u)/$1" 2>/dev/null || true
+  for _ in $(seq 1 40); do launchctl print "gui/$(id -u)/$1" >/dev/null 2>&1 || break; sleep 0.25; done
+  for _ in 1 2 3 4; do launchctl bootstrap "gui/$(id -u)" "$2" 2>/dev/null && return 0; sleep 1; done
+  launchctl bootstrap "gui/$(id -u)" "$2"
+}
+
 case "${1:-}" in
   --install)
     [ "$(uname)" = Darwin ] || { echo "error: the laptop worker is for the macOS laptop"; exit 2; }
@@ -51,8 +61,12 @@ case "${1:-}" in
   <key>StandardErrorPath</key><string>$LOG</string>
 </dict></plist>
 PL
-    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
-    launchctl bootstrap "gui/$(id -u)" "$PLIST" && echo "started $LABEL on 127.0.0.1:$PORT"
+    relaunch "$LABEL" "$PLIST" && echo "started $LABEL on 127.0.0.1:$PORT"
+    # The worker offers "quota" only when quota-axi is on this PATH (dashboard/worker.ts); without
+    # it the hub's usage card says the laptop is up but has no quota-axi.
+    command -v quota-axi >/dev/null || echo "warning: quota-axi is not on PATH, so the hub gets no Claude/Cursor/Codex quota (npm install -g quota-axi@0.1.64)"
+    IFS=: read -ra path_dirs <<<"$PATH"
+    for d in "${path_dirs[@]}"; do [ -z "$d" ] || [ -d "$d" ] || echo "warning: PATH lists $d, which does not exist (a removed Node version?)"; done
     "$TS" serve --bg --https="$PORT" "http://127.0.0.1:$PORT" >/dev/null 2>&1 && echo "published on the tailnet: https://$(ts_name):$PORT"
     ;;
   --push-token)
