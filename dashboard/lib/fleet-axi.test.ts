@@ -46,7 +46,9 @@ describe("fleet-axi flags", () => {
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/^# Engineer brief \d{4}-\d{2}-\d{2}/);
     expect(r.out).toContain("## Repo");
-    expect(r.out).toContain("- hub unreachable (offline)");
+    // On Linux (the hub, and CI) the hub part is built in place, as bin/hub does; elsewhere it goes over ssh, which is down here.
+    if (process.platform === "linux") expect(r.out).toContain("## Hub");
+    else expect(r.out).toContain("- hub unreachable (offline)");
     expect(r.out).toContain("## PRs\n- unavailable: offline");
   });
 
