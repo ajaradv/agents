@@ -48,7 +48,7 @@ const BUILTIN = new Set(["read", "write", "edit", "bash", "grep", "find", "ls"])
 
 /** Fleet and crew tools that only read, or act through the node's own checks (Go, orders, crew tokens). */
 const SAFE_TOOLS = new Set([
-  "fleet_status", "ship_log", "ship_tasks", "ship_maneuvers", "agent_chat_read", "recall", "vault_tasks",
+  "fleet_status", "ship_log", "ship_tasks", "ship_maneuvers", "agent_chat_read", "recall", "vault_tasks", "ship_next",
   // Alice's typed reads (vault plan alice-memory-and-tools, M1); vault_patch writes only inside the vault and refuses career/ and profile/.
   "fleet_query", "vault_note", "vault_search", "vault_doctor", "vault_patch",
   // Alice's memory (M2): facts and observations in the node's journal, one line in the captain profile; the node holds them during orders.

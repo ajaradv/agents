@@ -10,7 +10,7 @@ harness: pi first, nothing that only works in Claude Code.
 
 | Kind | Examples | Standard |
 |---|---|---|
-| **pi tools** (registered by an extension; the node answers) | `voyage_status`, `ship_log`, `vault_tasks`, `task_add` | the output rules below; definitions short |
+| **pi tools** (registered by an extension; the node answers) | `voyage_status`, `ship_log`, `vault_tasks`, `ship_next`, `task_add` | the output rules below; definitions short |
 | **CLIs agents run** (scripts, wrappers, AXIs we build) | `bin/stamp-ship`, `bin/new-agent`, a future fleet AXI | all ten AXI principles, checked with axi-axi |
 | **Third-party AXIs and MCP servers** | jev-axi, obsidian-axi | reviewed against this page before an agent gets them; MCP only when its tool definitions are worth their cost every turn |
 

@@ -145,6 +145,20 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "ship_next",
+    label: "Ship next",
+    description: "What is next on a ship, from its roadmap note (ships/<ship>/roadmap.md, kept by the Architect): the milestone in progress, the Next up items in order (milestone, size, readiness), and the captain's open questions, with a stale flag when the note is old or the repo has moved on. Without ship, every ship in brief. Use it for \"what's next on X\" instead of reading repo files or old plans. full adds milestones and recently done.",
+    parameters: Type.Object({
+      ship: Type.Optional(Type.String({ description: "Ship id, e.g. pochteca, or fleet; omit for all ships" })),
+      full: Type.Optional(Type.Boolean({ description: "Add milestones and recently done; long text uncut" })),
+      ...OrderArgs,
+    }),
+    async execute(_id, p) {
+      return text(await call("GET", "ship-next", { ship: p.ship, full: p.full ? "true" : undefined, order: p.order, step: p.step }));
+    },
+  });
+
+  pi.registerTool({
     name: "fleet_query",
     label: "Fleet query",
     description: "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool, with totals by tool and day. jev: Jev calls and cost per use, and the compaction advisor. gate: tool gate decisions with mode, counts by agent and day, and the notable ones. voyages: open and recent voyages with ship and cost. The window is days back from now, or since/until as YYYY-MM-DD (UTC, both days inclusive) for a fixed range. A list says \"shown N of M\" when cut: a sample, not totals; limit or full=true shows more.",

@@ -71,6 +71,7 @@ docs/harness-auth.md       per-harness login and API keys
 docs/onepassword.md        vault Fleet, Environment agents-fleet
 docs/remote-ops.md         Herdr secondmates, Alice relocate, SDLC, phone SSH
 docs/architect.md          plan pipeline, vault plans, Firstmate triage
+docs/roadmaps.md           ship roadmap notes (ships/<ship>/roadmap.md), ship_next, fleet-axi next --ship
 docs/dashboard.md          localhost fleet UI, chat bar, usage (htmx + SSE)
 docs/tool-standards.md     how tools are built: AXI output rules, checks (just test, just axi-check)
 docs/system-one.md         Jev (system-one) decisions: when to use, the client, questions, thresholds, data

@@ -38,6 +38,7 @@ import { startEventRouter } from "./lib/event-router.ts";
 import { recoverDelegations, startDelegation } from "./lib/delegate.ts";
 import { askPublic } from "./lib/public-helper.ts";
 import { toolText, VIEWS } from "./lib/tool-out.ts";
+import { shipNext } from "./lib/roadmap.ts";
 import { dueTasks, VAULT_FILTERS, vaultNextReport, vaultTasksReport, type VaultFilter } from "./lib/vault-tasks.ts";
 import { doctorReport, scheduledVaultCheck } from "./lib/vault-doctor.ts";
 import { fleetQuery } from "./lib/fleet-query.ts";
@@ -430,6 +431,7 @@ function fleetCall(what: string, method: string, q: URLSearchParams, b: Record<s
   if (method === "GET" && what === "chat") return { tool: "agent_chat_read", read: true, args: fromQ(["agent", "n"]) };
   if (method === "GET" && what === "recall") return { tool: "recall", read: true, args: fromQ(["query", "limit"]) };
   if (method === "GET" && what === "vault-tasks") return { tool: "vault_tasks", read: true, args: fromQ(["filter", "id"]) };
+  if (method === "GET" && what === "ship-next") return { tool: "ship_next", read: true, args: fromQ(["ship"]) };
   if (method === "GET" && what === "fleet-query") return { tool: "fleet_query", read: true, args: fromQ(["query", "days", "by", "since", "until", "limit"]) };
   if (method === "GET" && what === "vault-note") return { tool: "vault_note", read: true, args: fromQ(["path", "section", "full"]) };
   if (method === "GET" && what === "vault-search") return { tool: "vault_search", read: true, args: fromQ(["query", "type", "status", "ship", "path", "limit"]) };
@@ -541,6 +543,7 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
   else if (call.tool === "log_observation") res = logObservation({ text: a.text, subject: a.subject, ttlDays: Number(a.ttl_days) || undefined, by: from });
   else if (call.tool === "vault_tasks" && a.filter === "next") res = vaultNextReport(a.id ?? "");
   else if (call.tool === "vault_tasks") res = vaultTasksReport((VAULT_FILTERS as string[]).includes(a.filter ?? "") ? (a.filter as VaultFilter) : "ready", a.id ?? "");
+  else if (call.tool === "ship_next") res = await shipNext(a.ship ?? "", q.get("full") === "true");
   else if (call.tool === "recall") {
     const hits = recall(a.query ?? "", Number(a.limit) || 8);
     res = { ok: true, message: hits.length ? `${hits.length} match(es), best first.` : "No matches. Try other words, or delegate a deeper search.", hits };
@@ -629,7 +632,7 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     return Response.json(r);
   }
 
-  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|queue|delegate|public|recall|vault-tasks|fleet-query|vault-note|vault-search|vault-patch|vault-doctor|fact-get|fact-set|remember|log-observation|proactive-report)$/);
+  const fleet = path.match(/^\/api\/fleet\/(status|log|tasks|maneuvers|chat|order-step|order-finish|action|notify|queue|delegate|public|recall|vault-tasks|ship-next|fleet-query|vault-note|vault-search|vault-patch|vault-doctor|fact-get|fact-set|remember|log-observation|proactive-report)$/);
   if (fleet) return fleetApi(req, fleet[1]!, url.searchParams);
 
   const crew = path.match(/^\/api\/crew\/([a-z][a-z0-9_-]{0,40})\/(status|tasks|message|maneuvers|check|git|fleet-query|vm|helm|look|helper|canvas|crew-request|dock-request|queue-request)(?:\/(\d+))?$/);
