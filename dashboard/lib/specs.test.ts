@@ -11,7 +11,9 @@ process.env.ALICE_VAULT = vault;
 const sp = await import("./specs.ts");
 const q = await import("./decision-queue.ts");
 const d = await import("./decisions.ts");
+const j = await import("./journal.ts");
 afterAll(() => {
+  j._closeJournal();
   for (const [k, v] of [["FLEET_INBOX", prev.inbox], ["ALICE_VAULT", prev.vault]] as const) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -61,6 +63,10 @@ describe("the officers' decisions", () => {
     const id = r.item.id;
     expect(d.specSubmit("designer", { queue: id, path: "fleet/specs/kinwork/search-page.md" }).ok).toBe(false);
     expect(d.specSubmit("architect", { queue: id, path: "fleet/specs/kinwork/empty.md" }).message).toContain("Acceptance criteria");
+    // The review gate (lib/survey.ts reviewReady): a review-mode skip on the node's record, named in the spec.
+    expect(d.specSubmit("architect", { queue: id, path: "fleet/specs/kinwork/search-page.md" }).message).toContain("no `review:`");
+    write("fleet/specs/kinwork/search-page.md", SPEC.replace("---\n", "---\nreview: skipped\n"));
+    j.upsertWorkflow("survey", "s-specs-skip", { by: "architect", mode: "review", target: "fleet/specs/kinwork/search-page.md", depth: "skip" }, { status: "done" });
     expect(d.specSubmit("architect", { queue: id, path: "fleet/specs/kinwork/search-page.md" })).toMatchObject({ ok: true, message: expect.stringContaining("3 acceptance criteria") });
     const told: string[] = [];
     const deps = { tellLead: async (to: string) => void told.push(to) };

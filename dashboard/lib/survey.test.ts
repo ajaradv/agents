@@ -531,3 +531,96 @@ describe("prepareCode", () => {
     expect(c.note).toContain("no code");
   });
 });
+
+describe("reviewReady", () => {
+  const withReview = (rel: string, review: string): string => {
+    const text = readFileSync(join(vault, rel), "utf8");
+    writeFileSync(join(vault, rel), text.replace(/^---\n/, `---\n${review ? `review: ${review}\n` : ""}`), "utf8");
+    return rel;
+  };
+  const resolve = (file: string, resolution: string) => writeFileSync(join(vault, file), `${readFileSync(join(vault, file), "utf8")}\n## Resolution\n${resolution}`, "utf8");
+  const reviewed = async (name: string) => {
+    jevSays("light");
+    const rel = note(name);
+    const r = await s.startReview("architect", { mode: "review", path: rel, writer: SOL });
+    await until(() => wf(String(r.id)).status === "done");
+    return { rel, file: (wf(String(r.id)).data as { review: string }).review, id: String(r.id) };
+  };
+
+  test("refuses a note with no review:, and a missing note", async () => {
+    const rel = note("ready-none");
+    const r = s.reviewReady(rel);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("no `review:`");
+    expect(s.reviewReady("fleet/plans/feature/ghost.md").ok).toBe(false);
+  });
+
+  test("refuses a review file the node has no record of, one for another target, and one for brainstorm mode", async () => {
+    const rel = note("ready-forged");
+    mkdirSync(join(vault, "fleet/reviews/ready-forged"), { recursive: true });
+    writeFileSync(join(vault, "fleet/reviews/ready-forged/review-9.md"), "### F1 — Nit: a\n\n## Resolution\nF1: fix — x\n");
+    withReview(rel, "fleet/reviews/ready-forged/review-9.md");
+    expect(s.reviewReady(rel).message).toContain("not a review the node wrote");
+    // A record for another target does not count.
+    j.upsertWorkflow("survey", "s-ready-other", { mode: "review", target: "fleet/plans/feature/other.md", review: "fleet/reviews/ready-forged/review-9.md", ids: [1] }, { status: "done" });
+    expect(s.reviewReady(rel).ok).toBe(false);
+    // Nor does one in brainstorm mode.
+    j.upsertWorkflow("survey", "s-ready-brain", { mode: "brainstorm", target: rel, review: "fleet/reviews/ready-forged/review-9.md", ids: [1] }, { status: "done" });
+    expect(s.reviewReady(rel).ok).toBe(false);
+    j.upsertWorkflow("survey", "s-ready-mine", { mode: "review", target: rel, review: "fleet/reviews/ready-forged/review-9.md", ids: [1], depth: "light", counts: {} }, { status: "done" });
+    expect(s.reviewReady(rel).ok).toBe(true);
+  });
+
+  test("accepts a resolved review (absolute or vault-relative note path), refuses an open finding and a deleted one", async () => {
+    const { rel, file } = await reviewed("ready-ok");
+    withReview(rel, file);
+    const open = s.reviewReady(rel);
+    expect(open.ok).toBe(false);
+    expect(open.message).toContain("no resolution for F1, F2");
+    resolve(file, "F1: fix — changed\nF2: escalate — only the captain knows\n");
+    const ok = s.reviewReady(join(vault, rel));
+    expect(ok.ok).toBe(true);
+    expect(ok.review).toMatchObject({ depth: "light", rel: file, escalations: ["F2: only the captain knows"] });
+    expect(ok.review!.counts.Major).toBe(2);
+    // A finding deleted from the file is caught by the ids the node counted.
+    const text = readFileSync(join(vault, file), "utf8");
+    writeFileSync(join(vault, file), text.replace(/### F2 — [\s\S]*?(?=\n## Resolution)/, "").replace(/^F2: .*$/m, ""), "utf8");
+    const gone = s.reviewReady(rel);
+    expect(gone.ok).toBe(false);
+    expect(gone.message).toContain("F2");
+    expect(gone.message).toContain("no longer has");
+  });
+
+  test("skipped needs a review-mode skip on record, not a brainstorm skip", async () => {
+    const rel = withReview(note("ready-skip"), "skipped");
+    s.surveyHooks.ask = async () => choice("skip", { skip: 0.95 }, 0.95);
+    const b = await s.startReview("architect", { mode: "brainstorm", path: rel, writer: SOL });
+    expect(b.depth).toBe("skip");
+    expect(s.reviewReady(rel).ok).toBe(false);
+    await Bun.sleep(5);
+    const r = await s.startReview("architect", { mode: "review", path: rel, writer: SOL });
+    expect(r.depth).toBe("skip");
+    expect(runs).toHaveLength(0);
+    expect(s.reviewReady(rel)).toMatchObject({ ok: true, review: null });
+  });
+
+  test("unavailable needs a failed review-mode record, from a budget refusal here", async () => {
+    const rel = withReview(note("ready-unavail"), "unavailable");
+    expect(s.reviewReady(rel).ok).toBe(false);
+    process.env.FLEET_SURVEY_BUDGET_USD = "0.001";
+    const spent = s.surveySpentToday();
+    expect(spent).toBeGreaterThan(0.001);
+    const refused = await s.startReview("architect", { mode: "review", path: rel, writer: SOL });
+    expect(refused.ok).toBe(false);
+    const r = s.reviewReady(rel);
+    expect(r.ok).toBe(true);
+    expect(r.unavailable).toContain("FLEET_SURVEY_BUDGET_USD");
+    await Bun.sleep(5); // the latest record is the one created last
+    // A review that then succeeds replaces the failure as the latest record.
+    process.env.FLEET_SURVEY_BUDGET_USD = "100";
+    jevSays("light");
+    const again = await s.startReview("architect", { mode: "review", path: rel, writer: SOL });
+    await until(() => wf(String(again.id)).status === "done");
+    expect(s.reviewReady(rel).ok).toBe(false);
+  });
+});

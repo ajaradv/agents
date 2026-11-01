@@ -48,20 +48,22 @@ function context(cwd: string): GateContext {
 	return { cwd, home: os.homedir(), inVm, writable, agent, aliceFolders, architectVault, helperVault, realpath: (p) => realpathSync(p) };
 }
 
-async function askNode(tool: string, input: Record<string, unknown>, cwd: string, why: string, writable: string[]): Promise<{ decision: string; message: string }> {
-	if (mode === "observe" && (!base || !token)) return { decision: "allow", message: "" };
+async function askNode(tool: string, input: Record<string, unknown>, cwd: string, why: string, writable: string[], opts: { captain?: boolean } = {}): Promise<{ decision: string; message: string }> {
+	// A captain hold waits for the node in every mode: observing never lets it through.
+	const observing = mode === "observe" && !opts.captain;
+	if (observing && (!base || !token)) return { decision: "allow", message: "" };
 	if (!base || !token) return { decision: "stop", message: `Blocked by the fleet's tool gate: it needs a closer look (${why}), and this session cannot reach the fleet node to ask. Ask the captain to run it.` };
 	try {
 		const res = await fetch(`${base}/api/gate`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json", "x-fleet-crew-token": token },
-			body: JSON.stringify({ tool, input, cwd, why, writable, mode }),
+			body: JSON.stringify({ tool, input, cwd, why, writable, mode: observing ? mode : "enforce", ...(opts.captain ? { captain: true } : {}) }),
 			signal: AbortSignal.timeout(12_000),
 		});
 		const j = (await res.json()) as { decision?: string; message?: string };
 		return { decision: String(j.decision ?? "stop"), message: String(j.message ?? "Blocked by the fleet's tool gate.") };
 	} catch (e) {
-		if (mode === "observe") return { decision: "allow", message: "" };
+		if (observing) return { decision: "allow", message: "" };
 		return { decision: "stop", message: `Blocked by the fleet's tool gate: the fleet node did not answer (${e instanceof Error ? e.message : String(e)}), and unfamiliar calls are never let through unchecked. Try again shortly, or ask the captain.` };
 	}
 }
@@ -87,11 +89,11 @@ export default function (pi: ExtensionAPI) {
 			return { block: true, reason: `Blocked by the fleet's tool gate: ${v.reason}. Do not retry it or work around it; if it is really needed, explain why to the captain and let them run it.` };
 		}
 		// Observing: judged and logged in the background; the agent does not wait.
-		if (mode === "observe") {
+		if (mode === "observe" && !v.captain) {
 			void askNode(event.toolName, input, cwd, v.reason, gctx.writable);
 			return;
 		}
-		const r = await askNode(event.toolName, input, cwd, v.reason, gctx.writable);
+		const r = await askNode(event.toolName, input, cwd, v.reason, gctx.writable, { captain: v.captain });
 		if (r.decision === "allow") return;
 		return { block: true, reason: r.message };
 	});

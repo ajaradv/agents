@@ -1,6 +1,7 @@
 import { addQueueItem, readQueue, updateQueueItem } from "./decision-queue.ts";
 import { checkSpec, setSpecStatus } from "./specs.ts";
 import { busPost } from "./bus-api.ts";
+import { reviewReady } from "./survey.ts";
 
 /**
  * The flagship officers' side of the decision queue (extensions/decisions.ts):
@@ -20,7 +21,10 @@ export function specSubmit(from: string, b: { queue?: unknown; path?: unknown })
   if (item.status !== "queued") return { ok: false, message: `That review is ${item.status}.` };
   const checked = checkSpec(String(b.path ?? ""), item.ship);
   if (!checked.ok) return checked;
-  updateQueueItem(id, { record: checked.spec.file, note: "" });
+  const ready = reviewReady(checked.spec.file);
+  if (!ready.ok) return ready;
+  const review = ready.review ?? { depth: ready.unavailable ? "" : "skip", counts: {}, escalations: [], rel: "", ...(ready.unavailable ? { unavailable: ready.unavailable } : {}) };
+  updateQueueItem(id, { record: checked.spec.file, note: "", review });
   return { ok: true, message: `Submitted for the captain's review: ${checked.spec.title} (${checked.spec.criteria.length} acceptance criteria). It waits on the flagship's Decision queue; changes come back on your bus.` };
 }
 
@@ -55,7 +59,7 @@ export async function reviewQueueItem(id: string, act: "approve" | "changes", no
     if (clean.length < 5) return { ok: false, message: "Say what to change." };
     const posted = await busPost("captain", { to: "architect", kind: "spec-changes", summary: `Changes to the spec (queue ${id}): ${clean}`, ref: item.record, ship: item.ship }, async (a) => a === "architect");
     if (!posted.ok) return posted;
-    updateQueueItem(id, { note: clean, record: "" });
+    updateQueueItem(id, { note: clean, record: "", review: undefined });
     return { ok: true, message: "Sent to the architect; the revised spec comes back to the queue." };
   }
   if (item.kind === "design-review") {

@@ -34,6 +34,8 @@ export type QueueItem = {
   source?: string;
   /** The captain's last "changes, please" on a review. */
   note?: string;
+  /** For a spec review: what the surveyors found (lib/survey.ts reviewReady), shown on the card. */
+  review?: { depth: string; counts: Record<string, number>; escalations: string[]; rel: string; unavailable?: string };
 };
 
 const path = () => join(nodeStateDir(), "decision-queue.json");
@@ -73,7 +75,7 @@ export function addQueueItem(b: { kind: string; ship: string; title: string; req
   return { ok: true, item };
 }
 
-export function updateQueueItem(id: string, patch: Partial<Pick<QueueItem, "status" | "record" | "title" | "request" | "note">>): QueueItem | null {
+export function updateQueueItem(id: string, patch: Partial<Pick<QueueItem, "status" | "record" | "title" | "request" | "note" | "review">>): QueueItem | null {
   if (!ID_RE.test(id)) return null;
   const items = readQueue();
   const i = items.findIndex((x) => x.id === id);

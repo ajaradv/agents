@@ -8,8 +8,9 @@
 #
 # Example: bin/survey fleet/plans/feature/x.md --writer anthropic/claude-opus-5.5
 #
-# The review lands in the vault at fleet/reviews/<slug>/review-<n>.md on the hub; run
-# bin/vault-sync here to pull it. Resolve it under "## Resolution", as the Architect does.
+# The review lands in the vault at fleet/reviews/<slug>/review-<n>.md on the hub; this script then
+# syncs the hub's vault and pulls it here. Resolve it under "## Resolution", as the Architect does.
+# Exits non-zero when the review or either sync fails.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,4 +18,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 "$ROOT/bin/vault-sync"
 "$ROOT/bin/hub" vault-sync
-"$ROOT/bin/hub" fleet-axi review "$@"
+rc=0
+"$ROOT/bin/hub" fleet-axi review "$@" || rc=$?
+# Sync even after a failed review: the triage note it wrote should reach the laptop too.
+"$ROOT/bin/hub" vault-sync || { echo "survey: the hub's vault-sync failed; the review is on the hub but not here" >&2; exit 1; }
+"$ROOT/bin/vault-sync" || { echo "survey: vault-sync failed; the review is not pulled" >&2; exit 1; }
+exit "$rc"

@@ -31,6 +31,7 @@ Audit the target document file and line range specified by the caller:
 2. **Verify Code vs. Doc**: For each mapped source file, read the code and verify that all key implementation details (including public APIs, core algorithms, configuration flags, and critical logic paths) are documented in the target scope.
 3. **Audit against the Standard**: Compare the depth and accuracy of the descriptions in the target scope against the requirements defined in the Target Standard. Flag any areas that fall short of the standard's criteria.
 4. **Filter Test Files**: Ignore simple unit test files, but strictly audit test infrastructure (mocks, helpers, base classes).
+5. **Plans Describe Work To Do**: When a plan describes a phase as work to do, absent code is expected, not a finding. Check the plan's claims about today's code and the files it will change.
 
 ### Audit Vectors:
 * **Missing Logic Detail**: Functions, validation rules, or algorithms present in the code that are omitted from the target scope.

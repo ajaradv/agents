@@ -1,68 +1,28 @@
-# Architect and plan pipeline
+# Architect and the spec route
 
-Firstmate stays the router. Architect does not see every captain note. Mechanical work skips planning. Plans live in the Obsidian vault (`ALICE_VAULT`) so you can read markdown or open a Lavish board before work becomes crew briefs.
+The Architect turns ideas and requests into plans and specs in the Obsidian vault (`ALICE_VAULT`). Only approved specs (and chores) sail. A plan is a design document the captain reads and accepts; it never sails on its own.
 
 ## Flow
 
-1. Captain drops notes in **`{vault}/fleet/inbox/`**.
-2. **Alice** ingests into **`fleet/ideas/`** (unscoped thoughts) or **`fleet/requests/`** (actionable asks; include ship when known).
-3. Alice enqueues Firstmate with **`kind: request`** and a vault **`ref`** to the note.
-4. **Firstmate — step 1:** execute now (mechanical, obvious ship) → ship/scout spawn using **implementation** rules in `crew-dispatch.json`. Otherwise → needs a plan.
-5. **Firstmate — step 2:** for plan drafts, match a **planning** rule (Jev via `TYPESAFE_API_KEY` + `bin/fm-dispatch-resolve.sh` when enabled, else judgment on the same `when` text), rank profiles with **quota-axi**, then **`fm-spawn`** an Architect-role worker with the winning harness/model/effort.
-6. The worker writes **`fleet/plans/<category>/<slug>.md`** with **`status: draft`**, appends **`FLEET_INBOX/firstmate/events.jsonl`** (`kind: plan-draft`), and Firstmate logs **`FLEET_INBOX/architect/events.jsonl`** for the interactive Architect.
-7. Captain reviews in Obsidian (and optionally Lavish). Status: **`draft` → `reviewed` → `finalized`**. Only **`finalized`** is executable.
-8. On **`finalized`**, Architect (or captain via Architect) sends **`kind: plan-ready`** to Firstmate. Firstmate runs **`bun bin/plan-execution.ts <plan>`**, then **`fm-brief`** + quota + **`fm-spawn`** per task using that task's rule. Uncovered tasks fall back to Jev or judgment on **implementation** rules, not the planning profile array.
+1. The captain or Alice posts to the Architect's bus: `kind: plan` for an idea or request, `spec-request` after a spec or design session.
+2. The Architect calls `survey mode=brainstorm` on the note and folds the findings into a draft.
+3. It writes the draft: a plan in `fleet/plans/<category>/<slug>.md`, or a spec in `fleet/specs/<ship>/<slug>.md`.
+4. It calls `survey mode=review` on the draft, resolves each finding under `## Resolution`, fixes the draft, and sets `review:` in its frontmatter.
+5. The node checks `review:` against its own record of the survey. A draft with no matching record does not go on.
+6. A plan goes to Alice as `plan-draft`, and she tells the captain. A spec goes to the captain's Decision queue with `spec_submit`; the card shows the review's depth, counts and escalations.
+7. The captain accepts or rejects a plan, or approves a spec. After a plan is accepted, the Architect refreshes the ship's roadmap with its slices.
+8. A voyage sails from an approved spec on the captain's Go.
 
-## Model per task (execution block)
+## Surveyors
 
-The Architect assigns each task a **rule id** from `crew-dispatch.json`, never a model:
+Fresh reviewers, each on its own model and never the writer's. Jev decides the depth (skip, light or full). Reviews run on the hub. From the laptop, use `bin/survey <vault path> --writer <model>`. The design is the vault plan `goldfish-review`.
 
-```yaml
-execution:
-  - task: Rename the helpers
-    rule: mechanical
-  - task: Build the chat rail
-    rule: big-ship
-    effort: high
-```
+## Status
 
-| Who | Decides |
-|---|---|
-| Architect | Task split, rule id per task, optional effort hint |
-| quota-axi + `fm-spawn` | Concrete harness/model from that rule's profiles |
-| Firstmate | Falls back to Jev or judgment only for tasks without a rule |
+A plan's `status:` is `draft`, then `accepted` or `rejected`, set only by the captain. A spec is `draft`, `approved` (by the captain), `sailing`, `built`.
 
-`bin/plan-execution.ts` validates the block (unknown ids, model names, bad effort) and prints each task's profile array. Firstmate logs spawns and outcomes to `FLEET_INBOX/dispatch-outcomes.jsonl` so rules can be tuned from real results.
+## Running the Architect
 
-## Surfaces
+`just architect` or `just architect-op` (the same 1Password env file as Alice). The model is the first usable one in the Architect's list; the aliases and the Cursor switch are in `fleet/config/models.json`. `bin/setup-alice-vault` creates the vault folders.
 
-| Surface | Command | Model | Role |
-|---|---|---|---|
-| Interactive primary | `just architect` / `just architect-op` | `cursor/grok-4.7@256k` | Review, revise, captain-driven finalize |
-| Dispatched worker | Firstmate `fm-spawn` | Jev + quota from planning rules | Write draft plans from inbox events |
-
-Planning lanes prefer **Claude Code** high/xhigh or medium, then **Cursor Grok** — never Claude-via-Cursor. API fallbacks use the same Pi providers as ship dispatch when subscriptions are exhausted.
-
-## Vault layout
-
-```text
-fleet/inbox/              # human drop zone
-fleet/ideas/
-fleet/requests/
-fleet/plans/{project,feature,bugfix,refactor,research,ops}/
-```
-
-Plan frontmatter: `title`, `category`, `status`, `ship`, `created`, `source`, `execution`. Optional `lavish:` when a board exists.
-
-## Lavish
-
-No custom Lavish app in this slice. Open the plan markdown in Obsidian, or use an existing **lavish-axi** board against that file if installed (Firstmate may export `config/lavish-axi-host` to workers).
-
-## Setup
-
-```bash
-bin/setup-alice-vault    # ideas, requests, plan dirs + architect bus under fleet/inbox/
-just architect-op        # same 1Password env file as Alice/Firstmate
-```
-
-See [roles/architect.md](../roles/architect.md), [roles/firstmate.md](../roles/firstmate.md), and [fleet/config/crew-dispatch.json](../fleet/config/crew-dispatch.json).
+See [roles/architect.md](../roles/architect.md).

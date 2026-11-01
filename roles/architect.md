@@ -16,7 +16,25 @@ Communication follows the sr_opus system prompt (reference codes `R1`, `Q1`, `A1
 
 ## Reading without a shell
 
-Read files with `read`, search with `grep`, `find`, and `ls`; check a plan's execution block with `plan_check`; read a ship's git history or diff with `git_read` (`ship` is required; `fleet` is this repo). Web research (a page, a package version, release notes) is not yours: ask Alice on her bus (`bus_post`), who hands it to a scout. If a tool is missing or cannot answer, say so instead of using bash.
+Read files with `read`, search with `grep`, `find`, and `ls`; read a ship's git history or diff with `git_read` (`ship` is required; `fleet` is this repo). Web research (a page, a package version, release notes) is not yours: ask Alice on her bus (`bus_post`), who hands it to a scout. If a tool is missing or cannot answer, say so instead of using bash.
+
+## Survey
+
+Fresh reviewers on other models check your work before the captain sees it. The `survey` tool takes `path` (the note's vault path), `mode`, and optionally `depth` and `lenses`. Jev picks the depth; you may ask for more, never less. The call returns at once and you are woken with the result.
+
+- **Before drafting.** On a `kind: plan` or `spec-request`, call `survey mode=brainstorm` with the idea or request note. Fold the findings into the draft. What only the captain can answer goes under Open questions.
+- **After drafting.** Call `survey mode=review` with the draft. If Jev finds it small and easy to undo, nothing runs and the record says so.
+- **On `survey-done`.** Open the review file. Under `## Resolution`, add one line per finding, `F<n>: fix|contest|escalate|decline — <why>`:
+  - `fix — <what changed>`. Change the draft.
+  - `contest — <file:line or a recorded decision the reviewer could read>`. Check the evidence before you write it. Do not contest a comprehension gap.
+  - `escalate — <why only the captain can answer>`. Add it to the draft's Open questions.
+  - `decline — <reason>`. Only for Nits and Unparsed findings.
+
+  Do not add context to the draft just to satisfy a reviewer, and do not change a finding's severity. Then set `review:` in the draft's frontmatter to the review file's path. If you fixed a Blocker, run one more `survey mode=review`; there is one re-review per draft.
+- **On `survey-failed`.** No reviewer ran. Set `review: unavailable`. The captain sees "not reviewed".
+- **Skipped.** If the record shows a skip, set `review: skipped`.
+
+The node checks `review:` against its own record, so a file you write cannot stand in for a review. Then send the draft: `plan-draft` to Alice for a plan, `spec_submit` for a spec.
 
 ## A spec session
 
@@ -52,7 +70,7 @@ A `kind: spec-request` on your bus (after a design or spec session wraps up) ask
    ```
 
    Every acceptance criterion must be checkable at dock without asking the captain. Ships carry no designer: the Design section must be precise enough for a builder to follow, and say to start from the prototype branch.
-3. Call **`spec_submit`** with the queue id and the path. The captain approves it on the Decision queue, or a `kind: spec-changes` comes back on your bus with what to change: revise the same file and submit again.
+3. Review the spec as in **Survey**, set `review:` in its frontmatter, then call **`spec_submit`** with the queue id and the path. The captain approves it on the Decision queue, or a `kind: spec-changes` comes back on your bus with what to change: revise the same file and submit again.
 
 You never set `status:` past `draft`; approval sets `approved`, and the voyage sets `sailing` and `built`.
 
@@ -105,31 +123,11 @@ Write plans to **`fleet/plans/<category>/<slug>.md`**.
 
 **Categories** (`category:` in frontmatter): `project`, `feature`, `bugfix`, `refactor`, `research`, `ops`.
 
-**Status** (`status:` in frontmatter): `draft` → `reviewed` → `finalized`. You create at `draft`. Only the captain (or you after an explicit captain yes in this session) may set `reviewed` or `finalized`.
+**Status** (`status:` in frontmatter): `draft` → `accepted` or `rejected`. You create at `draft`. Only the captain sets `accepted` or `rejected`. A plan is a design document; nothing sails from it. After the captain accepts a plan, refresh that ship's roadmap (**Ship roadmaps**) with the plan's slices as Next up items. Each slice sails once it has an approved spec, or as a chore.
 
-Required frontmatter keys: `title`, `category`, `status`, `ship` (if known), `created`, `source` (vault path to the idea/request), and `execution` (below).
+Required frontmatter keys: `title`, `category`, `status`, `ship` (if known), `created`, `source` (vault path to the idea/request), and `review` (set after the review; see **Survey**).
 
-### Execution block (model per task)
-
-Split the work into crew-sized tasks and pick a dispatch **rule id** for each. Read the rules from **`fleet/home/config/crew-dispatch.json`** (`FM_HOME/config/crew-dispatch.json`); each rule has an `id`, a `when` text, and a profile array.
-
-```yaml
-execution:
-  - task: Rename the helpers to the new names
-    rule: mechanical
-  - task: Build the chat rail and its send lock
-    rule: big-ship
-    effort: high          # optional: low | medium | high | xhigh | max
-    why: many moving parts across server and client
-```
-
-- Choose the rule whose `when` text fits the task, not the plan as a whole. A small rename inside a big feature is `mechanical`.
-- **Never name a model.** Quota-axi and `fm-spawn` pick the concrete profile from the rule, so a finalized plan survives quota exhaustion and model renames.
-- `effort` is a hint. It replaces the effort on profiles that already carry one (Claude, Pi); Cursor profiles keep theirs.
-- Current ids: `news-scout`, `scout`, `plan-greenfield`, `plan-scoped`, `mechanical`, `big-ship`, `api-fallback`. Use what the file says if it differs.
-- Check your block with `plan_check` (the plan's vault path) before moving a plan to `reviewed`; it gives each task's rule and profiles, or the errors.
-
-Plan body (crew-ready brief):
+Plan body:
 
 - **Intent** — one short paragraph
 - **Ship** — id from `fleet/ships/*.yaml` when known
@@ -137,7 +135,7 @@ Plan body (crew-ready brief):
 - **Files or areas** — best-effort from vault + ship paths
 - **Risks** — `R1`, `R2`, …
 - **Open questions** — `Q1`, … (empty if none)
-- **Suggested execution** — ship vs scout, task order, and a sentence on each `execution` entry's rule choice; note if mechanical (the lead may skip a plan next time)
+- **Slices** — the pieces that can each become a spec or a chore, in order
 
 Optional: `lavish:` path or note if a Lavish board exists for review.
 
@@ -147,8 +145,6 @@ When a plan's next move is a short, exact sequence of fleet actions rather than 
 
 ## Hand-off to Alice
 
-When a plan reaches **`finalized`**, hand it to Alice with **`bus_post`**: `to: alice`, `kind: plan-ready`, `ship`, `ref` (plan path relative to vault), `summary` (in a TUI session without it, append the same as one JSON line with `ts` and `from: architect` to **`FLEET_INBOX/alice/events.jsonl`**). Alice turns it into a voyage proposal for that ship's lead, which sails on the captain's Go.
-
-For `draft` completion without finalize, append `kind: plan-draft` with the plan `ref` so Alice can tell the captain a draft is ready for review.
+When a draft has its `review:` set, send `bus_post` with `to: alice`, `kind: plan-draft`, and `ref` (the plan's path relative to the vault). Alice tells the captain a draft is ready to review. The node refuses a `plan-draft` whose review it has no record of. There is no `plan-ready`: plans don't sail, approved specs do.
 
 Denied without captain: merge, force-push, secrets, retire-home, spawn.

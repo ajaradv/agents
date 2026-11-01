@@ -808,6 +808,8 @@ def pick_model(agent: dict, agent_id: str) -> object:
     except (OSError, ValueError):
         marker = {}
     failed_today = marker.get("day") == datetime.now().date().isoformat()
+    # The marker lists every model that failed today; an older one names a single `model`.
+    failed_models = marker.get("models") if isinstance(marker.get("models"), list) else [marker.get("model")]
     first_reason = ""
     for i, m in enumerate(models):
         provider = m.split("/", 1)[0]
@@ -816,7 +818,7 @@ def pick_model(agent: dict, agent_id: str) -> object:
             reason = cursor_reason
         elif key and not os.environ.get(key):
             reason = f"{key} is not set"
-        elif failed_today and marker.get("model") == m:
+        elif failed_today and m in failed_models:
             reason = f"{m} failed today: {str(marker.get('reason', ''))[:160]}"
         else:
             reason = ""

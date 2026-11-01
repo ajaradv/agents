@@ -55,3 +55,37 @@ describe("a process that is not the node does not host agents", () => {
     }
   });
 });
+
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { markModelFailed } from "./agent-host.ts";
+
+describe("the day's model-fallback marker", () => {
+  test("keeps every model that failed today, and reports only the first failure of each", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fallback-marker-"));
+    const saved = process.env.FLEET_INBOX;
+    process.env.FLEET_INBOX = dir;
+    try {
+      const file = join(dir, "architect", "model-fallback.json");
+      const day = new Date().toLocaleDateString("sv");
+      expect(await markModelFailed("architect", "cursor/grok", "billing")).toBe(true);
+      expect(await markModelFailed("architect", "cursor/grok", "billing")).toBe(false);
+      expect(await markModelFailed("architect", "openrouter/sol", "auth")).toBe(true);
+      expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ day, models: ["cursor/grok", "openrouter/sol"], reason: "auth" });
+      // An old marker names one model: it is kept, not replaced.
+      writeFileSync(file, JSON.stringify({ day, model: "cursor/grok", reason: "billing" }));
+      expect(await markModelFailed("architect", "openrouter/sol", "auth")).toBe(true);
+      expect(JSON.parse(readFileSync(file, "utf8")).models).toEqual(["cursor/grok", "openrouter/sol"]);
+      // Yesterday's marker starts over.
+      mkdirSync(join(dir, "alice"), { recursive: true });
+      writeFileSync(join(dir, "alice", "model-fallback.json"), JSON.stringify({ day: "2020-01-01", models: ["a/b"], reason: "x" }));
+      expect(await markModelFailed("alice", "a/b", "billing")).toBe(true);
+      expect(JSON.parse(readFileSync(join(dir, "alice", "model-fallback.json"), "utf8")).models).toEqual(["a/b"]);
+    } finally {
+      if (saved === undefined) delete process.env.FLEET_INBOX;
+      else process.env.FLEET_INBOX = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { postBus } from "./bus-post.ts";
 import { parseHelperOutput, startHelper, watchHelper, type HelperSpawn } from "./delegate.ts";
@@ -256,7 +256,7 @@ export function parseFindings(text: string): { findings: Finding[]; unparsed: bo
 
 type Row = { lens: string; model: string | null; status: "queued" | "running" | "done" | "unparsed" | "not run"; cost: number; child?: string; tried: string[]; note?: string };
 type Req = { by: "architect" | "captain"; mode: Mode; target: string; slug: string; ship: string; writer: string; depth: Depth; lenses: string[]; jev: string; depthBy: string };
-type ParentData = Req & { rows: Row[]; dir: string; code: string | null; repo: string | null; sha: string; codeNote: string; started: string; review?: string; cost?: number; counts?: Record<string, number>; error?: string };
+type ParentData = Req & { rows: Row[]; dir: string; code: string | null; repo: string | null; sha: string; codeNote: string; started: string; review?: string; ids?: number[]; cost?: number; counts?: Record<string, number>; error?: string };
 type ChildData = { parent: string; lens: string; model: string; dir: string; pid: number; attempt: number; started: string; cost?: number; findings?: Finding[]; unparsed?: boolean; error?: string };
 
 const newId = () => `s-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -303,7 +303,11 @@ export async function startReview(by: "architect" | "captain", req: { mode: stri
   const writer = req.writer?.trim() || (by === "architect" ? architectWriter() : "");
   if (!writer) return { ok: false, message: by === "captain" ? "Give --writer: the model that wrote the note, so no reviewer shares it." : "The Architect's model is unknown (no model-running.json), so no reviewer can be kept off it." };
   const spent = surveySpentToday();
-  if (budget() && spent >= budget()) return { ok: false, message: `Surveyors have spent $${spent.toFixed(2)} today, at the $${budget()} limit. Ask the captain to raise FLEET_SURVEY_BUDGET_USD, or wait until tomorrow.` };
+  if (budget() && spent >= budget()) {
+    const message = `Surveyors have spent $${spent.toFixed(2)} today, at the $${budget()} limit. Ask the captain to raise FLEET_SURVEY_BUDGET_USD, or wait until tomorrow.`;
+    recordOutcome(by, mode, target.rel, "failed", { error: message });
+    return { ok: false, message };
+  }
 
   const text = readFileSync(target.abs, "utf8");
   const slug = basename(target.rel, ".md");
@@ -324,7 +328,10 @@ export async function startReview(by: "architect" | "captain", req: { mode: stri
     depthBy = raised ? by : "jev";
   }
   writeTriage(slug, { depth, jev, by: depthBy, mode });
-  if (depth === "skip") return { ok: true, depth, message: `Depth is skip (${jev === "not asked" ? depthBy : `Jev: ${jev}`}): no surveyors run. The decision is recorded in fleet/reviews/${slug}/triage.md.` };
+  if (depth === "skip") {
+    recordOutcome(by, mode, target.rel, "done", { depth, jev, depthBy });
+    return { ok: true, depth, message: `Depth is skip (${jev === "not asked" ? depthBy : `Jev: ${jev}`}): no surveyors run. The decision is recorded in fleet/reviews/${slug}/triage.md.` };
+  }
 
   const id = newId();
   const lenses = lensesFor(mode, depth, extra);
@@ -334,6 +341,11 @@ export async function startReview(by: "architect" | "captain", req: { mode: stri
   if (running.length) return { ok: true, id, depth, message: `Depth is ${depth} (${jev}). Another review is running (${running[0]!.id}); ${id} waits for it, then runs ${lenses.length} surveyors.` };
   void begin(id);
   return { ok: true, id, depth, message: `Depth is ${depth} (${jev === "not asked" ? depthBy : `Jev: ${jev}`}). ${id} is running ${lenses.length} surveyors (${lenses.join(", ")}). You will be woken with the review file when they finish.` };
+}
+
+/** A review that never started (a skip, a budget refusal) is still on the node's record: reviewReady reads it. */
+function recordOutcome(by: string, mode: Mode, target: string, status: "done" | "failed", data: Record<string, unknown>): void {
+  upsertWorkflow("survey", newId(), { by, mode, target, ...data }, { status });
 }
 
 function writeTriage(slug: string, t: { depth: Depth; jev: string; by: string; mode: Mode }): void {
@@ -466,6 +478,7 @@ export async function finishReview(id: string): Promise<void> {
     merged.sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
     const cost = Math.round(d.rows.reduce((n, r) => n + r.cost, 0) * 10000) / 10000;
     const counts = Object.fromEntries(SEVERITIES.map((s) => [s, merged.filter((f) => f.severity === s).length]));
+    const ids = merged.map((_, i) => i + 1);
     const notRun = d.rows.filter((r) => r.status === "not run").map((r) => r.lens);
     const dir = join(aliceVault(), "fleet", "reviews", d.slug);
     mkdirSync(dir, { recursive: true });
@@ -501,7 +514,7 @@ export async function finishReview(id: string): Promise<void> {
     const summary = `${counts.Blocker} blockers, ${counts.Major} majors, ${counts.Nit} nits${counts.Unparsed ? `, ${counts.Unparsed} unparsed` : ""}; ${notRun.length ? `not run: ${notRun.join(", ")}` : "all lenses ran"}; $${cost.toFixed(2)}`;
     if (d.by === "architect") await postBus("architect", { from: "surveyor", kind: "survey-done", ref: rel, summary: `${d.mode === "review" ? "Review" : "Brainstorm"} of ${d.slug} (${d.depth}): ${summary}` });
     // Last, so a caller that sees the end of the workflow finds the file and the Architect's message in place.
-    updateWorkflow(id, { status: ran ? "done" : "failed", data: { review: rel, cost, counts, ...(ran ? {} : { error: "no surveyor ran" }) } });
+    updateWorkflow(id, { status: ran ? "done" : "failed", data: { review: rel, ids, cost, counts, ...(ran ? {} : { error: "no surveyor ran" }) } });
     await dashLog("survey", `${id} ${ran ? "done" : "failed"} ${rel} ${summary}`);
     return { review: rel };
   });
@@ -570,4 +583,76 @@ export function reviewResolved(file: string): ReviewCheck {
   const open = st.open;
   const problems = [...(open.length ? [`no resolution for ${open.map((n) => `F${n}`).join(", ")}`] : []), ...(badDecline.length ? [`${badDecline.map((n) => `F${n}`).join(", ")} cannot be declined (decline is for Nits and Unparsed only)`] : [])];
   return { ok: !problems.length, message: problems.length ? `${problems.join("; ")}.` : `All ${st.ids.length} findings are resolved.`, ids: st.ids, open, badDecline };
+}
+
+// ---------------------------------------------------------------- the gate before the captain
+
+export type ReviewSummary = { depth: string; counts: Record<string, number>; escalations: string[]; rel: string };
+export type Ready = { ok: boolean; message: string; review?: ReviewSummary | null; unavailable?: string };
+
+/** A vault path (absolute or relative) as a vault-relative one. */
+function vaultRel(path: string): string {
+  if (!path.startsWith("/")) return path.replace(/^vault\//, "").replace(/^\.\//, "");
+  // A path that went through realpath (macOS /var → /private/var) is still the vault's.
+  let rel = relative(aliceVault(), path);
+  if (rel.startsWith("..")) {
+    try {
+      rel = relative(realpathSync(aliceVault()), path);
+    } catch {
+      /* keep the first answer */
+    }
+  }
+  return rel;
+}
+
+/** The `review:` value in a note's frontmatter, or "". */
+function reviewField(text: string): string {
+  const fm = /^---\s*\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "";
+  return /^review:[ \t]*["']?([^"'\n]*?)["']?[ \t]*$/m.exec(fm)?.[1]?.trim() ?? "";
+}
+
+/** The escalations of a review file: its `F<n>: escalate — <why>` lines. */
+function escalations(text: string): string[] {
+  const at = text.search(/^## Resolution\s*$/m);
+  if (at < 0) return [];
+  return text.slice(at).split("\n").flatMap((l) => {
+    const m = /^(F\d+): escalate\s+(?:—|-)\s+(.+)$/.exec(l);
+    return m ? [`${m[1]}: ${m[2]}`] : [];
+  });
+}
+
+/**
+ * Whether a note may reach the captain: its `review:` names a review file the node's own record says it wrote
+ * (every finding resolved), or `skipped` / `unavailable` with a matching review-mode record. Files the Architect
+ * can write never pass on their own.
+ */
+export function reviewReady(notePath: string): Ready {
+  const rel = vaultRel(notePath);
+  const abs = join(aliceVault(), rel);
+  if (!rel || rel.startsWith("..") || !existsSync(abs)) return { ok: false, message: `No note at ${notePath} in the vault.` };
+  const field = reviewField(readFileSync(abs, "utf8"));
+  if (!field) return { ok: false, message: `${rel} has no \`review:\` in its frontmatter. Run survey mode=review, resolve the review, and set \`review:\` to the review file (or skipped / unavailable).` };
+  const mine = listWorkflows<ParentData>("survey").filter((w) => w.data.target === rel && w.data.mode === "review");
+  const latest = mine.at(-1);
+  if (field === "skipped") {
+    return latest?.status === "done" && latest.data.depth === "skip"
+      ? { ok: true, message: "Review skipped (Jev: small and easy to undo).", review: null }
+      : { ok: false, message: `review: skipped, but the node's latest review of ${rel} is not a skip. Run survey mode=review.` };
+  }
+  if (field === "unavailable") {
+    return latest?.status === "failed"
+      ? { ok: true, message: "Not reviewed.", review: null, unavailable: latest.data.error || "no surveyor ran" }
+      : { ok: false, message: `review: unavailable, but the node's latest review of ${rel} did not fail. Run survey mode=review.` };
+  }
+  const file = vaultRel(field);
+  const w = mine.find((x) => x.status === "done" && x.data.review === file);
+  if (!w) return { ok: false, message: `review: ${field} is not a review the node wrote for ${rel}. Run survey mode=review and name the file it returns.` };
+  const full = join(aliceVault(), file);
+  const st = reviewStatus(full);
+  if (!st) return { ok: false, message: `The review file ${file} is missing from the vault.` };
+  const missing = (w.data.ids ?? []).filter((n) => !st.ids.includes(n));
+  if (missing.length) return { ok: false, message: `${file} no longer has ${missing.map((n) => `F${n}`).join(", ")}, which the node counted. Do not delete findings; resolve them under ## Resolution.` };
+  const r = reviewResolved(full);
+  if (!r.ok) return { ok: false, message: `${file}: ${r.message}` };
+  return { ok: true, message: r.message, review: { depth: w.data.depth, counts: w.data.counts ?? {}, escalations: escalations(readFileSync(full, "utf8")), rel: file } };
 }

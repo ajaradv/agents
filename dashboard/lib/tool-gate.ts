@@ -20,7 +20,7 @@ import { recordToolFailure } from "./tool-failures.ts";
  */
 
 export type GateCall = { agent: string; tool: string; input: Record<string, unknown>; cwd: string; why: string; writable?: string[] };
-export type GateResult = { decision: "allow" | "hold" | "stop"; source: "allowance" | "jev" | "fallback"; message: string; id?: string };
+export type GateResult = { decision: "allow" | "hold" | "stop"; source: "allowance" | "jev" | "fallback" | "rule"; message: string; id?: string };
 /** A held call: its input is stored redacted; `key` identifies the original call for the captain's Allow. */
 export type GateHold = GateCall & { id: string; ts: string; summary: string; jev: string; key: string };
 
@@ -109,9 +109,9 @@ export const askJev: Jev = async (c) => {
  * the verdict is logged as what the gate would have done, and the call goes
  * through: real traffic calibrates Jev before anything is enforced.
  */
-export async function judgeCall(c: GateCall, jev: Jev = askJev, opts: { observe?: boolean } = {}): Promise<GateResult> {
+export async function judgeCall(c: GateCall, jev: Jev = askJev, opts: { observe?: boolean; captain?: boolean } = {}): Promise<GateResult> {
   const summary = describeCall(c);
-  if (opts.observe) {
+  if (opts.observe && !opts.captain) {
     const v = await jev(c);
     const would = "error" in v || !confident(v) ? "hold" : v.choice === "safe" ? "allow" : "stop";
     log(c, `observe-${would}`, "error" in v ? "fallback" : "jev", "error" in v ? v.error : `${v.choice} ${v.confidence}`);
@@ -121,6 +121,8 @@ export async function judgeCall(c: GateCall, jev: Jev = askJev, opts: { observe?
     log(c, "allow", "allowance", "the captain allowed it");
     return { decision: "allow", source: "allowance", message: "Allowed by the captain." };
   }
+  // A call only the captain may allow (a rule said so): Jev is not asked.
+  if (opts.captain) return hold(c, summary, "the captain's call", "rule");
   const v = await jev(c);
   if ("error" in v || !confident(v)) {
     const jevSays = "error" in v ? v.error : `Jev: ${v.choice} (${Math.round(v.confidence * 100)}%)`;
@@ -140,7 +142,7 @@ export async function judgeCall(c: GateCall, jev: Jev = askJev, opts: { observe?
   };
 }
 
-function hold(c: GateCall, summary: string, jevSays: string, source: "jev" | "fallback"): GateResult {
+function hold(c: GateCall, summary: string, jevSays: string, source: "jev" | "fallback" | "rule"): GateResult {
   const id = `gate-${crypto.randomUUID().slice(0, 10)}`;
   const h: GateHold = { ...c, id, ts: new Date().toISOString(), summary, jev: jevSays, key: callKey(c), input: JSON.parse(redact(JSON.stringify(c.input))) };
   upsertWorkflow("gate", id, h as unknown as Record<string, unknown>, { status: "waiting", trace: id });

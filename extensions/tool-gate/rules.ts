@@ -12,7 +12,8 @@
  *   agent into pushing, merging, or revealing secrets
  */
 
-export type Verdict = { decision: "allow" | "stop" | "ask"; reason: string };
+/** `captain` marks an ask that only the captain answers: the node holds it without asking Jev, and observe mode waits for it too. */
+export type Verdict = { decision: "allow" | "stop" | "ask"; reason: string; captain?: true };
 
 export type GateContext = {
   /** The agent's working folder (repo, worktree, or vault). */
@@ -292,7 +293,7 @@ function aliceWrite(tool: string, raw: string, p: string, ctx: GateContext): Ver
   if (where === 0) {
     const first = target.slice(roots[0]![1].length).split("/").filter(Boolean)[0] ?? "";
     if (first === ".git" || first === ".obsidian") return { decision: "stop", reason: `${tool} inside the vault's ${first} folder (${raw})` };
-    if (first === "career" || first === "profile") return { decision: "ask", reason: `${tool} in the vault's ${first}/ folder: the captain approves first (${raw})` };
+    if (first === "career" || first === "profile") return { decision: "ask", reason: `${tool} in the vault's ${first}/ folder: the captain approves first (${raw})`, captain: true };
   }
   return null;
 }
@@ -312,7 +313,7 @@ function architectWrite(tool: string, raw: string, p: string, ctx: GateContext):
   const first = rel.split("/")[0] ?? "";
   if (first === ".git" || first === ".obsidian" || first === "career" || first === "profile") return { decision: "stop", reason: `${tool} inside the vault's ${first} folder (${raw})` };
   if (/^fleet\/(plans|specs|reviews)\/./.test(rel) || /^ships\/[^/]+\/roadmap\.md$/.test(rel)) return { decision: "allow", reason: "the Architect's plans, specs, reviews and roadmaps" };
-  return { decision: "ask", reason: `${tool} of ${raw}: the Architect writes plans, specs, reviews and roadmaps in the vault; other vault notes need the captain` };
+  return { decision: "ask", reason: `${tool} of ${raw}: the Architect writes plans, specs, reviews and roadmaps in the vault; other vault notes need the captain`, captain: true };
 }
 
 /** Helpers and surveyors read the vault but never the captain's career/ and profile/ folders (prompts alone were all that stopped them). */
