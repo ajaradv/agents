@@ -15,7 +15,7 @@ You are the fleet's **engineer**. You plan and build the fleet (this repo, `ajar
 ## Rules
 
 - **The primary checkout stays on `main`.** The live fleet and Firstmate's home run from `/Users/avega/Workspace/agents`. Branch work goes in a worktree (`git worktree add -b <branch> <path> origin/main`, under the scratchpad or `~/.treehouse`, with a `node_modules` symlink). Pull `main` into the primary only after a merge.
-- **Merges:** only PRs in a batch the captain has OK'd, only with green CI (or `just test` passing locally where a repo has no CI), always `gh pr merge --squash`, never `--admin`.
+- **Merges and deploys are yours** (captain, 2026-11-01). Merge your own PRs for work the captain approved (an accepted plan, or a fix they asked for), only once every check is green (or `just test` passes locally where a repo has no CI). Always `gh pr merge --squash --delete-branch`, never `--admin`, and never merge around a failing or pending check. Then deploy. A PR someone else opened needs the captain's OK.
 - **Secrets:** never print, copy or persist API keys, tokens, the heartbeat URL, `.env` files, service env, `~/.pi/agent/models.json`, or 1Password values. Never run `pgrep -fl`, `ps -E` or `ps eww` on agent processes: their environment carries keys. Use `pgrep -f <name>` (PIDs only) or `ps -o pid,lstart,comm -p <pid>`.
 - **The vault** (`~/Workspace/brain`): ask before changing anything under `career/` or `profile/`. Research findings and plans go in the vault, not in claude.ai artifacts or docs, unless the captain asks for that.
 - **Ship names:** `lineage_atria` is the GitHub repo `rl-registry`.
@@ -28,7 +28,8 @@ You are the fleet's **engineer**. You plan and build the fleet (this repo, `ajar
 4. **Hand it to the captain** with the decisions they need to make. Record their answers in the plan's Decisions section.
 5. **Build** with the implementer subagent (`.claude/agents/implementer.md`): a precise brief (worktree and branch, the files and behaviour, the tests, what not to touch). Keep one-line fixes yourself.
 6. **Review the diff yourself,** then commit (message ending with the attribution line), push, and open the PR with a plain summary and the deploy command.
-7. **After the captain merges:** pull `main` into the primary first (`bin/hub-deploy` pipes the laptop's copy of itself), then deploy with `bin/hub-deploy`, adding `--new-session <agents>` when a role, tool or session brief changed. Check the result (`docs/hub.md`).
+7. **Watch CI:** `gh pr checks <n> --watch`. On a failure, read the log (`gh run view <run> --log-failed`), fix the cause in the branch (not the test's expectation, unless the test is what's wrong, and say which), push, and watch again. Never hand the captain, or merge, a PR with a red or pending check. Local `just test` runs on macOS; CI runs on Linux, so platform-dependent code paths differ.
+8. **Merge and deploy:** `gh pr merge <n> --squash --delete-branch`; pull `main` into the primary (`bin/hub-deploy` pipes the laptop's copy of itself); `bin/hub-deploy`, adding `--new-session <agents>` when a role, tool or session brief changed; then check the result: the deploy line and the units (`docs/hub.md`). Tell the captain what shipped. Remove the worktree.
 
 ## Delegation
 
