@@ -15,7 +15,8 @@
 # dashboard job (com.fleet.dashboard) serves the page; it finds the running node
 # instead of starting its own.
 #
-# Logs: fleet/inbox/.node/node.log and fleet/inbox/.node/dashboard.log.
+# Logs: fleet/inbox/.node/node.log and fleet/inbox/.node/dashboard.log (Linux: rotated
+# weekly or past 10 MB by /etc/logrotate.d/fleet, which install writes).
 # PATH is captured from the shell that runs install, so bun, pi, python3, and uv
 # resolve the same way they do in your terminal. Re-run install after moving
 # those tools.
@@ -143,6 +144,11 @@ if [ "$(uname)" = Linux ]; then
     done
     printf 'Restart=always\nRestartSec=5\nStandardOutput=append:%s\nStandardError=append:%s\n\n[Install]\nWantedBy=multi-user.target\n' "$LOGS/$3" "$LOGS/$3"
   }
+  LOGROTATE="/etc/logrotate.d/fleet${SUFFIX:+-$SUFFIX}"
+  logrotate_conf() { # weekly, or sooner past 10 MB; four old copies, gzipped
+    printf '%s/node.log %s/dashboard.log %s/browser.log {\n' "$LOGS" "$LOGS" "$LOGS"
+    printf '  su %s %s\n  weekly\n  maxsize 10M\n  rotate 4\n  compress\n  delaycompress\n  missingok\n  notifempty\n  copytruncate\n}\n' "$(id -un)" "$(id -gn)"
+  }
   sc() { sudo systemctl "$@"; }
   case "${1:-}" in
     install)
@@ -156,6 +162,9 @@ if [ "$(uname)" = Linux ]; then
       unit "$U_NODE" dashboard/node.ts node.log "Fleet node (agents, routines, orders)" | sudo tee "$UNITS/$U_NODE.service" >/dev/null
       unit "$U_DASH" dashboard/server.ts dashboard.log "Fleet dashboard" FLEET_NODE_SPAWN=0 | sudo tee "$UNITS/$U_DASH.service" >/dev/null
       unit "$U_BROWSER" dashboard/browser.ts browser.log "Fleet shared browser (one Chrome for every screenshot)" | sudo tee "$UNITS/$U_BROWSER.service" >/dev/null
+      # Rotation for the three service logs (not deploys.log: hub-deploy --rollback reads it).
+      # copytruncate is safe because systemd opens them with append:, so writes land at the new end.
+      logrotate_conf | sudo tee "$LOGROTATE" >/dev/null
       sc daemon-reload
       # restart, not just enable --now: a running service would keep its old settings (FLEET_LAPTOP_URL on 2026-10-22).
       for u in "$U_NODE" "$U_DASH" "$U_BROWSER"; do sc enable "$u.service" >/dev/null 2>&1; sc restart "$u.service" && echo "started $u"; done
@@ -163,6 +172,7 @@ if [ "$(uname)" = Linux ]; then
       ;;
     uninstall)
       for u in "$U_BROWSER" "$U_DASH" "$U_NODE"; do sc disable --now "$u.service" 2>/dev/null; sudo rm -f "$UNITS/$u.service"; echo "removed $u"; done
+      sudo rm -f "$LOGROTATE"
       sc daemon-reload
       ;;
     restart)

@@ -28,7 +28,7 @@ The hub runs the live fleet: the fleet node, the dashboard, the browser service,
 
 ## Logs
 
-- `fleet/inbox/.node/node.log` and `dashboard.log` on the hub.
+- `fleet/inbox/.node/node.log`, `dashboard.log` and `browser.log` on the hub. `/etc/logrotate.d/fleet` (written by `bin/fleet-services install`) rotates them weekly or past 10 MB, keeping four gzipped copies (`dashboard.log.1`, `dashboard.log.2.gz`, ...).
 - `sudo journalctl -u fleet-node --since -1h` (or any unit above).
 - `fleet/inbox/.node/deploys.log` for deploys.
 
@@ -84,3 +84,4 @@ Never in any procedure: print or copy the heartbeat URL, `.env` files, the servi
 | 2026-11-01 | Deploy check (harbormaster acceptance) | ok: hub at origin/main (fa6e758), pi model overrides current |
 | 2026-11-01 | Backup drill (harbormaster acceptance) | ok: 7 databases, 15 s |
 | 2026-11-01 | Services drift (harbormaster acceptance) | ok: no output |
+| 2026-11-01 | Deploy check, Units (harbormaster, first run by name) | ok: hub at origin/main (b913c78), six units active; dashboard.log 2.9 MB, no rotation (fixed in the next deploy) |
