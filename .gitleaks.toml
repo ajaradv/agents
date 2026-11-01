@@ -1,7 +1,7 @@
 title = "fleet hub"
 
 # Default gitleaks rules. The allowlist below is only the synthetic
-# placeholders in two unit tests (alphabet runs and one short sequential
+# placeholders in three unit tests (alphabet runs and one short sequential
 # assignment used to assert redaction). A finding is ignored when the path
 # matches AND the placeholder fragment matches, so a real key in those files
 # still fails the scan.
@@ -14,9 +14,11 @@ condition = "AND"
 paths = [
   '''dashboard/lib/tool-gate\.test\.ts''',
   '''dashboard/lib/public-helper\.test\.ts''',
+  '''dashboard/lib/survey\.test\.ts''',
 ]
 regexes = [
   '''abcdefghijklmnopqrstu''',
   '''abcdef123456''',
   '''1234567890abcdefgh''',
+  '''abcdefghijklmnop12345''',
 ]
