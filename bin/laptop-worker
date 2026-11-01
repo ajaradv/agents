@@ -66,7 +66,8 @@ PL
     # it the hub's usage card says the laptop is up but has no quota-axi.
     command -v quota-axi >/dev/null || echo "warning: quota-axi is not on PATH, so the hub gets no Claude/Cursor/Codex quota (npm install -g quota-axi@0.1.64)"
     IFS=: read -ra path_dirs <<<"$PATH"
-    for d in "${path_dirs[@]}"; do [ -z "$d" ] || [ -d "$d" ] || echo "warning: PATH lists $d, which does not exist (a removed Node version?)"; done
+    # Only folders under $HOME: macOS lists cryptex folders that never exist, while a removed nvm/bun/pyenv version lives here.
+    for d in "${path_dirs[@]}"; do [[ "$d" == "$HOME"/* ]] || continue; [ -d "$d" ] || echo "warning: PATH lists $d, which does not exist (a removed Node version?)"; done
     "$TS" serve --bg --https="$PORT" "http://127.0.0.1:$PORT" >/dev/null 2>&1 && echo "published on the tailnet: https://$(ts_name):$PORT"
     ;;
   --push-token)
