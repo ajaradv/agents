@@ -146,7 +146,10 @@ if [ "$CHECK" = 1 ]; then
   reason="$(reinstall_reason)"
   check_to=origin/main; [ "$ROLLBACK" = 1 ] && check_to="$target_full"
   if git diff --name-only HEAD "$check_to" -- bin/fleet-services | grep -q .; then reason="${reason:-bin/fleet-services changes in $check_to}"; fi
-  if [ -n "$reason" ]; then echo "== would reinstall services ($reason)"; else echo "== would restart services (settings and units unchanged)"; fi
+  # Same order as a real deploy: with nothing to pull it stops before any restart or reinstall.
+  if [ "$ROLLBACK" = 0 ] && [ -z "$incoming" ] && [ "$RESTART" = 0 ] && [ -z "$FRESH" ]; then
+    echo "== would do nothing: nothing to deploy${reason:+ (services drifted: $reason; --restart reinstalls them)}"
+  elif [ -n "$reason" ]; then echo "== would reinstall services ($reason)"; else echo "== would restart services (settings and units unchanged)"; fi
   if ls_unit; then
     pinned="$(ls_pinned)"; have="$(ls_installed)"
     if [ "$have" != "$pinned" ]; then echo "== litestream ${have:-missing} but pinned $pinned (a deploy would fix it)"; fi

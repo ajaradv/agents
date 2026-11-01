@@ -11,5 +11,5 @@ fleet/inbox/
 # Crews the hub runs on this laptop (dashboard/lib/hosted.ts)
 fleet/hosted/
 
-# Bytecode for bin/axi_cli.py (imported by the Python scripts in bin/)
-bin/__pycache__/axi_cli.*
+# Python bytecode (loading bin/launch rewrote a tracked .pyc and blocked a deploy, 2026-11-01)
+__pycache__/
