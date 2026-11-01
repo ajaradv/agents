@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -570,6 +570,9 @@ def resolve_crewmate(agent_id: str) -> tuple[dict, dict] | None:
         model = (ship.get("crew_models") or {}).get(role)
         if model:
             agent["model"] = model
+            if agent.get("models"):
+                # crew_models names this role's first choice; the template's list stays behind it.
+                agent["models"] = [model] + [m for m in agent["models"] if m != model]
         agent["runtime"] = "rpc"
         agent["dashboard_session"] = "persistent"
         ship["id"] = sid
@@ -595,14 +598,39 @@ PROVIDER_KEYS = {"cursor": "CURSOR_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "op
 SECRET_KEYS = ("TYPESAFE_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "HF_API_KEY", "HF_TOKEN", "CURSOR_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GEMINI_FREE_API_KEY")
 
 
+def load_models_config() -> dict:
+    """fleet/config/models.json: the `cursor` switch and the model aliases. A missing
+    or unreadable file means Cursor on and no aliases."""
+    try:
+        raw = json.loads((ROOT / "fleet" / "config" / "models.json").read_text())
+    except (OSError, ValueError):
+        raw = None
+    raw = raw if isinstance(raw, dict) else {}
+    aliases = raw.get("aliases")
+    return {
+        "cursor": "off" if raw.get("cursor") == "off" else "on",
+        "aliases": {str(k): str(v) for k, v in aliases.items()} if isinstance(aliases, dict) else {},
+    }
+
+
+def agent_models(agent: dict) -> list[str]:
+    """The agent's models in order, aliases resolved: `models:`, else [model, fallback_model]."""
+    listed = agent.get("models")
+    if isinstance(listed, list) and listed:
+        names = [str(m) for m in listed if m]
+    else:
+        names = [m for m in (agent.get("model"), agent.get("fallback_model")) if isinstance(m, str) and m]
+    aliases = load_models_config()["aliases"]
+    return [aliases.get(n, n) for n in names]
+
+
 def keys_needed(agent: dict) -> set[str]:
-    """The provider keys of the agent's model and backup model, plus any it lists under `keys:`."""
+    """The provider keys of every model the agent may run on, plus any it lists under `keys:`."""
     need: set[str] = set()
-    for m in (agent.get("model"), agent.get("fallback_model")):
-        if isinstance(m, str) and m:
-            key = PROVIDER_KEYS.get(m.split("/", 1)[0])
-            if key:
-                need.add(key)
+    for m in agent_models(agent):
+        key = PROVIDER_KEYS.get(m.split("/", 1)[0])
+        if key:
+            need.add(key)
     for k in agent.get("keys") or []:
         if str(k) in SECRET_KEYS:
             need.add(str(k))
@@ -737,28 +765,69 @@ def record_running_model(agent_id: str, configured: object, chosen: object) -> N
 LAST_FALLBACK_REASON = ""
 
 
-def model_with_fallback(model: object, fallback: object, agent_id: str) -> object:
-    """The agent's model, or its fallback_model when the model cannot work today:
-    its provider key is missing, or the fleet node recorded a billing, auth, or
-    repeated stream failure on it today (fleet/inbox/<id>/model-fallback.json, written by the
-    agent host; it lapses at midnight)."""
-    if not (isinstance(model, str) and isinstance(fallback, str) and fallback):
-        return model
+def cursor_quota_out() -> bool:
+    """True when the node's last quota reading (fleet/inbox/.node/quota-last.json, under 6 hours
+    old) has Cursor's API usage and spend limit both at 0%: the state in which Cursor refuses
+    requests. A missing or older reading says nothing."""
+    try:
+        snap = json.loads((fleet_inbox_root() / ".node" / "quota-last.json").read_text())
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(str(snap["at"]).replace("Z", "+00:00"))
+        cur = snap["cursor"]
+        return timedelta(0) <= age < timedelta(hours=6) and cur["api_usage"] == 0 and cur["spend_limit"] == 0
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def cursor_unusable() -> str:
+    """Why cursor/* models and the cursor harness are off limits now, or "" when they are not."""
+    if load_models_config()["cursor"] == "off":
+        return "Cursor is off"
+    return "Cursor quota is out" if cursor_quota_out() else ""
+
+
+def skip_cursor_harness() -> None:
+    """While Cursor is off or out of quota, crews dispatched from this session skip the cursor
+    harness too (FM_SKIP_HARNESSES, read by vendor/firstmate/bin/fm-dispatch-resolve.sh)."""
+    if cursor_unusable():
+        skip = [h for h in os.environ.get("FM_SKIP_HARNESSES", "").split(",") if h.strip()]
+        os.environ["FM_SKIP_HARNESSES"] = ",".join(dict.fromkeys(skip + ["cursor"]))
+
+
+def pick_model(agent: dict, agent_id: str) -> object:
+    """The first of the agent's models that can work today: not a cursor/* model while Cursor is
+    off or out of quota, its provider key set, and not the model the fleet node recorded a billing,
+    auth, or repeated stream failure on today (fleet/inbox/<id>/model-fallback.json, written by the
+    agent host; it lapses at midnight). Sets LAST_FALLBACK_REASON to why the first was skipped."""
     global LAST_FALLBACK_REASON
-    key = PROVIDER_KEYS.get(model.split("/", 1)[0])
-    if key and not os.environ.get(key):
-        print(f"launch: {key} is not set; {agent_id} runs on {fallback}", file=sys.stderr)
-        LAST_FALLBACK_REASON = f"{key} is not set"
-        return fallback
+    models = agent_models(agent)
+    if len(models) < 2:
+        return models[0] if models else None
+    cursor_reason = cursor_unusable()
     try:
         marker = json.loads((fleet_inbox_root() / agent_id / "model-fallback.json").read_text())
     except (OSError, ValueError):
-        return model
-    if marker.get("model") == model and marker.get("day") == datetime.now().date().isoformat():
-        print(f"launch: {model} failed today ({str(marker.get('reason', ''))[:120]}); {agent_id} runs on {fallback}", file=sys.stderr)
-        LAST_FALLBACK_REASON = f"{model} failed today: {str(marker.get('reason', ''))[:160]}"
-        return fallback
-    return model
+        marker = {}
+    failed_today = marker.get("day") == datetime.now().date().isoformat()
+    first_reason = ""
+    for i, m in enumerate(models):
+        provider = m.split("/", 1)[0]
+        key = PROVIDER_KEYS.get(provider)
+        if provider == "cursor" and cursor_reason:
+            reason = cursor_reason
+        elif key and not os.environ.get(key):
+            reason = f"{key} is not set"
+        elif failed_today and marker.get("model") == m:
+            reason = f"{m} failed today: {str(marker.get('reason', ''))[:160]}"
+        else:
+            reason = ""
+        if i == 0:
+            first_reason = reason
+        if not reason or i == len(models) - 1:
+            if m != models[0]:
+                LAST_FALLBACK_REASON = first_reason
+                print(f"launch: {models[0]} is out ({first_reason[:120]}); {agent_id} runs on {m}", file=sys.stderr)
+            return m
+    return models[-1]
 
 
 def prepare_pi_launch(
@@ -783,7 +852,6 @@ def prepare_pi_launch(
     uses_hermes = "hermes-memory" in [str(e) for e in agent.get("extensions") or []]
     harness = str(agent.get("harness") or "pi")
     role = str(agent.get("role") or agent_id)
-    model = agent.get("model")
 
     if harness != "pi":
         print(f"harness {harness!r} is stored but only pi is wired in this slice", file=sys.stderr)
@@ -798,9 +866,11 @@ def prepare_pi_launch(
         subprocess.run([str(ROOT / "bin" / "seed-fleet-home")], check=False)
 
     apply_fleet_home_env()
-    configured = model
-    model = model_with_fallback(model, agent.get("fallback_model"), agent_id)
+    listed = agent_models(agent)
+    configured = listed[0] if listed else None
+    model = pick_model(agent, agent_id)
     record_running_model(agent_id, configured, model)
+    skip_cursor_harness()
 
     inbox = fleet_inbox_root()
     os.environ.setdefault("FLEET_INBOX", str(inbox))

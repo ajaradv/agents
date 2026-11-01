@@ -4,9 +4,9 @@ role: helmsman
 harness: pi
 # Reviews a ship's process after a voyage docks or when the captain asks:
 # judgement over a digest the node builds, a few turns at a time.
-# DeepSeek V4 Pro through OpenRouter (cached input is cheap); backup: Composer on Cursor.
-model: openrouter/deepseek/deepseek-v4-pro
-fallback_model: cursor/composer-2.5
+# DeepSeek V4 Pro through OpenRouter (cached input is cheap); backups: Composer on
+# Cursor while Cursor is on, then Luna.
+models: [deepseek-v4-pro, composer-2.5, luna]
 # crew: only — exists only aboard ships, as <ship>-helmsman.
 crew: only
 # Conversation mode voice (Gemini Live prebuilt voice; easy-going).

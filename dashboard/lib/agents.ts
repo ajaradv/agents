@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readShips } from "./fleet-layers.ts";
+import { readModels, resolveAlias } from "./models-config.ts";
 import { ROOT } from "./paths.ts";
 
 export type AgentMeta = {
@@ -43,6 +44,13 @@ function parseAgentYaml(text: string): Record<string, string> {
   return out;
 }
 
+/** The agent's first-choice model: `model:`, else the first entry of the inline `models: [a, b]` list (alias resolved). */
+function firstModel(y: Record<string, string>): string {
+  if (y.model) return y.model;
+  const first = (y.models ?? "").replace(/^\[|\]$/g, "").split(",")[0]?.trim().replace(/^["']|["']$/g, "") ?? "";
+  return first ? resolveAlias(first, readModels()) : "";
+}
+
 /** `description:` from a role file's frontmatter block. */
 export function roleDescription(markdown: string): string {
   const m = markdown.match(/^---\n([\s\S]*?)\n---/);
@@ -74,7 +82,7 @@ export async function loadAgents(): Promise<AgentMeta[]> {
         id: y.id ?? ent.name,
         type: y.type ?? "assistant",
         role,
-        model: y.model ?? "",
+        model: firstModel(y),
         harness: y.harness ?? "pi",
         description: await readRoleDescription(role),
         turnTimeoutSec: Math.max(0, Math.min(3600, Number(y.turn_timeout) || 0)),

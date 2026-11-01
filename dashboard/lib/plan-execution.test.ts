@@ -40,6 +40,7 @@ describe("resolveExecution", () => {
     const { resolved, errors } = resolveExecution(
       [{ task: "rename", rule: "mechanical", effort: "medium" }],
       config,
+      true,
     );
     expect(errors).toEqual([]);
     expect(resolved[0]!.profiles).toEqual([
@@ -49,7 +50,19 @@ describe("resolveExecution", () => {
   });
 
   test("unknown rule is an error", () => {
-    const { errors } = resolveExecution([{ task: "x", rule: "nope" }], config);
+    const { errors } = resolveExecution([{ task: "x", rule: "nope" }], config, true);
     expect(errors[0]).toContain('unknown rule "nope"');
+  });
+
+  test("Cursor off drops cursor profiles and says so when a rule has nothing left", () => {
+    const cursorOnly: DispatchConfig = { rules: [...config.rules!, { id: "cheap", when: "cheap", use: { harness: "cursor", model: "composer-2.5" } }] };
+    const { resolved, errors } = resolveExecution(
+      [{ task: "rename", rule: "mechanical" }, { task: "notes", rule: "cheap" }],
+      cursorOnly,
+      false,
+    );
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]!.profiles).toEqual([{ harness: "claude", model: "claude-haiku-4-5", effort: "low" }]);
+    expect(errors).toEqual(['rule "cheap" has nothing left for task "notes": Cursor is off']);
   });
 });

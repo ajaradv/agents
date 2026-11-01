@@ -1,3 +1,5 @@
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   parseQuotaFromJson,
   parseQuotaToon,
@@ -10,6 +12,7 @@ import { getApiLaneUsageCache, refreshApiLaneUsage } from "./api-lane-usage.ts";
 import { dashLog } from "./log.ts";
 import { spawnTimed } from "./proc.ts";
 import { modelSpendHtml } from "./model-spend.ts";
+import { nodeStateDir } from "./paths.ts";
 
 export type QuotaCache = {
   at: string;
@@ -119,6 +122,29 @@ export async function runQuotaAxi(): Promise<QuotaCache> {
   };
 }
 
+/**
+ * After a good poll, Cursor's windows (percent remaining) go to
+ * fleet/inbox/.node/quota-last.json for bin/launch, which skips cursor/* models
+ * when api_usage and spend_limit are both 0. A failed or stale poll, or one
+ * without a Cursor reading, leaves the last file.
+ */
+export function writeQuotaLast(q: QuotaCache): void {
+  if (!q.ok || q.stale || !q.parsed) return;
+  const cursor = q.parsed.providers.find((p) => p.provider === "cursor");
+  if (!cursor || !cursor.windows.length) return;
+  const left = (id: string) => cursor.windows.find((w) => w.id === id)?.percentRemaining ?? null;
+  const body = { at: q.at, cursor: { api_usage: left("api_usage"), spend_limit: left("spend_limit"), included_usage: left("included_usage"), auto_usage: left("auto_usage") } };
+  try {
+    const dir = nodeStateDir();
+    mkdirSync(dir, { recursive: true });
+    const tmp = join(dir, `quota-last.json.${process.pid}.tmp`);
+    writeFileSync(tmp, JSON.stringify(body) + "\n");
+    renameSync(tmp, join(dir, "quota-last.json"));
+  } catch (e) {
+    console.error("[dashboard] quota-last.json:", e);
+  }
+}
+
 export async function refreshQuotaAsync(): Promise<QuotaCache> {
   if (quotaRunning) return cache;
   if (Date.now() < pauseUntil) return cache;
@@ -130,6 +156,7 @@ export async function refreshQuotaAsync(): Promise<QuotaCache> {
       cache = { ...next, parsed: cache.parsed, raw: cache.raw, ok: cache.ok };
     } else {
       cache = next;
+      writeQuotaLast(next);
     }
     await refreshApiLaneUsage();
   } catch (e) {

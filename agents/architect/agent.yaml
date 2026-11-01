@@ -2,11 +2,11 @@ id: architect
 type: assistant
 role: architect
 harness: pi
-# Grok on Cursor for design work, billed with the normal Cursor charges.
-# Backup: DeepSeek V4 Pro, used when Cursor refuses the request that day
-# (for example its API usage pool and spend limit are both used up).
-model: cursor/grok-4.7@256k
-fallback_model: openrouter/deepseek/deepseek-v4-pro
+# Models in order (aliases in fleet/config/models.json; bin/launch takes the first usable):
+# Grok on Cursor for design work when Cursor is on, billed with the normal Cursor charges.
+# While Cursor is off, or its API usage pool and spend limit are both used up (Cursor
+# refuses requests then), GPT Sol; then DeepSeek V4 Pro.
+models: [grok-4.7, sol, deepseek-v4-pro]
 # Design conversations span days: keep one session across dashboard turns,
 # idle stops, and the TUI (New session on the dashboard starts over).
 dashboard_session: persistent

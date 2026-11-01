@@ -70,6 +70,13 @@ For worker panes in tmux/Herdr, list key **names** in `config/launch-env-allowli
 
 Optional Pi pin: `fleet/home/config/pi-account` — line 1: Pi root; line 2: space-separated providers (e.g. `deepseek openrouter huggingface cursor`).
 
+## Model roster and the Cursor switch
+
+`fleet/config/models.json` holds the aliases (`sol`, `luna`, `grok-4.7`, `composer-2.5`, ...), the surveyors' lists, and `"cursor": "on" | "off"`. Each `agents/<id>/agent.yaml` has `models: [a, b, c]` (aliases or full ids), tried in order; `bin/launch` runs the first one whose provider key is set, that isn't the model that failed today (`fleet/inbox/<id>/model-fallback.json`), and that isn't `cursor/*` while Cursor is unusable. An agent with only `model` and `fallback_model` is read as `[model, fallback_model]`. A skipped first choice shows as "on backup" on the agent's card, with the reason.
+
+- **Switch off:** set `"cursor": "off"` and restart the agents (`bin/hub-deploy --new-session <agents>`). Every `cursor/*` model is skipped (reason "Cursor is off"), `bin/launch` sets `FM_SKIP_HARNESSES=cursor` so crews skip the cursor harness ("not eligible: harness switched off"), and `plan_check` drops cursor profiles. The Architect then runs on Sol.
+- **Quota skip:** after each good poll the dashboard writes Cursor's windows to `fleet/inbox/.node/quota-last.json` (`{ at, cursor: { api_usage, spend_limit, included_usage, auto_usage } }`, percent remaining). When that file is under 6 hours old and `api_usage` and `spend_limit` are both 0, `bin/launch` skips `cursor/*` the same way (reason "Cursor quota is out") and sets `FM_SKIP_HARNESSES`. A missing or older file changes nothing.
+
 ## quota-axi
 
 Install [quota-axi](https://github.com/kunchenguid/quota-axi) on PATH. Firstmate runs it once per dispatch intake; `spendPriority` ranks profiles that pass eligibility gates. It is data-only — it does not pick routes by itself.

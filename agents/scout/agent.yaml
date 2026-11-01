@@ -3,9 +3,8 @@ type: assistant
 role: scout
 harness: pi
 # Read-only recon aboard a ship: DeepSeek V4 Flash through OpenRouter (cached
-# input is cheap). Backup: Composer on the Cursor key.
-model: openrouter/deepseek/deepseek-v4-flash
-fallback_model: cursor/composer-2.5
+# input is cheap). Backups: Composer on the Cursor key while Cursor is on, then Luna.
+models: [deepseek-v4-flash, composer-2.5, luna]
 # crew: only — exists only aboard ships (<ship>-scout), never on the rail by itself.
 crew: only
 # Conversation mode voice (Gemini Live prebuilt voice; upbeat; matches am_puck).

@@ -141,7 +141,7 @@ def home() -> int:
     for y in sorted((ROOT / "agents").glob("*/agent.yaml")):
         text = y.read_text()
         get = lambda k: (re.search(rf"^{k}:\s*(.+)$", text, re.M) or [None, ""])[1].strip()
-        rows.append({"id": y.parent.name, "type": get("type"), "model": get("model"), "workspace": get("workspace")})
+        rows.append({"id": y.parent.name, "type": get("type"), "model": get("model") or get("models").strip("[]").split(",")[0].strip(), "workspace": get("workspace")})
     print("bin: ~/Workspace/agents/bin/new-agent")
     print("description: Scaffold a registered agent: agent.yaml, role, just recipe, inbox, README row")
     print(axi_cli.table("agents", ["id", "type", "model", "workspace"], rows))
