@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { architectGitRead, gitRead, gitReadAllowed, gitReadArgv } from "./git-read.ts";
+import { architectGitRead, freshenClone, gitRead, gitReadAllowed, gitReadArgv, localShipPath } from "./git-read.ts";
 import type { ShipHost } from "./ship-host.ts";
 
 const argv = (a: Parameters<typeof gitReadArgv>[0]) => {
@@ -107,5 +107,45 @@ describe("the officers' tools", () => {
       expect(y.tools).toEqual(expect.arrayContaining(["+grep", "+find", "+ls"]));
       expect(y.tools).not.toContain("-bash");
     }
+  });
+});
+
+describe("localShipPath", () => {
+  const has = (...paths: string[]) => (p: string) => paths.includes(p);
+  test("the registered path when it exists", () => {
+    expect(localShipPath("/Users/me/Workspace/pochteca", { exists: has("/Users/me/Workspace/pochteca") })).toBe("/Users/me/Workspace/pochteca");
+  });
+  test("a laptop path maps to the same place under this machine's home", () => {
+    expect(localShipPath("/Users/me/Workspace/pochteca", { home: "/home/hub", exists: has("/home/hub/Workspace/pochteca") })).toBe("/home/hub/Workspace/pochteca");
+  });
+  test("null when neither exists, or the path is not under a home", () => {
+    expect(localShipPath("/Users/me/Workspace/gone", { home: "/home/hub", exists: has() })).toBeNull();
+    expect(localShipPath("/srv/repo", { home: "/home/hub", exists: has() })).toBeNull();
+  });
+});
+
+describe("freshenClone", () => {
+  test("fetches, then fast-forwards a clean clone; not again within 10 minutes", async () => {
+    const { host, calls } = fakeHost({ stdout: "" });
+    expect(await freshenClone("/c/one", host, { now: 1_000, root: "/root" })).toBe("");
+    expect(calls.map((c) => c.cmd.slice(2).join(" "))).toEqual(["fetch --quiet origin", "status --porcelain", "merge --ff-only --quiet @{upstream}"]);
+    await freshenClone("/c/one", host, { now: 1_000 + 60_000, root: "/root" });
+    expect(calls).toHaveLength(3);
+  });
+  test("a dirty clone is fetched but not moved", async () => {
+    const { host, calls } = fakeHost({ stdout: " M file\n" });
+    await freshenClone("/c/dirty", host, { now: 5, root: "/root" });
+    expect(calls.map((c) => c.cmd[2])).toEqual(["fetch", "status"]);
+  });
+  test("the fleet's own checkout is only fetched", async () => {
+    const { host, calls } = fakeHost({ stdout: "" });
+    await freshenClone("/root", host, { now: 5, root: "/root" });
+    expect(calls.map((c) => c.cmd[2])).toEqual(["fetch"]);
+  });
+  test("a failed fetch is a note, and is retried next time", async () => {
+    const { host, calls } = fakeHost({ exitCode: 1, stderr: "could not resolve host" });
+    expect(await freshenClone("/c/off", host, { now: 5, root: "/root" })).toContain("fetch failed: could not resolve host");
+    await freshenClone("/c/off", host, { now: 6, root: "/root" });
+    expect(calls).toHaveLength(2);
   });
 });

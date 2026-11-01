@@ -1,4 +1,8 @@
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { readShips } from "./fleet-layers.ts";
+import { ROOT } from "./paths.ts";
 import { localHost, type ShipHost } from "./ship-host.ts";
 import { voyageHost, voyageWorktree } from "./voyage-worktree.ts";
 
@@ -86,17 +90,62 @@ export async function gitRead(shipId: string, from: string, args: GitReadArgs, d
   return runGit(cmd.argv, cwd, deps.host ?? voyageHost(shipId) ?? localHost);
 }
 
+/**
+ * Where a registered ship's repo is on this machine. The registry (fleet/ships/*.yaml) holds the laptop's
+ * paths (/Users/<you>/Workspace/<repo>); on the hub the same repo is a clone under its own home
+ * (~/Workspace/<repo>). Null when neither exists.
+ */
+export function localShipPath(path: string, deps: { home?: string; exists?: (p: string) => boolean } = {}): string | null {
+  const exists = deps.exists ?? existsSync;
+  if (path && exists(path)) return path;
+  const m = path.match(/^\/(?:Users|home)\/[^/]+\/(.+)$/);
+  if (!m) return null;
+  const here = join(deps.home ?? homedir(), m[1]!);
+  return exists(here) ? here : null;
+}
+
+const FRESHEN_EVERY_MS = 10 * 60_000;
+const freshened = new Map<string, number>();
+
+/**
+ * Bring a read-only clone up to date before the Architect reads it: fetch at most every 10 minutes, then
+ * fast-forward the checked-out branch when the clone is clean. The fleet's own checkout (ROOT) is only
+ * fetched: on the hub it is the live code, which only a deploy moves. Returns a note when the fetch failed.
+ */
+export async function freshenClone(cwd: string, host: ShipHost, deps: { now?: number; root?: string } = {}): Promise<string> {
+  const now = deps.now ?? Date.now();
+  const last = freshened.get(cwd);
+  if (last !== undefined && now - last < FRESHEN_EVERY_MS) return "";
+  freshened.set(cwd, now);
+  const git = (args: string[]) => host.exec(["git", "--no-pager", ...args], { timeoutMs: 20_000, cwd });
+  const fetched = await git(["fetch", "--quiet", "origin"]);
+  if (fetched.exitCode !== 0 || fetched.timedOut || fetched.unreachable) {
+    freshened.delete(cwd);
+    return `(fetch failed: ${(fetched.stderr.trim() || "no answer").slice(0, 160)}; this is the last fetched state)\n`;
+  }
+  if (resolve(cwd) === resolve(deps.root ?? ROOT)) return "";
+  const dirty = await git(["status", "--porcelain"]);
+  if (dirty.exitCode === 0 && !dirty.stdout.trim()) await git(["merge", "--ff-only", "--quiet", "@{upstream}"]);
+  return "";
+}
+
 /** The Architect's git_read (extensions/decisions.ts): any registered ship's repo, not a voyage worktree. */
 export async function architectGitRead(from: string, args: GitReadArgs & { ship?: unknown }, deps: { host?: ShipHost; cwd?: string } = {}): Promise<{ ok: boolean; message: string }> {
   if (from !== "architect") return { ok: false, message: "git_read here is the architect's." };
   if (typeof args.ship !== "string" || !args.ship) return { ok: false, message: "ship is required (a ship id; fleet is this repo)." };
   const cmd = gitReadArgv(args);
   if (!cmd.ok) return cmd;
+  const host = deps.host ?? localHost;
   let cwd = deps.cwd;
+  let note = "";
   if (!cwd) {
     const ship = (await readShips()).find((s) => s.id === args.ship);
     if (!ship) return { ok: false, message: `No ship ${args.ship}.` };
-    cwd = ship.path;
+    const here = localShipPath(ship.path);
+    if (!here) return { ok: false, message: `${args.ship}'s repo is not on this machine (${ship.path}, or the same path under ${homedir()}).` };
+    cwd = here;
+    note = await freshenClone(cwd, host);
   }
-  return runGit(cmd.argv, cwd, deps.host ?? localHost);
+  const r = await runGit(cmd.argv, cwd, host);
+  return note && r.ok ? { ...r, message: note + r.message } : r;
 }
