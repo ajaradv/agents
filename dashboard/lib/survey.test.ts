@@ -275,6 +275,7 @@ describe("startReview", () => {
     expect(text).toContain("type: survey");
     expect(text).toContain(`writer: ${SOL}`);
     expect(text).toContain("depth: full");
+    expect(text).toMatch(/^cost_usd: [\d.]+\ndate: \d{4}-\d\d-\d\dT[\d:.]+Z\nlenses:$/m);
     expect(text).toContain("### F1 — Major:");
     expect(text).toContain("### F4 — Major:");
     expect(readFileSync(join(vault, "fleet/reviews/full-one/triage.md"), "utf8")).toContain("depth: full");

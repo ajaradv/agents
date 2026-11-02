@@ -1,6 +1,8 @@
 import { compactionAdviceSummary } from "./compaction-advisor.ts";
 import { jevSpend } from "./jev.ts";
 import { metricsDb } from "./metrics.ts";
+import { aliceVault } from "./paths.ts";
+import { surveyFiles, surveyStats } from "./survey-stats.ts";
 import { toolFailureCounts, toolFailureDays, toolFailuresSince } from "./tool-failures.ts";
 
 /**
@@ -12,7 +14,7 @@ import { toolFailureCounts, toolFailureDays, toolFailuresSince } from "./tool-fa
 
 type Res = { ok: boolean; message: string; [k: string]: unknown };
 
-export const FLEET_QUERIES = ["spend", "tool_failures", "jev", "gate", "voyages"] as const;
+export const FLEET_QUERIES = ["spend", "tool_failures", "jev", "gate", "voyages", "surveys"] as const;
 export type FleetQuery = (typeof FLEET_QUERIES)[number];
 export const SPEND_BY = ["agent", "model", "day"] as const;
 export type SpendBy = (typeof SPEND_BY)[number];
@@ -223,13 +225,31 @@ export function voyagesQuery(w: Window): Res {
   };
 }
 
+/** Reviews and brainstorms dated in the window: findings and how they were resolved, cost, and which lenses to trim (survey-stats.ts). */
+export function surveysQuery(w: Window): Res {
+  const { files: all, skipped_files } = surveyFiles(aliceVault());
+  const files = all.filter((f) => Date.parse(f.date) >= Date.parse(w.from) && Date.parse(f.date) < Date.parse(w.to));
+  const stats = surveyStats(files);
+  const sum = (k: "findings" | "fix" | "contest" | "escalate" | "decline" | "open") => stats.by_lens.reduce((a, r) => a + (r[k] ?? 0), 0);
+  const trim = [...new Set(stats.by_lens.filter((r) => r.trim).map((r) => r.lens))];
+  return {
+    ok: true,
+    message: `${files.length} review(s)${when(w)}: ${sum("findings")} findings, ${sum("fix")}/${sum("contest")}/${sum("escalate")}/${sum("decline")} fix/contest/escalate/decline, ${sum("open")} open; $${files.reduce((a, f) => a + f.cost, 0).toFixed(2)}; trim candidates: ${trim.join(", ") || "none"}`,
+    // Own names: tool-out's fleet_query view already gives by_model the spend columns.
+    survey_lenses: stats.by_lens,
+    survey_models: stats.by_model,
+    survey_lens_models: stats.by_lens_model,
+    skipped_files,
+  };
+}
+
 /**
  * Run a named query. `days` (default 7) is clamped to 1..365; `since`/`until` set the window instead (see resolveWindow); `by` applies to spend only.
  * `limit` (1..200) sets the rows of the lists the query itself cuts (gate notable, tool_failures latest and by_agent_tool); `full` lifts them to 200.
  */
 export function fleetQuery(name: string, opts: { days?: number; by?: string; since?: string; until?: string; limit?: number; full?: boolean } = {}): Res {
   if (!(FLEET_QUERIES as readonly string[]).includes(name)) return { ok: false, message: `Unknown query "${name}". Queries: ${FLEET_QUERIES.join(", ")}.` };
-  const w = resolveWindow(opts);
+  const w = resolveWindow(name === "surveys" ? { ...opts, days: opts.days ?? 30 } : opts); // reviews are few: look back 30 days
   if (typeof w === "string") return { ok: false, message: w };
   if (name === "spend") {
     const by = opts.by || "agent";
@@ -241,5 +261,6 @@ export function fleetQuery(name: string, opts: { days?: number; by?: string; sin
   if (name === "tool_failures") return toolFailuresQuery(w, limit);
   if (name === "jev") return jevQuery(w);
   if (name === "gate") return gateQuery(w, limit);
+  if (name === "surveys") return surveysQuery(w);
   return voyagesQuery(w);
 }
