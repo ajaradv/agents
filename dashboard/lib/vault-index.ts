@@ -146,7 +146,7 @@ export function indexVault(vault = aliceVault()): { added: number; removed: numb
 
 type Hit = { path: string; title: string; type: string | null; status: string | null; summary: string | null; section?: string; snippet?: string };
 
-export type VaultSearch = { query?: string; type?: string; status?: string; ship?: string; path?: string; limit?: number };
+export type VaultSearch = { query?: string; type?: string; status?: string; ship?: string; path?: string; limit?: number; /** swaps the query builder (the M6 eval's variant; the tools never pass it) */ match?: (query: string) => string | null };
 
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
@@ -184,7 +184,7 @@ export function searchVault(q: VaultSearch, vault = aliceVault()): { ok: boolean
   const what = [q.query ? `"${q.query}"` : "", ...filters].filter(Boolean).join(", ") || "all notes";
   const shape = (n: (typeof notes)[number]): Hit => ({ path: n.path, title: n.title, type: n.type, status: n.status, summary: n.summary ?? n.description });
 
-  const fts = q.query ? ftsQuery(q.query) : null;
+  const fts = q.query ? (q.match ?? ftsQuery)(q.query) : null;
   if (q.query && !fts) return { ok: false, message: "The query has no searchable words. Use words, or leave it out and filter by type, status, ship, path." };
   let hits: Hit[];
   if (fts) {
@@ -209,6 +209,7 @@ export function searchVault(q: VaultSearch, vault = aliceVault()): { ok: boolean
   return {
     ok: true,
     message: hits.length ? `${hits.length} note(s) match ${what}${hits.length > shown.length ? `; showing the first ${shown.length}` : ""}` : `0 notes match ${what}`,
+    total: hits.length, // before the limit (the search log counts it)
     hits: shown,
   };
 }

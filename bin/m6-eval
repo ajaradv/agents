@@ -1,0 +1,27 @@
+#!/usr/bin/env bun
+// m6-eval - FTS recall@5 on the M6 retrieval eval set (vault plan alice-memory-and-tools, M6a). Read-only.
+// Runs each row through recall or vault_search as the tools do, and also scores AND-first, then OR.
+// Run it on the hub, where the live index is: bin/hub m6-eval
+//
+// Usage:
+//   bin/m6-eval [path]    the eval table; default $ALICE_VAULT/fleet/research/m6-retrieval-eval.md
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { encode } from "@toon-format/toon";
+import { parseEvalTable, scoreEval } from "../dashboard/lib/m6-eval.ts";
+import { aliceVault } from "../dashboard/lib/paths.ts";
+
+const arg = process.argv[2];
+if (arg === "--help" || arg === "-h") {
+  console.log("usage: bin/m6-eval [path]\nsummary: recall@5 of today's FTS on the M6 eval table, overall, per tool and per source, and for AND-first then OR\ndefault path: $ALICE_VAULT/fleet/research/m6-retrieval-eval.md");
+  process.exit(0);
+}
+const file = arg ?? join(aliceVault(), "fleet", "research", "m6-retrieval-eval.md");
+try {
+  const rows = parseEvalTable(readFileSync(file, "utf8"));
+  if (!rows.length) throw new Error("no rows in the table");
+  console.log(encode({ file, rows: rows.length, fts: scoreEval(rows, "fts"), and_first: scoreEval(rows, "strict") }));
+} catch (e) {
+  console.log(encode({ error: e instanceof Error ? e.message : String(e), suggestion: `bin/m6-eval --help (table: | # | tool | query | args | answers | source |; file ${file})` }));
+  process.exit(1);
+}

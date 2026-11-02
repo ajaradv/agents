@@ -3,6 +3,8 @@ import { jevSpend } from "./jev.ts";
 import { metricsDb } from "./metrics.ts";
 import { aliceVault } from "./paths.ts";
 import { surveyFiles, surveyStats } from "./survey-stats.ts";
+import { recallDb } from "./recall.ts";
+import { missCandidates, type SearchRow } from "./search-candidates.ts";
 import { toolFailureCounts, toolFailureDays, toolFailuresSince } from "./tool-failures.ts";
 
 /**
@@ -14,7 +16,7 @@ import { toolFailureCounts, toolFailureDays, toolFailuresSince } from "./tool-fa
 
 type Res = { ok: boolean; message: string; [k: string]: unknown };
 
-export const FLEET_QUERIES = ["spend", "tool_failures", "jev", "gate", "voyages", "surveys"] as const;
+export const FLEET_QUERIES = ["spend", "tool_failures", "jev", "gate", "voyages", "surveys", "searches"] as const;
 export type FleetQuery = (typeof FLEET_QUERIES)[number];
 export const SPEND_BY = ["agent", "model", "day"] as const;
 export type SpendBy = (typeof SPEND_BY)[number];
@@ -243,13 +245,63 @@ export function surveysQuery(w: Window): Res {
   };
 }
 
+const SEARCH_SAMPLE = 20;
+
+/** A small seeded generator (mulberry32), so the same day gives the same sample. */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** recall / vault_search / vault_note use from the search log (M6a): per tool and agent, miss candidates, and an unbiased sample for the eval set. */
+export function searchesQuery(w: Window, limit?: number): Res {
+  let rows: (SearchRow & { hits: number })[] = [];
+  try {
+    rows = recallDb().query("SELECT id, ts, agent, tool, query, args, hits, refs FROM search_log WHERE ts >= ? AND ts < ? ORDER BY id").all(w.from, w.to) as typeof rows;
+  } catch {
+    /* no log yet */
+  }
+  const searches = rows.filter((r) => r.tool !== "vault_note");
+  const groups = new Map<string, { tool: string; agent: string; searches: number; zero_hits: number }>();
+  for (const r of searches) {
+    const g = groups.get(`${r.tool}|${r.agent}`) ?? { tool: r.tool, agent: r.agent, searches: 0, zero_hits: 0 };
+    g.searches++;
+    if (r.hits === 0) g.zero_hits++;
+    groups.set(`${r.tool}|${r.agent}`, g);
+  }
+  const all = missCandidates(rows);
+  const reformulations = all.filter((c) => c.reason === "reformulation").length;
+  const flagged = new Set(all.map((c) => c.id));
+  const ordinary = searches.filter((r) => !flagged.has(r.id));
+  const rand = seeded(Number(new Date().toISOString().slice(0, 10).replace(/-/g, "")));
+  const picked = ordinary
+    .map((r) => ({ r, k: rand() }))
+    .sort((a, b) => a.k - b.k)
+    .slice(0, limit ?? SEARCH_SAMPLE)
+    .map((x) => x.r);
+  const count = (tool: string) => searches.filter((r) => r.tool === tool).length;
+  return {
+    ok: true,
+    message: `${searches.length} searches${when(w)} (${count("recall")} recall, ${count("vault_search")} vault_search; ${new Set(searches.map((r) => r.agent)).size} agents); ${searches.filter((r) => r.hits === 0).length} with no hits; ${all.length} miss candidates (${reformulations} reformulations, ${all.length - reformulations} follow-throughs)`,
+    by_tool_agent: [...groups.values()].sort((a, b) => b.searches - a.searches || a.tool.localeCompare(b.tool) || a.agent.localeCompare(b.agent)),
+    candidates: all.slice(0, limit ?? SEARCH_SAMPLE),
+    sample: picked.map((r) => ({ id: r.id, ts: r.ts, agent: r.agent, tool: r.tool, query: r.query, args: r.args, refs: JSON.parse(r.refs) as string[] })),
+  };
+}
+
 /**
  * Run a named query. `days` (default 7) is clamped to 1..365; `since`/`until` set the window instead (see resolveWindow); `by` applies to spend only.
  * `limit` (1..200) sets the rows of the lists the query itself cuts (gate notable, tool_failures latest and by_agent_tool); `full` lifts them to 200.
  */
 export function fleetQuery(name: string, opts: { days?: number; by?: string; since?: string; until?: string; limit?: number; full?: boolean } = {}): Res {
   if (!(FLEET_QUERIES as readonly string[]).includes(name)) return { ok: false, message: `Unknown query "${name}". Queries: ${FLEET_QUERIES.join(", ")}.` };
-  const w = resolveWindow(name === "surveys" ? { ...opts, days: opts.days ?? 30 } : opts); // reviews are few: look back 30 days
+  const w = resolveWindow(name === "surveys" || name === "searches" ? { ...opts, days: opts.days ?? 30 } : opts); // reviews and searches are few: look back 30 days
   if (typeof w === "string") return { ok: false, message: w };
   if (name === "spend") {
     const by = opts.by || "agent";
@@ -262,5 +314,6 @@ export function fleetQuery(name: string, opts: { days?: number; by?: string; sin
   if (name === "jev") return jevQuery(w);
   if (name === "gate") return gateQuery(w, limit);
   if (name === "surveys") return surveysQuery(w);
+  if (name === "searches") return searchesQuery(w, limit);
   return voyagesQuery(w);
 }

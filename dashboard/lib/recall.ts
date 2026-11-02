@@ -20,6 +20,7 @@ import { aliceVault, fleetInboxRoot } from "./paths.ts";
 const SCHEMA = `
 CREATE VIRTUAL TABLE IF NOT EXISTS recall_fts USING fts5(source, ref, ts, text, tokenize = 'porter unicode61');
 CREATE TABLE IF NOT EXISTS recall_seen (key TEXT PRIMARY KEY, mark TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS search_log (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, agent TEXT NOT NULL, tool TEXT NOT NULL, query TEXT NOT NULL, args TEXT NOT NULL, hits INTEGER NOT NULL, refs TEXT NOT NULL);
 `;
 
 function db() {
@@ -137,15 +138,23 @@ export function indexRecall(): number {
 
 export type RecallHit = { source: string; ref: string; ts: string; snippet: string };
 
+const ftsTerms = (query: string) => (query.match(/"[^"]+"|[\p{L}\p{N}_-]+/gu) ?? []).map((t) => (t.startsWith('"') ? t : `"${t.replace(/"/g, "")}"*`));
+
 /** Words as an FTS5 query: prefixes, quoted phrases kept, any of them; null when there are none. */
 export function ftsQuery(query: string): string | null {
-  const terms = (query.match(/"[^"]+"|[\p{L}\p{N}_-]+/gu) ?? []).map((t) => (t.startsWith('"') ? t : `"${t.replace(/"/g, "")}"*`));
+  const terms = ftsTerms(query);
   return terms.length ? terms.join(" OR ") : null;
 }
 
-/** Search fleet talk (not the vault: vault_search); words are matched as prefixes, quoted phrases kept. */
-export function recall(query: string, limit = 8): RecallHit[] {
-  const fts = ftsQuery(query);
+/** The same terms, all of them required (M6 eval's lexical variant; not wired into the tools). */
+export function ftsQueryStrict(query: string): string | null {
+  const terms = ftsTerms(query);
+  return terms.length ? terms.join(" AND ") : null;
+}
+
+/** Search fleet talk (not the vault: vault_search); words are matched as prefixes, quoted phrases kept. `match` swaps the query builder (the M6 eval's variant; the tools never pass it). */
+export function recall(query: string, limit = 8, match: (query: string) => string | null = ftsQuery): RecallHit[] {
+  const fts = match(query);
   if (!fts) return [];
   try {
     indexRecall();
@@ -157,10 +166,40 @@ export function recall(query: string, limit = 8): RecallHit[] {
   }
 }
 
+export type SearchTool = "recall" | "vault_search" | "vault_note";
+
+/** A vault-relative note path as logged: no `./`, no leading `vault/`, no `#section`. */
+export const notePathRef = (p: string): string => p.trim().replace(/#.*$/, "").replace(/^(\.\/)+/, "").replace(/^vault\//, "");
+
+/** A recall hit's canonical id; a chat row's ref is only "<agent> <speaker>", so the timestamp tells rows apart. */
+export const recallRef = (h: { source: string; ref: string; ts: string }): string => `${h.source}|${h.ref}|${h.ts}`;
+
+const SEARCH_LOG_REFS = 10;
+const SEARCH_LOG_DAYS = 90;
+
+/** Record a search for the M6 measure (what was asked, how many answers, the top refs). Never throws. */
+export function logSearch(agent: string, tool: SearchTool, query: string, args: Record<string, unknown>, hits: number, refs: string[]): void {
+  try {
+    const canon = tool === "recall" ? refs : refs.map(notePathRef);
+    db()
+      .query("INSERT INTO search_log (ts, agent, tool, query, args, hits, refs) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(new Date().toISOString(), agent, tool, query, JSON.stringify(args), hits, JSON.stringify(canon.slice(0, SEARCH_LOG_REFS)));
+  } catch {
+    /* the log must never break a search */
+  }
+}
+
+/** Drop log rows older than 90 days; returns how many. */
+export function pruneSearchLog(): number {
+  return db().query("DELETE FROM search_log WHERE ts < ?").run(new Date(Date.now() - SEARCH_LOG_DAYS * 86_400_000).toISOString()).changes;
+}
+
 export function startRecallIndexer(): void {
+  // The prune runs here, not in indexRecall: recall() calls that on every search.
   const tick = () => {
     try {
       indexRecall();
+      pruneSearchLog();
     } catch (e) {
       console.error("[node] recall index:", e);
     }

@@ -55,7 +55,7 @@ import { adviseCompaction, cutPoint } from "./lib/compaction-advisor.ts";
 import { askAboutFiles } from "./lib/cheap-reads.ts";
 import { dashLog } from "./lib/log.ts";
 import { spawnTimed } from "./lib/proc.ts";
-import { recall, startRecallIndexer } from "./lib/recall.ts";
+import { logSearch, notePathRef, recall, recallRef, startRecallIndexer } from "./lib/recall.ts";
 import { backfillMetrics } from "./lib/metrics-backfill.ts";
 import { notifyCaptain, onNoticesChange, startDigestClock, type NoticeKind } from "./lib/notify.ts";
 import { captainWrote, checkOrderCall, kickOrders, orderFinish, orderStep, recordOrderCall, startOrderWatcher } from "./lib/orders.ts";
@@ -518,8 +518,15 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
   else if (call.tool === "ship_maneuvers") res = await shipManeuvers(a.ship ?? "");
   else if (call.tool === "agent_chat_read") res = await agentChatRead(a.agent ?? "", Number(a.n) || 12);
   else if (call.tool === "fleet_query") res = fleetQuery(a.query ?? "", { days: Number(a.days) || undefined, by: a.by, since: a.since, until: a.until, limit: Number(a.limit) || undefined, full: q.get("full") === "true" });
-  else if (call.tool === "vault_note") res = vaultNote(a.path ?? "", { section: a.section, full: a.full === "true" });
-  else if (call.tool === "vault_search") res = searchVault({ query: a.query, type: a.type, status: a.status, ship: a.ship, path: a.path, limit: Number(a.limit) || undefined });
+  else if (call.tool === "vault_note") {
+    res = vaultNote(a.path ?? "", { section: a.section, full: a.full === "true" });
+    if (res.ok) logSearch(from, "vault_note", a.path ?? "", { section: a.section, full: a.full === "true" }, 1, [notePathRef(String(res.path ?? a.path))]);
+  }
+  else if (call.tool === "vault_search") {
+    const filters = { type: a.type, status: a.status, ship: a.ship, path: a.path, limit: Number(a.limit) || undefined };
+    res = searchVault({ query: a.query, ...filters });
+    if (res.ok && a.query) logSearch(from, "vault_search", a.query ?? "", filters, Number(res.total) || 0, ((res.hits ?? []) as { path: string }[]).map((h) => h.path));
+  }
   else if (call.tool === "vault_doctor") res = doctorReport(a.fix === "true");
   else if (call.tool === "vault_patch") {
     res = vaultPatch({ path: a.path ?? "", set: b.set as Record<string, unknown> | undefined, check: a.check, uncheck: a.uncheck });
@@ -549,6 +556,7 @@ async function fleetApi(req: Request, what: string, q: URLSearchParams): Promise
   else if (call.tool === "ship_next") res = await shipNext(a.ship ?? "", q.get("full") === "true");
   else if (call.tool === "recall") {
     const hits = recall(a.query ?? "", Number(a.limit) || 8);
+    logSearch(from, "recall", a.query ?? "", { limit: Number(a.limit) || undefined }, hits.length, hits.map(recallRef)); // hits is already cut to the limit
     res = { ok: true, message: hits.length ? `${hits.length} match(es), best first.` : "No matches. Try other words, or delegate a deeper search.", hits };
   }
   else res = await fleetChat(from, a.to ?? "", a.text ?? "");
@@ -693,7 +701,13 @@ async function handle(req: Request, server: ReturnType<typeof Bun.serve>): Promi
     return Response.json({ ok: true });
   }
   // The dashboard's vault reader search: the node owns the index (startVaultIndexer), so the dashboard asks it.
-  if (path === "/v1/vault-search") return Response.json(searchVault({ query: String(b.query ?? ""), limit: Number(b.limit) || undefined }));
+  if (path === "/v1/vault-search") {
+    const query = String(b.query ?? "");
+    const limit = Number(b.limit) || undefined;
+    const res = searchVault({ query, limit });
+    if (res.ok && query) logSearch("dashboard", "vault_search", query, { limit }, Number(res.total) || 0, ((res.hits ?? []) as { path: string }[]).map((h) => h.path));
+    return Response.json(res);
+  }
   if (path === "/v1/refresh-targets") {
     await refreshAgentTargets();
     return Response.json({ ok: true });
