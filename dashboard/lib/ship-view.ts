@@ -691,7 +691,7 @@ export function orderProgress(slug: string, total: number, events = recentShipEv
 const QUEUE_KIND_LABEL: Record<QueueKind, string> = { "design-session": "Design session", "spec-session": "Spec session", "spec-review": "Spec review", "design-review": "Design review" };
 
 /** A review's state and the captain's two answers (lib/decisions.ts reviewQueueItem). */
-function reviewHtml(i: QueueItem, api: string): string {
+export function reviewHtml(i: QueueItem, api: string): string {
   if (i.status !== "queued") return "";
   const answer = (approve: string, changes: string, placeholder: string) => `<div class="row-wrap">
       <form class="shipyard-form" data-api="${api}/approve"><button class="d-btn d-btn-sm d-btn-neutral" type="submit">${approve}</button><span class="muted" data-note></span></form>
@@ -703,7 +703,8 @@ function reviewHtml(i: QueueItem, api: string): string {
     const path = i.record.replace(/^.*\/fleet\/specs\//, "fleet/specs/");
     const rv = i.review;
     const sev = rv ? Object.entries(rv.counts).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k.toLowerCase()}${n === 1 ? "" : "s"}`).join(", ") : "";
-    const review = !rv ? "" : rv.unavailable ? `<p class="muted">not reviewed: ${escapeHtml(rv.unavailable)}</p>` : !rv.rel ? `<p class="muted">Review skipped (small change).</p>` : `<p class="muted">Reviewed (${escapeHtml(rv.depth)}): ${escapeHtml(sev || "no findings")} · <a href="/vault/${encodeURI(rv.rel)}">the review</a></p>${rv.escalations.length ? `<ul>${rv.escalations.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>` : ""}`;
+    const list = (label: string, items: string[]) => (items.length ? `<p class="muted">${label}</p><ul>${items.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>` : "");
+    const review = !rv ? "" : rv.unavailable ? `<p class="muted">not reviewed: ${escapeHtml(rv.unavailable)}</p>` : !rv.rel ? `<p class="muted">Review skipped (small change).</p>` : `${rv.incomplete ? `<p class="muted">review incomplete: ${escapeHtml(rv.incomplete)}</p>` : ""}<p class="muted">Reviewed (${escapeHtml(rv.depth)}): ${escapeHtml(sev || "no findings")} · <a href="/vault/${encodeURI(rv.rel)}">the review</a>${rv.draft_changed ? ` · ${rv.draft_changed} lines changed since review` : ""}</p>${rv.escalations.length ? `<ul>${rv.escalations.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>` : ""}${list("contested", rv.contested ?? [])}`;
     return `<details class="spec-preview"><summary>Spec <code>${escapeHtml(path)}</code> · ${spec?.criteria.length ?? 0} acceptance criteria${spec?.prototype ? ` · from <code>${escapeHtml(spec.prototype)}</code>` : ""}</summary><ol>${(spec?.criteria ?? []).map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ol></details>${review}${answer("Approve", "Ask for changes", "What to change")}`;
   }
   if (i.kind === "design-review") return answer("Accept as built", "Send to the lead", "Anything to add (optional)");

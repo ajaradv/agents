@@ -9,7 +9,7 @@ import { dashLog } from "./log.ts";
 import { readModels, resolveAlias, sameModel, type ModelsConfig } from "./models-config.ts";
 import { aliceVault, fleetInboxRoot, ROOT } from "./paths.ts";
 import { redact } from "./redact.ts";
-import { reviewStatus } from "./review-status.ts";
+import { draftChange, reviewStatus } from "./review-status.ts";
 import { pidAlive } from "./session.ts";
 
 /**
@@ -39,6 +39,9 @@ const DEPTHS: Depth[] = ["skip", "light", "full"];
 const SEVERITIES: Severity[] = ["Blocker", "Major", "Nit", "Unparsed"];
 /** The standard each lens reviews against (comprehension and the brainstorm lenses have none). */
 const STANDARD: Record<string, string> = { "zoom-out": "zoom-out-standard", "design-critic": "feature-spec-standard", readiness: "implementation-readiness-standard", codebase: "implementation-readiness-standard" };
+
+/** The longest target text kept with a review to measure how far the draft moved. */
+const DRAFT_CAP = 200_000;
 
 const maxReviewers = () => Math.max(1, Number(process.env.FLEET_SURVEY_MAX) || 4);
 const minutes = () => Math.max(1, Number(process.env.FLEET_SURVEY_MINUTES) || 15);
@@ -256,7 +259,7 @@ export function parseFindings(text: string): { findings: Finding[]; unparsed: bo
 
 type Row = { lens: string; model: string | null; status: "queued" | "running" | "done" | "unparsed" | "not run"; cost: number; child?: string; tried: string[]; note?: string };
 type Req = { by: "architect" | "captain"; mode: Mode; target: string; slug: string; ship: string; writer: string; depth: Depth; lenses: string[]; jev: string; depthBy: string };
-type ParentData = Req & { rows: Row[]; dir: string; code: string | null; repo: string | null; sha: string; codeNote: string; started: string; review?: string; ids?: number[]; cost?: number; counts?: Record<string, number>; error?: string };
+type ParentData = Req & { rows: Row[]; dir: string; code: string | null; repo: string | null; sha: string; codeNote: string; started: string; review?: string; ids?: number[]; cost?: number; counts?: Record<string, number>; error?: string; draft?: string | null; insufficient?: string };
 type ChildData = { parent: string; lens: string; model: string; dir: string; pid: number; attempt: number; started: string; cost?: number; findings?: Finding[]; unparsed?: boolean; error?: string };
 
 const newId = () => `s-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -365,7 +368,9 @@ async function begin(id: string): Promise<void> {
     const assigned = assignModels(d.lenses, d.writer, roster, failedModels());
     const rows: Row[] = assigned.map((a) => ({ lens: a.lens, model: a.model, status: a.model ? "queued" : "not run", cost: 0, tried: a.model ? [a.model] : [], ...(a.model ? {} : { note: "no model left that is not the writer's, not in use, allowed and not failing today" }) }));
     for (const r of rows) if (r.model) r.child = createChild(id, r.lens, r.model, 1);
-    updateWorkflow(id, { data: { rows, code: code?.path ?? null, repo: code?.repo ?? null, sha: code?.sha ?? "", codeNote: code?.note ?? "" } });
+    // The text the reviewers read, so reviewReady can tell a fixed draft from a rewritten one (GR5); too long to keep gives null.
+    const text = existsSync(join(aliceVault(), d.target)) ? readFileSync(join(aliceVault(), d.target), "utf8") : "";
+    updateWorkflow(id, { data: { draft: text && text.length <= DRAFT_CAP ? text : null, rows, code: code?.path ?? null, repo: code?.repo ?? null, sha: code?.sha ?? "", codeNote: code?.note ?? "" } });
     await pump(id);
   } catch (e) {
     await failReview(id, e instanceof Error ? e.message : String(e));
@@ -480,6 +485,12 @@ export async function finishReview(id: string): Promise<void> {
     const counts = Object.fromEntries(SEVERITIES.map((s) => [s, merged.filter((f) => f.severity === s).length]));
     const ids = merged.map((_, i) => i + 1);
     const notRun = d.rows.filter((r) => r.status === "not run").map((r) => r.lens);
+    // A review without its core lenses or fresh code can still be resolved, but the captain decides if it is enough (GR5).
+    const insufficient = d.mode !== "review" ? "" : [
+      ...(ranRows(d).some((r) => r.lens === "readiness") ? [] : ["readiness did not run"]),
+      ...(d.depth === "full" && !ranRows(d).some((r) => r.lens === "design-critic") ? ["design-critic did not run"] : []),
+      ...(/^(code may be stale|no code: the worktree)/.test(d.codeNote) ? [d.codeNote] : []),
+    ].join("; ");
     const dir = join(aliceVault(), "fleet", "reviews", d.slug);
     mkdirSync(dir, { recursive: true });
     const prefix = d.mode === "review" ? "review" : "brainstorm";
@@ -502,6 +513,7 @@ export async function finishReview(id: string): Promise<void> {
       `# ${d.mode === "review" ? "Review" : "Brainstorm"} ${n} of ${d.slug}`,
       "",
       `Depth ${d.depth} (${d.depthBy}; Jev: ${d.jev}). Written by ${d.writer}; reviewed by models other than it.`,
+      ...(insufficient ? ["", `Insufficient: ${insufficient}. The captain decides whether this review is enough.`] : []),
       ...(d.codeNote ? ["", `Code: ${d.codeNote}.`] : d.sha ? ["", `Code: ${d.ship} at ${d.sha.slice(0, 10)}.`] : []),
       ...(notRun.length ? ["", `Not run: ${d.rows.filter((r) => r.status === "not run").map((r) => `${r.lens} (${r.note})`).join("; ")}.`] : []),
       "",
@@ -515,7 +527,7 @@ export async function finishReview(id: string): Promise<void> {
     const summary = `${counts.Blocker} blockers, ${counts.Major} majors, ${counts.Nit} nits${counts.Unparsed ? `, ${counts.Unparsed} unparsed` : ""}; ${notRun.length ? `not run: ${notRun.join(", ")}` : "all lenses ran"}; $${cost.toFixed(2)}`;
     if (d.by === "architect") await postBus("architect", { from: "surveyor", kind: "survey-done", ref: rel, summary: `${d.mode === "review" ? "Review" : "Brainstorm"} of ${d.slug} (${d.depth}): ${summary}` });
     // Last, so a caller that sees the end of the workflow finds the file and the Architect's message in place.
-    updateWorkflow(id, { status: ran ? "done" : "failed", data: { review: rel, ids, cost, counts, ...(ran ? {} : { error: "no surveyor ran" }) } });
+    updateWorkflow(id, { status: ran ? "done" : "failed", data: { review: rel, ids, cost, counts, insufficient, ...(ran ? {} : { error: "no surveyor ran" }) } });
     await dashLog("survey", `${id} ${ran ? "done" : "failed"} ${rel} ${summary}`);
     return { review: rel };
   });
@@ -588,7 +600,7 @@ export function reviewResolved(file: string): ReviewCheck {
 
 // ---------------------------------------------------------------- the gate before the captain
 
-export type ReviewSummary = { depth: string; counts: Record<string, number>; escalations: string[]; rel: string };
+export type ReviewSummary = { depth: string; counts: Record<string, number>; escalations: string[]; contested?: string[]; rel: string; incomplete?: string; draft_changed?: number };
 export type Ready = { ok: boolean; message: string; review?: ReviewSummary | null; unavailable?: string };
 
 /** A vault path (absolute or relative) as a vault-relative one. */
@@ -619,6 +631,17 @@ function escalations(text: string): string[] {
   return text.slice(at).split("\n").flatMap((l) => {
     const m = /^(F\d+): escalate\s+(?:—|-)\s+(.+)$/.exec(l);
     return m ? [`${m[1]}: ${m[2]}`] : [];
+  });
+}
+
+/** The `F<n>: contest — <why>` lines of a review file whose finding is a Blocker or a Major, in the form of escalations. */
+function contested(text: string): string[] {
+  const at = text.search(/^## Resolution\s*$/m);
+  if (at < 0) return [];
+  const serious = new Set([...text.slice(0, at).matchAll(/^### (F\d+) — (?:Blocker|Major)\b/gm)].map((m) => m[1]));
+  return text.slice(at).split("\n").flatMap((l) => {
+    const m = /^(F\d+): contest\s+(?:—|-)\s+(.+)$/.exec(l);
+    return m && serious.has(m[1]!) ? [`${m[1]}: ${m[2]}`] : [];
   });
 }
 
@@ -655,5 +678,9 @@ export function reviewReady(notePath: string): Ready {
   if (missing.length) return { ok: false, message: `${file} no longer has ${missing.map((n) => `F${n}`).join(", ")}, which the node counted. Do not delete findings; resolve them under ## Resolution.` };
   const r = reviewResolved(full);
   if (!r.ok) return { ok: false, message: `${file}: ${r.message}` };
-  return { ok: true, message: r.message, review: { depth: w.data.depth, counts: w.data.counts ?? {}, escalations: escalations(readFileSync(full, "utf8")), rel: file } };
+  // A fix edits the draft, so only a large change since the review read it is refused; no `draft` (an older review) skips the check.
+  const moved = typeof w.data.draft === "string" ? draftChange(w.data.draft, readFileSync(abs, "utf8")) : null;
+  if (moved && moved.changed > Math.max(40, 0.25 * moved.total)) return { ok: false, message: `${rel} changed by ${moved.changed} lines since the review read it (${moved.total} lines then). Run survey mode=review again, and resolve the new review.` };
+  const text = readFileSync(full, "utf8");
+  return { ok: true, message: r.message, review: { depth: w.data.depth, counts: w.data.counts ?? {}, escalations: escalations(text), contested: contested(text), rel: file, ...(w.data.insufficient ? { incomplete: w.data.insufficient } : {}), ...(moved ? { draft_changed: moved.changed } : {}) } };
 }

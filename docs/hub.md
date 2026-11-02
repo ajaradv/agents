@@ -89,3 +89,7 @@ Never in any procedure: print or copy the heartbeat URL, `.env` files, the servi
 | 2026-11-01 | Units (after deploy) | ok: six active |
 | 2026-11-01 | Logrotate dry run (`sudo logrotate -d /etc/logrotate.d/fleet`) | ok: config present, rc 0, no errors, no rotation due |
 | 2026-11-01 | Deploy check (after deploy) | ok: hub at origin/main (8e17bfa), "would do nothing" |
+| 2026-11-01 | Deploy --new-session alice (8e17bfa -> 897c7a6, #108 GR4 + #109 M6a) | ok: node pid 3448644, dashboard up, pi 1.4.0, new session dashboard-alice-20261102-003118, deploys.log line 2026-11-02T00:31:16Z |
+| 2026-11-01 | Units (after deploy) | ok: six active |
+| 2026-11-01 | query surveys / query searches (after deploy) | ok: surveys 4 reviews, 85 findings, skipped_files 2 (the two hand-written reviews); searches 0 (new log) |
+| 2026-11-01 | Logs (node.log, 1 min after deploy) | ok: no errors or repeated lines |

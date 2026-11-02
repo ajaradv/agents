@@ -64,3 +64,22 @@ export function parseReviewText(text: string): { findings: ReviewFinding[]; reso
   }
   return { findings, resolutions };
 }
+
+/**
+ * How much a note changed since a review read it (GR5): lines of `after` not matched in `before` plus lines of
+ * `before` not matched in `after` (a multiset difference of trimmed, non-empty lines, the `review:` and `updated:`
+ * frontmatter lines left out); `total` is the non-empty lines of `before`.
+ */
+export function draftChange(before: string, after: string): { changed: number; total: number } {
+  const lines = (t: string) => t.split("\n").filter((l) => !/^(review|updated):/.test(l)).map((l) => l.trim()).filter(Boolean);
+  const a = lines(before);
+  const left = new Map<string, number>();
+  for (const l of a) left.set(l, (left.get(l) ?? 0) + 1);
+  let extra = 0;
+  for (const l of lines(after)) {
+    const n = left.get(l) ?? 0;
+    if (n > 0) left.set(l, n - 1);
+    else extra++;
+  }
+  return { changed: extra + [...left.values()].reduce((x, y) => x + y, 0), total: a.length };
+}

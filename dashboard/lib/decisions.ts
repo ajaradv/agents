@@ -23,7 +23,7 @@ export function specSubmit(from: string, b: { queue?: unknown; path?: unknown })
   if (!checked.ok) return checked;
   const ready = reviewReady(checked.spec.file);
   if (!ready.ok) return ready;
-  const review = ready.review ?? { depth: ready.unavailable ? "" : "skip", counts: {}, escalations: [], rel: "", ...(ready.unavailable ? { unavailable: ready.unavailable } : {}) };
+  const review = ready.review ?? { depth: ready.unavailable ? "" : "skip", counts: {}, escalations: [], contested: [], rel: "", ...(ready.unavailable ? { unavailable: ready.unavailable } : {}) };
   updateQueueItem(id, { record: checked.spec.file, note: "", review });
   return { ok: true, message: `Submitted for the captain's review: ${checked.spec.title} (${checked.spec.criteria.length} acceptance criteria). It waits on the flagship's Decision queue; changes come back on your bus.` };
 }

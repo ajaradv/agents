@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { RESOLVED, reviewStatus } from "./review-status.ts";
+import { draftChange, RESOLVED, reviewStatus } from "./review-status.ts";
 
 const fx = (name: string) => join(import.meta.dir, "fixtures", "reviews", name);
 
@@ -31,5 +31,24 @@ describe("reviewStatus", () => {
 
   test("a missing file is null", () => {
     expect(reviewStatus(fx("nope.md"))).toBeNull();
+  });
+});
+
+describe("draftChange", () => {
+  const note = (body: string, review = "", updated = "2026-11-01") => `---\ntitle: x\n${review ? `review: ${review}\n` : ""}updated: ${updated}\n---\n${body}`;
+  const lines = (n: number, tag = "a") => Array.from({ length: n }, (_, i) => `${tag} line ${i}`).join("\n");
+  test("equal texts change nothing, and the total counts the non-empty lines before", () => {
+    expect(draftChange(note(lines(10)), note(lines(10)))).toEqual({ changed: 0, total: 13 });
+  });
+  test("the review: and updated: lines do not count", () => {
+    expect(draftChange(note(lines(10)), note(lines(10), "fleet/reviews/x/review-1.md", "2026-12-01")).changed).toBe(0);
+  });
+  test("ten lines replaced is twenty changed", () => {
+    expect(draftChange(note(lines(30)), note(`${lines(20)}\n${lines(10, "b")}`)).changed).toBe(20);
+  });
+  test("duplicates are counted, blank lines and indentation are not", () => {
+    expect(draftChange("same\nsame\nsame", "same").changed).toBe(2);
+    expect(draftChange("x", "x\nx\nx").changed).toBe(2);
+    expect(draftChange("a\n\n  b", "a\nb\n\n\n").changed).toBe(0);
   });
 });
