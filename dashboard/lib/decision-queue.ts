@@ -35,7 +35,7 @@ export type QueueItem = {
   /** The captain's last "changes, please" on a review. */
   note?: string;
   /** For a spec review: what the surveyors found (lib/survey.ts reviewReady), shown on the card. */
-  review?: { depth: string; counts: Record<string, number>; escalations: string[]; rel: string; unavailable?: string };
+  review?: { depth: string; counts: Record<string, number>; escalations: string[]; contested?: string[]; rel: string; unavailable?: string; incomplete?: string; draft_changed?: number };
 };
 
 const path = () => join(nodeStateDir(), "decision-queue.json");

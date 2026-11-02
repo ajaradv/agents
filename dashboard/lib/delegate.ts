@@ -154,7 +154,7 @@ export async function startHelper(o: HelperStart): Promise<{ pid: number }> {
   const out = openSync(join(o.dir, "out.jsonl"), "a");
   let pid = 0;
   try {
-    const cmd = ["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--model", o.model, "--tools", "read,grep,find,ls", ...o.prompts.flatMap((p) => ["--append-system-prompt", p]), ...o.extensions.flatMap((e) => ["-e", e]), o.task];
+    const cmd = ["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--no-extensions", "--no-prompt-templates", "--no-mcp", "--no-context-files", "--model", o.model, "--tools", "read,grep,find,ls", ...o.prompts.flatMap((p) => ["--append-system-prompt", p]), ...o.extensions.flatMap((e) => ["-e", e]), o.task];
     const env = { ...withoutSecrets(process.env), ...keysForModels(await agentKeyEnv(), [o.model]), ...o.env, FLEET_AGENT_ID: o.agentId };
     const proc = (o.spawn ?? realSpawn)(cmd, { cwd: o.cwd, env, out });
     pid = proc.pid;

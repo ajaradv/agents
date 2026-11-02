@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ShipEvent } from "./ship-log.ts";
-import { collapseLog, orderProgress } from "./ship-view.ts";
+import type { QueueItem } from "./decision-queue.ts";
+import { collapseLog, orderProgress, reviewHtml } from "./ship-view.ts";
 
 const ev = (id: number, ts: string, kind: string, summary: string, payload: Record<string, unknown> | null = null, actor = "kinwork-designer"): ShipEvent => ({ id, ts, actor, kind, summary, payload });
 const SSE = "Could not parse Anthropic SSE event content_block_delta: Unexpected end of JSON input; data=";
@@ -40,5 +41,30 @@ describe("order progress on the deck", () => {
     expect(orderProgress("o1", 4, paused)).toEqual({ step: 3, total: 4, chatPaused: true });
     expect(orderProgress("o1", 4, [o(5, "order-start", { step: 3, resumed: true }), ...paused])).toEqual({ step: 3, total: 4, chatPaused: false });
     expect(orderProgress("o2", 4, paused)).toEqual({ step: 1, total: 4, chatPaused: false });
+  });
+});
+
+describe("the spec review card", () => {
+  const item = (review: NonNullable<QueueItem["review"]>): QueueItem => ({ id: "q1", kind: "spec-review", ship: "kinwork", title: "t", status: "queued", record: "/v/fleet/specs/s.md", review }) as QueueItem;
+  const base = { depth: "full", counts: { Major: 2 }, escalations: [], rel: "fleet/reviews/s/review-1.md" };
+  test("an incomplete review shows its reasons above the counts and the link", () => {
+    const html = reviewHtml(item({ ...base, incomplete: "readiness did not run" }), "/api");
+    expect(html).toContain("review incomplete: readiness did not run");
+    expect(html).toContain("2 majors");
+    expect(html).toContain('href="/vault/fleet/reviews/s/review-1.md"');
+    expect(html.indexOf("review incomplete")).toBeLessThan(html.indexOf("Reviewed (full)"));
+  });
+  test("contested findings are listed after the escalations, and the lines changed beside the link", () => {
+    const html = reviewHtml(item({ ...base, escalations: ["F1: ask the captain"], contested: ["F2: the code does it at x.ts:3"], draft_changed: 12 }), "/api");
+    expect(html).toContain("12 lines changed since review");
+    expect(html).toContain("contested");
+    expect(html.indexOf("F1: ask the captain")).toBeLessThan(html.indexOf("contested"));
+    expect(html.indexOf("contested")).toBeLessThan(html.indexOf("F2: the code does it"));
+  });
+  test("a clean review shows none of them", () => {
+    const html = reviewHtml(item({ ...base, draft_changed: 0 }), "/api");
+    expect(html).not.toContain("incomplete");
+    expect(html).not.toContain("contested");
+    expect(html).not.toContain("lines changed");
   });
 });

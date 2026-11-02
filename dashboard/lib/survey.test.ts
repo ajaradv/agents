@@ -261,8 +261,8 @@ describe("startReview", () => {
     for (const x of runs) {
       expect(x.env.FLEET_AGENT_ID).toBe("surveyor");
       expect(x.cwd).toBe(vault);
-      expect(x.cmd.slice(0, 9)).toEqual(["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--model", x.model, "--tools"]);
-      expect(x.cmd[9]).toBe("read,grep,find,ls");
+      expect(x.cmd.slice(0, 13)).toEqual(["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--no-extensions", "--no-prompt-templates", "--no-mcp", "--no-context-files", "--model", x.model, "--tools"]);
+      expect(x.cmd[13]).toBe("read,grep,find,ls");
       expect(x.cmd.filter((c) => c === "-e")).toHaveLength(2);
       expect(x.cmd.some((c) => c.endsWith("extensions/tool-gate.ts"))).toBe(true);
       expect(x.cmd.some((c) => c.endsWith("extensions/cache-watch.ts"))).toBe(true);
@@ -623,5 +623,98 @@ describe("reviewReady", () => {
     const again = await s.startReview("architect", { mode: "review", path: rel, writer: SOL });
     await until(() => wf(String(again.id)).status === "done");
     expect(s.reviewReady(rel).ok).toBe(false);
+  });
+});
+
+describe("gate hardening (GR5)", () => {
+  const resolveAll = (file: string, n: number) => writeFileSync(join(vault, file), `${readFileSync(join(vault, file), "utf8")}\n## Resolution\n${Array.from({ length: n }, (_, i) => `F${i + 1}: fix — done`).join("\n")}\n`, "utf8");
+  const ref = (rel: string, file: string) => writeFileSync(join(vault, rel), readFileSync(join(vault, rel), "utf8").replace(/^---\n/, `---\nreview: ${file}\n`), "utf8");
+  const run = async (name: string, depth: string, body?: string) => {
+    jevSays(depth);
+    const rel = note(name, body);
+    const r = await s.startReview("architect", { mode: "review", path: rel, writer: SOL });
+    await until(() => wf(String(r.id)).status === "done");
+    const d = wf(String(r.id)).data as { review: string; insufficient?: string; draft?: string | null };
+    return { rel, id: String(r.id), file: d.review, d, text: readFileSync(join(vault, d.review), "utf8") };
+  };
+  const hundred = () => Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n");
+  // Replaces `count` of the body's "line N" lines, starting at the `from`th, with a changed version.
+  const rewrite = (rel: string, from: number, count: number) => {
+    let n = 0;
+    writeFileSync(join(vault, rel), readFileSync(join(vault, rel), "utf8").split("\n").map((l) => (/^line \d+$/.test(l) && n++ >= from && n <= from + count ? `${l} changed` : l)).join("\n"), "utf8");
+  };
+
+  test("begin stores the draft", async () => {
+    const r = await run("gr5-draft", "light", hundred());
+    expect(r.d.draft).toContain("line 99");
+  });
+
+  test("a fixed draft passes (15 lines replaced), a rewritten one is refused (30 replaced), no draft skips the check", async () => {
+    const a = await run("gr5-fixed", "light", hundred());
+    resolveAll(a.file, 2);
+    ref(a.rel, a.file);
+    rewrite(a.rel, 0, 15);
+    const ok = s.reviewReady(a.rel);
+    expect(ok.ok).toBe(true);
+    expect(ok.review?.draft_changed).toBe(30);
+    rewrite(a.rel, 0, 15); // the first 15 are already changed, so this changes the next 15
+    const refused = s.reviewReady(a.rel);
+    expect(refused.ok).toBe(false);
+    expect(refused.message).toContain("changed by 60 lines since the review read it");
+    expect(refused.message).toContain("Run survey mode=review again");
+    // An older record with no draft is not checked.
+    j.updateWorkflow(a.id, { data: { draft: null } });
+    expect(s.reviewReady(a.rel).ok).toBe(true);
+    expect(s.reviewReady(a.rel).review?.draft_changed).toBeUndefined();
+  });
+
+  test("readiness not run makes a review insufficient: saved, written, and reviewReady says incomplete without unavailable", async () => {
+    behave = (_m, lens) => (lens === "readiness" ? msg("", 0, "error", "boom") : msg(`### Major: ${lens}\nproblem\n\nFindings: 1`));
+    const r = await run("gr5-noready", "light");
+    expect(r.d.insufficient).toBe("readiness did not run");
+    expect(r.text).toContain("Insufficient: readiness did not run. The captain decides whether this review is enough.");
+    expect(r.text.indexOf("Depth light")).toBeLessThan(r.text.indexOf("Insufficient:"));
+    resolveAll(r.file, 1);
+    ref(r.rel, r.file);
+    const ready = s.reviewReady(r.rel);
+    expect(ready.ok).toBe(true);
+    expect(ready.unavailable).toBeUndefined();
+    expect(ready.review).toMatchObject({ incomplete: "readiness did not run", rel: r.file });
+    expect(ready.review!.counts.Major).toBe(1);
+  });
+
+  test("a full review without design-critic is insufficient", async () => {
+    behave = (_m, lens) => (lens === "design-critic" ? msg("", 0, "error", "boom") : msg(`### Nit: ${lens}\nok\n\nFindings: 1`));
+    const r = await run("gr5-nocritic", "full");
+    expect(r.d.insufficient).toBe("design-critic did not run");
+  });
+
+  test("a light review with readiness and codebase is sufficient", async () => {
+    const r = await run("gr5-light", "light");
+    expect(r.d.insufficient).toBe("");
+    expect(r.text).not.toContain("Insufficient:");
+  });
+
+  test("a stale-fetch or failed-worktree code note is insufficient; no checkout on this host is not", async () => {
+    const notes = [["code may be stale: fetch failed (offline)", true], ["no code: the worktree at origin/main failed (x)", true], ["no code: ship ghost has no checkout on this host", false]] as const;
+    for (const [i, [codeNote, bad]] of notes.entries()) {
+      s.surveyHooks.prepareCode = async () => ({ path: null, repo: null, sha: "abc1234567890", branch: "main", note: codeNote });
+      const r = await run(`gr5-code-${i}`, "light");
+      expect(r.d.insufficient).toBe(bad ? codeNote : "");
+    }
+    s.surveyHooks.prepareCode = noCode;
+  });
+
+  test("contested lists only the Blocker and Major contests", async () => {
+    behave = (_m, lens) => msg(lens === "readiness" ? "### Blocker: b\nbad\n\n### Nit: n\nsmall\n\nFindings: 2" : "### Major: m\nmeh\n\nFindings: 1");
+    const r = await run("gr5-contest", "light");
+    const ids = [...r.text.matchAll(/^### (F\d+) — (\w+)/gm)].map((m) => `${m[1]}=${m[2]}`);
+    expect(ids).toEqual(["F1=Blocker", "F2=Major", "F3=Nit"]);
+    writeFileSync(join(vault, r.file), `${r.text}\n## Resolution\nF1: contest — the code does it at a.ts:1\nF2: escalate — the captain decides\nF3: contest — it is fine as is\n`, "utf8");
+    ref(r.rel, r.file);
+    const ready = s.reviewReady(r.rel);
+    expect(ready.ok).toBe(true);
+    expect(ready.review!.contested).toEqual(["F1: the code does it at a.ts:1"]);
+    expect(ready.review!.escalations).toEqual(["F2: the captain decides"]);
   });
 });

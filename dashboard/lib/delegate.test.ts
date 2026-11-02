@@ -54,7 +54,7 @@ describe("delegate", () => {
         });
       });
       await done;
-      expect(seen!.cmd).toEqual(["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--model", "openrouter/openai/gpt-6-luna", "--tools", "read,grep,find,ls", "--append-system-prompt", "/p/one.md", "--append-system-prompt", "/p/two.md", "-e", "/e/cache-watch.ts", "-e", "/e/tool-gate.ts", "Do the thing"]);
+      expect(seen!.cmd).toEqual(["pi", "--mode", "json", "-p", "--no-session", "--no-skills", "--no-extensions", "--no-prompt-templates", "--no-mcp", "--no-context-files", "--model", "openrouter/openai/gpt-6-luna", "--tools", "read,grep,find,ls", "--append-system-prompt", "/p/one.md", "--append-system-prompt", "/p/two.md", "-e", "/e/cache-watch.ts", "-e", "/e/tool-gate.ts", "Do the thing"]);
       expect(seen!.env.FLEET_AGENT_ID).toBe("surveyor");
       expect(seen!.env.ALICE_VAULT).toBe("/v");
       expect(seen!.cwd).toBe(dir);

@@ -54,7 +54,7 @@ describe("specSubmit and the review gate", () => {
     expect(r.ok).toBe(true);
     const item = readQueue().find((i) => i.id === id)!;
     expect(item.record).toContain(REL);
-    expect(item.review).toEqual({ depth: "full", counts: { Blocker: 0, Major: 1, Nit: 0 }, escalations: ["F1: the captain decides the storage"], rel: REVIEW });
+    expect(item.review).toEqual({ depth: "full", counts: { Blocker: 0, Major: 1, Nit: 0 }, escalations: ["F1: the captain decides the storage"], contested: [], rel: REVIEW });
   });
 
   test("an unavailable review is submitted with the reason, and a skip with none", async () => {
