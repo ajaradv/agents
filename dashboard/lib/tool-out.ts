@@ -195,10 +195,13 @@ export const VIEWS: Record<string, View> = {
       survey_lenses: ["mode", "lens", "reviews", "not_run", "findings", "fix", "contest", "escalate", "decline", "open", "rejected_share", "trim", "cost"],
       survey_models: ["model", "reviews", "not_run", "not_run_share", "findings", "cost", "cost_per_finding"],
       survey_lens_models: ["mode", "lens", "model", "reviews", "not_run", "findings", "fix", "contest", "decline", "cost"],
+      by_tool_agent: ["tool", "agent", "searches", "zero_hits"],
+      candidates: ["id", "ts", "agent", "tool", "query", "reason", "next"],
+      sample: ["id", "ts", "agent", "tool", "query"],
     },
     // Survey rows are mostly numbers: short cuts keep a 13-column row bounded.
     cut: { error: 200, call: 100, goal: 60, mode: 12, lens: 40, model: 60, reviews: 12, not_run: 12, findings: 12, fix: 12, contest: 12, escalate: 12, decline: 12, open: 12, rejected_share: 12, trim: 8, not_run_share: 12, cost_per_finding: 12 },
-    empty: { by_agent: "0 turns in this window", by_model: "0 turns in this window", by_day: "0 turns in this window", by_tool: "0", failures_by_day: "0", by_agent_tool: "0", latest: "0", uses: "0 calls", compaction_advisor: "0 checks", decisions: "0", not_allowed_by_agent: "0", not_allowed_by_day: "0", notable: "0", voyages: "0 voyages", survey_lenses: "0 reviews", survey_models: "0 reviews", survey_lens_models: "0 reviews" },
+    empty: { by_agent: "0 turns in this window", by_model: "0 turns in this window", by_day: "0 turns in this window", by_tool: "0", failures_by_day: "0", by_agent_tool: "0", latest: "0", uses: "0 calls", compaction_advisor: "0 checks", decisions: "0", not_allowed_by_agent: "0", not_allowed_by_day: "0", notable: "0", voyages: "0 voyages", survey_lenses: "0 reviews", survey_models: "0 reviews", survey_lens_models: "0 reviews", by_tool_agent: "0 searches", candidates: "0", sample: "0" },
     help: (r) => (/, by (agent|model|day)$/.test(r.message) ? ["fleet_query query=spend by=agent|model|day; days=N widens the window, since/until=YYYY-MM-DD sets a range"] : []),
   },
   fact_get: {

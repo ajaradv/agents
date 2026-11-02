@@ -224,4 +224,30 @@ describe("fleet_query", () => {
     expect((q.fleetQuery("surveys", { days: 90 }) as unknown as { message: string }).message).toContain("2 review(s) in 90 day(s)");
     expect(q.fleetQuery("surveys", { by: "model" })).toMatchObject({ ok: false, message: "by applies to spend only (not surveys)." });
   });
+
+  test("searches reads the search log: message, keys, a 30-day default, and no `by`", async () => {
+    const rec = await import("./recall.ts");
+    const d = rec.recallDb();
+    const at = (daysAgo: number, min: number) => new Date(Date.now() - daysAgo * 86_400_000 + min * 60_000).toISOString();
+    const log = (ts: string, agent: string, tool: string, query: string, hits: number, refs: string[]) => d.query("INSERT INTO search_log (ts, agent, tool, query, args, hits, refs) VALUES (?, ?, ?, ?, '{}', ?, ?)").run(ts, agent, tool, query, hits, JSON.stringify(refs));
+    log(at(10, 0), "alice", "vault_search", "gate", 2, ["a.md"]);
+    log(at(10, 1), "alice", "vault_search", "gate rules", 1, ["b.md"]); // reformulation of the first
+    log(at(10, 2), "alice", "vault_note", "b.md", 1, ["b.md"]);
+    log(at(5, 0), "alice", "recall", "palette", 0, []);
+    log(at(5, 0), "architect", "recall", "journal", 3, ["x"]);
+    log(at(20, 0), "architect", "recall", "old", 1, ["y"]);
+    log(at(45, 0), "alice", "recall", "outside the 30 days", 1, ["z"]);
+    const r = q.fleetQuery("searches") as unknown as { ok: boolean; message: string; by_tool_agent: { tool: string; agent: string; searches: number; zero_hits: number }[]; candidates: { query: string; reason: string }[]; sample: { query: string }[] };
+    expect(r.message).toBe("5 searches in 30 day(s) (3 recall, 2 vault_search; 2 agents); 1 with no hits; 1 miss candidates (1 reformulations, 0 follow-throughs)");
+    expect(r.by_tool_agent).toContainEqual({ tool: "vault_search", agent: "alice", searches: 2, zero_hits: 0 });
+    expect(r.by_tool_agent.map((x) => x.searches)).toEqual([2, 2, 1]); // busiest first
+    expect(r.by_tool_agent).toHaveLength(3);
+    expect(r.candidates.map((c) => [c.query, c.reason])).toEqual([["gate", "reformulation"]]);
+    expect(r.sample.map((s) => s.query).sort()).toEqual(["gate rules", "journal", "old", "palette"]); // all but the flagged first search
+    expect((q.fleetQuery("searches", { limit: 1 }) as unknown as { sample: unknown[] }).sample).toHaveLength(1);
+    expect(JSON.stringify((q.fleetQuery("searches", { limit: 2 }) as unknown as { sample: unknown[] }).sample)).toBe(JSON.stringify((q.fleetQuery("searches", { limit: 2 }) as unknown as { sample: unknown[] }).sample)); // fixed per day
+    expect((q.fleetQuery("searches", { days: 90 }) as unknown as { message: string }).message).toStartWith("6 searches in 90 day(s)");
+    expect(q.fleetQuery("searches", { by: "agent" })).toMatchObject({ ok: false, message: "by applies to spend only (not searches)." });
+    expect(toolText(q.fleetQuery("searches"), VIEWS.fleet_query)).toContain("candidates[1]{id,ts,agent,tool,query,reason,next}");
+  });
 });

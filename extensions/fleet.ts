@@ -161,9 +161,9 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fleet_query",
     label: "Fleet query",
-    description: "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool. jev: Jev calls and cost per use, and the compaction advisor. gate: tool gate decisions with mode, counts, and the notable ones. voyages: open and recent voyages with ship and cost. surveys: reviews by lens and model (findings, resolutions, cost, trim; 30 days). The window is days back, or since/until as YYYY-MM-DD (UTC, inclusive). A list says \"shown N of M\" when cut: a sample, not totals; limit or full=true shows more.",
+    description: "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool. jev: Jev calls and cost per use, and the compaction advisor. gate: tool gate decisions, counts, notable ones. voyages: open and recent voyages with ship and cost. surveys: reviews by lens and model. searches: recall/vault_search use, miss candidates (30 days both). The window is days back, or since/until as YYYY-MM-DD (UTC, inclusive). A list says \"shown N of M\" when cut: a sample, not totals; limit or full=true shows more.",
     parameters: Type.Object({
-      query: StringEnum(["spend", "tool_failures", "jev", "gate", "voyages", "surveys"] as const),
+      query: StringEnum(["spend", "tool_failures", "jev", "gate", "voyages", "surveys", "searches"] as const),
       days: Type.Optional(Type.Number({ description: "How far back, default 7, max 365; ignored when since is given" })),
       since: Type.Optional(Type.String({ description: "First day, YYYY-MM-DD (UTC, inclusive) or an ISO timestamp" })),
       until: Type.Optional(Type.String({ description: "Last day, YYYY-MM-DD (UTC, inclusive) or an ISO timestamp; with no since, days back from it" })),
