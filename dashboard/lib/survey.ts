@@ -494,6 +494,7 @@ export async function finishReview(id: string): Promise<void> {
       `sha: ${d.sha || "none"}`,
       `writer: ${d.writer}`,
       `cost_usd: ${cost}`,
+      `date: ${new Date().toISOString()}`,
       "lenses:",
       ...d.rows.flatMap((r) => [`  - lens: ${r.lens}`, `    model: ${r.model ?? "none"}`, `    status: ${r.status}`, `    cost: ${Math.round(r.cost * 10000) / 10000}`]),
       "---",

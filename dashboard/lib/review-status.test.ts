@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { reviewStatus } from "./review-status.ts";
+import { RESOLVED, reviewStatus } from "./review-status.ts";
 
 const fx = (name: string) => join(import.meta.dir, "fixtures", "reviews", name);
 
@@ -21,6 +21,12 @@ describe("reviewStatus", () => {
 
   test("no Resolution section: every finding is open", () => {
     expect(reviewStatus(fx("no-resolution.md"))).toEqual({ ids: [1, 2], resolved: [], open: [1, 2] });
+  });
+
+  test("the verb is group 2 and group 1 is still the id", () => {
+    expect(RESOLVED.exec("F12: decline - typed")?.slice(1)).toEqual(["12", "decline"]);
+    expect(RESOLVED.exec("F3: fix")?.slice(1)).toEqual(["3", "fix"]);
+    expect(RESOLVED.exec("F3: fixed it")).toBeNull();
   });
 
   test("a missing file is null", () => {

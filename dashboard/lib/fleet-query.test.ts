@@ -1,11 +1,14 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const inbox = mkdtempSync(join(tmpdir(), "fleet-query-inbox-"));
+const vault = mkdtempSync(join(tmpdir(), "fleet-query-vault-"));
 const prev = process.env.FLEET_INBOX;
+const prevVault = process.env.ALICE_VAULT;
 process.env.FLEET_INBOX = inbox;
+process.env.ALICE_VAULT = vault;
 const q = await import("./fleet-query.ts");
 const m = await import("./metrics.ts");
 const j = await import("./journal.ts");
@@ -16,6 +19,8 @@ afterAll(() => {
   j._closeJournal();
   if (prev === undefined) delete process.env.FLEET_INBOX;
   else process.env.FLEET_INBOX = prev;
+  if (prevVault === undefined) delete process.env.ALICE_VAULT;
+  else process.env.ALICE_VAULT = prevVault;
 });
 
 const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
@@ -199,5 +204,24 @@ describe("fleet_query", () => {
     expect(q.fleetQuery("spend", { until: "2026-02-31" })).toMatchObject({ ok: false, message: expect.stringContaining('until "2026-02-31"') });
     expect(q.fleetQuery("spend", { since: "2026-10-25", until: "2026-10-18" })).toMatchObject({ ok: false, message: expect.stringContaining("after until") });
     expect(q.fleetQuery("spend", { since: "2024-01-01", until: "2026-01-01" })).toMatchObject({ ok: false, message: expect.stringContaining("over 365 days") });
+  });
+
+  test("surveys reads the vault's review files, 30 days by default, and refuses by", () => {
+    const dir = join(vault, "fleet", "reviews", "plan-a");
+    mkdirSync(dir, { recursive: true });
+    const review = (date: string, verbs: string) =>
+      `---\ntype: survey\nmode: review\ncost_usd: 0.25\ndate: ${date}\nlenses:\n  - lens: codebase\n    model: m/one\n    status: done\n    cost: 0.25\n---\n## Findings\n\n` +
+      "### F1 — Major: a\nLens: codebase (m/one)\n\nx\n\n### F2 — Nit: b\nLens: codebase (m/one)\n\ny\n\n### F3 — Nit: c\nLens: codebase (m/one)\n\nz\n\n## Resolution\n\n" + verbs;
+    writeFileSync(join(dir, "review-1.md"), review(ago(20), "F1: fix — ok\nF2: contest — no\n"));
+    writeFileSync(join(dir, "review-2.md"), review(ago(60), "F1: fix\n")); // outside 30 days
+    writeFileSync(join(dir, "review-3.md"), "# by hand\n");
+    const r = q.fleetQuery("surveys") as unknown as { ok: boolean; message: string; survey_lenses: { lens: string; findings: number }[]; survey_models: unknown[]; survey_lens_models: unknown[]; skipped_files: number };
+    expect(r.message).toBe("1 review(s) in 30 day(s): 3 findings, 1/1/0/0 fix/contest/escalate/decline, 1 open; $0.25; trim candidates: none");
+    expect(r.survey_lenses.map((x) => [x.lens, x.findings])).toEqual([["codebase", 3]]);
+    expect(r.survey_models).toHaveLength(1);
+    expect(r.survey_lens_models).toHaveLength(1);
+    expect(r.skipped_files).toBe(1);
+    expect((q.fleetQuery("surveys", { days: 90 }) as unknown as { message: string }).message).toContain("2 review(s) in 90 day(s)");
+    expect(q.fleetQuery("surveys", { by: "model" })).toMatchObject({ ok: false, message: "by applies to spend only (not surveys)." });
   });
 });

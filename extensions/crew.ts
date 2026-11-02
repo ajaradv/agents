@@ -181,9 +181,9 @@ export default function (pi: ExtensionAPI) {
       name: "fleet_query",
       label: "Fleet query",
       description:
-        "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool. jev: Jev calls and cost per use. gate: tool gate decisions. voyages: open and recent voyages with ship and cost. The window is days back from now, or since/until as YYYY-MM-DD (UTC, inclusive). A list says \"shown N of M\" when cut: limit or full=true shows more.",
+        "Exact numbers from the fleet's records, read-only; use it instead of SQL. spend: turn cost by agent, model, or day. tool_failures: failed tool calls by agent and tool. jev: Jev calls and cost per use. gate: tool gate decisions. voyages: open and recent voyages with ship and cost. surveys: reviews by lens and model (30 days). The window is days back from now, or since/until as YYYY-MM-DD (UTC, inclusive). A list says \"shown N of M\" when cut: limit or full=true shows more.",
       parameters: Type.Object({
-        query: StringEnum(["spend", "tool_failures", "jev", "gate", "voyages"] as const),
+        query: StringEnum(["spend", "tool_failures", "jev", "gate", "voyages", "surveys"] as const),
         days: Type.Optional(Type.Number({ description: "How far back, default 7, max 365; ignored when since is given" })),
         since: Type.Optional(Type.String({ description: "First day, YYYY-MM-DD (UTC, inclusive)" })),
         until: Type.Optional(Type.String({ description: "Last day, YYYY-MM-DD (UTC, inclusive)" })),
